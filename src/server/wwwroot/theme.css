@@ -1,0 +1,42 @@
+/* Agent Command Desk – výchozí (neutrální) téma.
+   Vlastní vzhled: zkopírujte tento soubor do local/theme.css a upravte hodnoty. Načte se po app.css a přepíše je.
+   Barvu akcentu každého účtu určuje config (accounts[].accent) – mění se podle zvoleného účtu. */
+
+:root {
+  /* Barvy */
+  --bg: #0f1115;
+  --fg: #e8e8ea;
+  --gray-1: #171a21;      /* karty, panely, pole */
+  --gray-2: #1f232c;      /* zvýraznění */
+  --gray-3: #6e7380;      /* dekor, popisky */
+  --bubble: #232835;      /* bublina odpovědi */
+  --text-muted: #b4b8c2;
+  --line: #2a2f3a;        /* okraje */
+  --accent: #7aa2ff;      /* přepisuje app.js podle účtu */
+  --on-accent: #000;      /* text na akcentu */
+  --ok: #7ee0a1;
+  --info: #7fc8ff;
+  --err: #ff8a80;
+
+  /* Zvýraznění kódu */
+  --hl-keyword: #c3a6ff;
+  --hl-string: #7ee0a1;
+  --hl-number: #ffd479;
+  --hl-title: #7fc8ff;
+
+  /* Písma (vlastní fonty přidejte přes @font-face v local/theme.css; ve wwwroot/fonts jsou volitelně
+     Bricolage Grotesque a Merriweather pod licencí OFL) */
+  --font-head: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-body: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
+  --fw-body: 400;         /* tloušťka běžného textu */
+
+  /* Značka */
+  --brand-suffix: "";     /* znak za názvem aplikace, např. "." */
+  --title-suffix: "?";    /* znak za nadpisem prázdného stavu */
+  --motif-short: none;    /* krátký motiv vedle názvu, např. "/|||/" */
+  --motif-fill: none;     /* výplň prázdného stavu (víc řádků oddělte \A) */
+  --spinner: "●";         /* indikátor běhu */
+
+  color-scheme: dark;
+}

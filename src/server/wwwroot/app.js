@@ -1,0 +1,691 @@
+'use strict';
+/* Agent Command Desk – frontend (vanilla JS). Token jen v paměti, výstup Claude přes marked + DOMPurify. */
+
+const $ = (sel) => document.querySelector(sel);
+const el = (tag, cls, text) => {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+};
+
+const APPROVE_PROMPT = 'Plán schvaluji, proveď ho.';
+
+const S = {
+  token: null,
+  appName: 'Agent Command Desk',
+  accounts: [],
+  projects: [],
+  account: null,
+  project: null,
+  mode: 'auto',
+  sessionId: null,
+  run: null,          // { runId, controller, mode, account, prompt, sawPlan, resultText, resultError }
+  lastPrompt: null,
+  totalCost: 0,
+};
+
+/* ---------- Token ---------- */
+(function takeToken() {
+  const m = /[#&]t=([A-Za-z0-9_\-]+)/.exec(location.hash);
+  if (m) {
+    S.token = m[1];
+    history.replaceState(null, '', location.pathname); // token pryč z URL
+  }
+})();
+
+/* ---------- API ---------- */
+async function api(path, { method = 'GET', body, signal } = {}) {
+  const headers = { 'X-ACD-Token': S.token };
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  const res = await fetch(path, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined, signal, cache: 'no-store' });
+  return res;
+}
+async function apiJson(path, opts) {
+  const res = await api(path, opts);
+  let data = null;
+  try { data = await res.json(); } catch { /* prázdné tělo */ }
+  if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+  return data;
+}
+
+/* ---------- Markdown ---------- */
+function setupMarkdown() {
+  if (window.DOMPurify) {
+    DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+      if (node.tagName === 'A') { node.setAttribute('target', '_blank'); node.setAttribute('rel', 'noopener noreferrer'); }
+    });
+  }
+  if (window.marked) marked.setOptions({ gfm: true, breaks: false });
+  if (window.hljs) hljs.configure({ ignoreUnescapedHTML: true });
+}
+function renderMd(target, text, highlight) {
+  const html = window.marked ? marked.parse(text || '') : null;
+  if (html != null && window.DOMPurify) {
+    target.innerHTML = DOMPurify.sanitize(html, { USE_PROFILES: { html: true }, FORBID_TAGS: ['style', 'form', 'input', 'button'], FORBID_ATTR: ['style'] });
+  } else {
+    target.textContent = text || '';
+  }
+  if (highlight && window.hljs) target.querySelectorAll('pre code').forEach((c) => { try { hljs.highlightElement(c); } catch { } });
+}
+
+/* ---------- Pomocné ---------- */
+const chat = () => $('#chat');
+function scrollDown(force) {
+  const c = chat();
+  const nearBottom = c.scrollHeight - c.scrollTop - c.clientHeight < 160;
+  if (force || nearBottom) c.scrollTop = c.scrollHeight;
+}
+function append(node, force) {
+  $('#empty').hidden = true;
+  chat().appendChild(node);
+  scrollDown(force);
+  return node;
+}
+function clearChat() {
+  chat().querySelectorAll(':scope > :not(#empty)').forEach((n) => n.remove());
+  $('#empty').hidden = false;
+}
+function setStatus(text, busy) {
+  const s = $('#status');
+  s.textContent = '';
+  if (busy) s.appendChild(el('span', 'spin'));
+  s.appendChild(document.createTextNode(text || ''));
+}
+function fmtTime(epochSec) {
+  if (!epochSec) return null;
+  const d = new Date(epochSec * 1000);
+  const today = new Date();
+  const time = d.toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' });
+  return d.toDateString() === today.toDateString() ? time : `${d.toLocaleDateString('cs-CZ', { day: 'numeric', month: 'numeric' })} ${time}`;
+}
+function fmtRelative(iso) {
+  const d = new Date(iso), diff = (Date.now() - d.getTime()) / 1000;
+  if (diff < 60) return 'teď';
+  if (diff < 3600) return `před ${Math.floor(diff / 60)} min`;
+  if (diff < 86400) return `před ${Math.floor(diff / 3600)} h`;
+  return d.toLocaleDateString('cs-CZ', { day: 'numeric', month: 'numeric', year: 'numeric' });
+}
+const plural = (n, one, few, many) => (n === 1 ? one : n >= 2 && n <= 4 ? few : many);
+const accountById = (id) => S.accounts.find((a) => a.id === id);
+const otherAccount = (id) => S.accounts.find((a) => a.id !== id && a.ok);
+
+/* ---------- Stav, účty, projekty ---------- */
+async function loadState() {
+  const st = await apiJson('/api/state');
+  if (st.app && st.app.name) { S.appName = st.app.name; $('#brand-name').textContent = st.app.name; }
+  S.accounts = st.accounts;
+  S.projects = st.projects;
+  if (!S.account) S.account = st.defaultAccount;
+  if (!S.project) S.project = st.defaultProject;
+  renderAccounts();
+  renderProjects();
+  applyAccent();
+  return st;
+}
+
+function renderAccounts() {
+  const fs = $('#accounts');
+  fs.querySelectorAll('.seg-item').forEach((n) => n.remove());
+  for (const a of S.accounts) {
+    const label = el('label', 'seg-item');
+    label.style.setProperty('--item-accent', a.accent);
+    const input = el('input');
+    input.type = 'radio'; input.name = 'account'; input.value = a.id;
+    input.checked = a.id === S.account;
+    const pending = !a.ok && a.error === 'Ověřuji…';
+    input.disabled = (!a.ok && !pending) || !!S.run;
+    const span = el('span');
+    span.appendChild(el('i', 'swatch'));
+    span.appendChild(document.createTextNode(a.label));
+    label.title = a.ok ? a.email : (a.error || '');
+    input.addEventListener('change', () => switchAccount(a.id));
+    label.append(input, span);
+    fs.appendChild(label);
+  }
+}
+
+function renderProjects() {
+  const sel = $('#project');
+  const cur = S.project;
+  sel.textContent = '';
+  for (const p of S.projects) {
+    const o = el('option', null, p.exists ? p.label : `${p.label} (chybí)`);
+    o.value = p.id; o.disabled = !p.exists; o.selected = p.id === cur;
+    sel.appendChild(o);
+  }
+  sel.disabled = !!S.run;
+}
+
+function applyAccent() {
+  const a = accountById(S.account);
+  if (a) document.documentElement.style.setProperty('--accent', a.accent);
+  document.title = a ? `${S.appName} – ${a.label}` : S.appName;
+}
+
+async function loadGit() {
+  const g = $('#git');
+  try {
+    const info = await apiJson(`/api/projects/${encodeURIComponent(S.project)}/git`);
+    g.textContent = '';
+    if (!info.branch) return;
+    g.appendChild(document.createTextNode(`větev ${info.branch}`));
+    if (info.changed) g.appendChild(el('span', 'changed', ` • ${info.changed} ${plural(info.changed, 'změna', 'změny', 'změn')}`));
+  } catch { g.textContent = ''; }
+}
+
+async function loadSessions() {
+  const ul = $('#sessions');
+  let list = [];
+  try {
+    list = await apiJson(`/api/sessions?account=${encodeURIComponent(S.account)}&project=${encodeURIComponent(S.project)}`);
+  } catch (e) {
+    ul.textContent = '';
+    ul.appendChild(el('li', 's-empty', e.message));
+    return;
+  }
+  ul.textContent = '';
+  if (!list.length) { ul.appendChild(el('li', 's-empty', 'Zatím žádná sezení.')); return; }
+  for (const s of list) {
+    const li = el('li');
+    const b = el('button');
+    b.type = 'button';
+    b.dataset.id = s.id;
+    if (s.id === S.sessionId) b.setAttribute('aria-current', 'true');
+    b.append(el('span', 's-title', s.title), el('span', 's-meta', fmtRelative(s.updated) + (s.busy ? ' • běží' : '')));
+    b.addEventListener('click', () => openSession(s.id));
+    li.appendChild(b);
+    ul.appendChild(li);
+  }
+}
+
+function markCurrentSession() {
+  document.querySelectorAll('#sessions button').forEach((b) => {
+    if (b.dataset.id === S.sessionId) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current');
+  });
+  $('#foot-session').textContent = S.sessionId ? `sezení ${S.sessionId.slice(0, 8)}` : 'Nové sezení';
+}
+
+function newSession() {
+  if (S.run) return;
+  S.sessionId = null;
+  clearChat();
+  hideBanner();
+  markCurrentSession();
+  $('#prompt').focus();
+}
+
+async function openSession(id) {
+  if (S.run) return;
+  S.sessionId = id;
+  markCurrentSession();
+  clearChat();
+  hideBanner();
+  setStatus('Načítám sezení…', true);
+  try {
+    const items = await apiJson(`/api/sessions/${encodeURIComponent(id)}?account=${encodeURIComponent(S.account)}&project=${encodeURIComponent(S.project)}`);
+    let tools = null;
+    for (const it of items) {
+      if (it.role === 'tool') {
+        if (!tools) { tools = append(el('div', 'msg msg--note')); tools.dataset.names = ''; }
+        tools.dataset.names += (tools.dataset.names ? ', ' : '') + it.name;
+        tools.textContent = `Nástroje: ${tools.dataset.names}`;
+        continue;
+      }
+      tools = null;
+      if (it.role === 'user') append(el('div', 'msg msg--me', it.text));
+      else {
+        const m = append(el('div', 'msg msg--claude md'));
+        renderMd(m, it.text, true);
+      }
+    }
+    append(el('div', 'msg msg--note', 'Pokračujte další zprávou.'), true);
+    setStatus('');
+  } catch (e) {
+    setStatus('');
+    showError('Sezení nelze načíst', e.message);
+  }
+}
+
+async function switchAccount(id) {
+  if (S.run || id === S.account) return;
+  S.account = id;
+  applyAccent();
+  renderAccounts();
+  newSession();
+  await loadSessions();
+}
+
+async function switchProject(id) {
+  if (S.run || id === S.project) return;
+  S.project = id;
+  newSession();
+  await Promise.all([loadSessions(), loadGit()]);
+}
+
+/* ---------- Banner ---------- */
+function hideBanner() { const b = $('#banner'); b.hidden = true; b.textContent = ''; b.className = 'banner'; }
+function showBanner(kind, html, actions) {
+  const b = $('#banner');
+  b.className = 'banner' + (kind === 'warn' ? ' warn' : '');
+  b.textContent = '';
+  const t = el('div', 'banner-text');
+  t.append(...html);
+  b.appendChild(t);
+  for (const a of actions || []) b.appendChild(a);
+  b.hidden = false;
+}
+function button(text, cls, onClick) {
+  const b = el('button', 'btn ' + cls, text);
+  b.type = 'button';
+  b.addEventListener('click', onClick);
+  return b;
+}
+
+function showLimit(accountId, resetsAt, detail) {
+  const acc = accountById(accountId);
+  const other = otherAccount(accountId);
+  const when = fmtTime(resetsAt);
+  const strong = el('strong', null, `Účet ${acc ? acc.label : accountId} narazil na limit.`);
+  const parts = [strong, document.createTextNode(when ? ` Obnoví se v ${when}.` : ' Čas obnovení není známý.')];
+  if (detail) parts.push(el('div', null, detail));
+  const actions = [];
+  if (other) {
+    actions.push(button(`Přepnout na ${other.label} a poslat znovu`, 'btn-accent', async () => {
+      const prompt = S.lastPrompt;
+      await switchAccount(other.id);
+      if (prompt) { $('#prompt').value = prompt; send(); }
+    }));
+    actions.push(button(`Jen přepnout`, 'btn-ghost', () => switchAccount(other.id)));
+  }
+  showBanner('err', parts, actions);
+}
+
+function showError(title, detail) {
+  const box = el('div', 'msg msg--error');
+  box.appendChild(el('div', 'eyebrow', title));
+  if (detail) box.appendChild(el('pre', null, detail));
+  append(box, true);
+}
+
+/* ---------- Nástroje ---------- */
+function toolSummary(name, input, cwd) {
+  if (!input || typeof input !== 'object') return '';
+  const rel = (p) => {
+    if (typeof p !== 'string') return '';
+    if (cwd && p.toLowerCase().startsWith(cwd.toLowerCase())) return p.slice(cwd.length).replace(/^[\\/]/, '') || '.';
+    return p;
+  };
+  switch (name) {
+    case 'Bash': case 'PowerShell': return (input.command || '').split('\n')[0];
+    case 'Read': case 'Write': case 'Edit': case 'MultiEdit': return rel(input.file_path);
+    case 'NotebookEdit': return rel(input.notebook_path);
+    case 'Glob': return input.pattern + (input.path ? `  v ${rel(input.path)}` : '');
+    case 'Grep': return `${input.pattern}${input.path ? '  v ' + rel(input.path) : ''}`;
+    case 'WebFetch': return input.url || '';
+    case 'WebSearch': return input.query || '';
+    case 'Task': case 'Agent': return input.description || '';
+    case 'Skill': return input.skill || '';
+    case 'TodoWrite': return Array.isArray(input.todos) ? `${input.todos.length} úkolů` : '';
+    default: {
+      const v = Object.values(input).find((x) => typeof x === 'string');
+      return v ? v.split('\n')[0] : '';
+    }
+  }
+}
+
+const tools = new Map();
+function toolCard(id, name, parent) {
+  let t = tools.get(id);
+  if (t) return t;
+  const d = el('details', 'tool' + (parent ? ' sub' : ''));
+  d.dataset.state = 'running';
+  const sum = el('summary');
+  const nm = el('span', 'tool-name', name || 'nástroj');
+  const sm = el('span', 'tool-sum');
+  const badge = el('span', 'tool-badge', 'běží');
+  sum.append(nm, sm, badge);
+  const body = el('div', 'tool-body');
+  d.append(sum, body);
+  t = { d, nm, sm, badge, body, name };
+  tools.set(id, t);
+  append(d);
+  return t;
+}
+
+function lineDiff(a, b) {
+  const A = a.split('\n'), B = b.split('\n');
+  if (A.length * B.length > 250000) return [...A.map((l) => ['del', l]), ...B.map((l) => ['add', l])];
+  const n = A.length, m = B.length;
+  const L = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--)
+    L[i][j] = A[i] === B[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+  const out = []; let i = 0, j = 0;
+  while (i < n && j < m) {
+    if (A[i] === B[j]) { out.push(['ctx', A[i]]); i++; j++; }
+    else if (L[i + 1][j] >= L[i][j + 1]) out.push(['del', A[i++]]);
+    else out.push(['add', B[j++]]);
+  }
+  while (i < n) out.push(['del', A[i++]]);
+  while (j < m) out.push(['add', B[j++]]);
+  return out;
+}
+function diffView(edits, file) {
+  const box = el('div', 'diff');
+  if (file) box.appendChild(el('div', 'file', file));
+  edits.forEach((e, idx) => {
+    if (idx > 0) box.appendChild(el('div', 'ctx', '⋯'));
+    for (const [k, line] of lineDiff(e.old || '', e.new || '')) {
+      if (e.old === '' && k === 'del') continue;
+      box.appendChild(el('div', k, (k === 'add' ? '+ ' : k === 'del' ? '- ' : '  ') + line));
+    }
+  });
+  return box;
+}
+
+function fillToolInput(t, name, input, cwd) {
+  t.name = name;
+  t.nm.textContent = name;
+  t.sm.textContent = toolSummary(name, input, cwd);
+  t.body.textContent = '';
+  if (name === 'Edit' && input) {
+    t.body.appendChild(diffView([{ old: input.old_string, new: input.new_string }], toolSummary(name, input, cwd)));
+  } else if (name === 'MultiEdit' && input && Array.isArray(input.edits)) {
+    t.body.appendChild(diffView(input.edits.map((e) => ({ old: e.old_string, new: e.new_string })), toolSummary(name, input, cwd)));
+  } else if (name === 'Write' && input) {
+    t.body.appendChild(diffView([{ old: '', new: input.content || '' }], toolSummary(name, input, cwd)));
+  } else if ((name === 'Bash' || name === 'PowerShell') && input) {
+    t.body.appendChild(el('div', 'eyebrow', 'Příkaz'));
+    t.body.appendChild(el('pre', null, input.command || ''));
+  } else if (input && Object.keys(input).length) {
+    t.body.appendChild(el('div', 'eyebrow', 'Vstup'));
+    t.body.appendChild(el('pre', null, JSON.stringify(input, null, 2)));
+  }
+}
+
+function fillToolResult(t, ev) {
+  const state = ev.denied ? 'denied' : ev.isError ? 'error' : 'ok';
+  t.d.dataset.state = state;
+  t.badge.textContent = state === 'denied' ? 'zamítnuto' : state === 'error' ? 'chyba' : 'hotovo';
+  if (ev.denied) {
+    const why = [ev.decisionSource, ev.decisionReason].filter(Boolean).join(' / ');
+    t.body.appendChild(el('div', 'tool-reason', `Zamítnuto${why ? ` (${why})` : ''}.`));
+    t.d.open = true;
+  }
+  if (ev.content) {
+    t.body.appendChild(el('div', 'eyebrow', 'Výsledek'));
+    t.body.appendChild(el('pre', null, ev.content));
+  }
+  if (state === 'error' && !ev.denied) t.d.open = true;
+}
+
+/* ---------- Plán ---------- */
+function showPlanCard(markdown, title) {
+  const box = el('div', 'plan');
+  box.appendChild(el('div', 'eyebrow', title || 'Plán'));
+  if (markdown) {
+    const body = el('div', 'md');
+    renderMd(body, markdown, true);
+    box.appendChild(body);
+  }
+  const actions = el('div', 'plan-actions');
+  const approve = button('Schválit plán', 'btn-accent', () => approvePlan(approve));
+  actions.append(approve, el('span', 'hint', 'Spustí se v režimu Auto ve stejném sezení. Úpravy plánu napište jako další zprávu.'));
+  box.appendChild(actions);
+  append(box, true);
+}
+
+function approvePlan(btn) {
+  if (S.run || !S.sessionId) return;
+  btn.disabled = true;
+  setMode('auto');
+  $('#prompt').value = APPROVE_PROMPT;
+  send();
+}
+
+function setMode(m) {
+  S.mode = m;
+  document.querySelectorAll('input[name="mode"]').forEach((i) => { i.checked = i.value === m; });
+}
+
+/* ---------- Běh ---------- */
+function setRunning(on) {
+  $('#send').hidden = on;
+  $('#stop').hidden = !on;
+  $('#prompt').disabled = false;
+  document.querySelectorAll('input[name="mode"]').forEach((i) => { i.disabled = on; });
+  $('#new-session').disabled = on;
+  renderAccounts();
+  renderProjects();
+}
+
+async function send() {
+  const ta = $('#prompt');
+  const prompt = ta.value.trim();
+  if (!prompt || S.run) return;
+  hideBanner();
+  S.lastPrompt = prompt;
+  ta.value = '';
+  append(el('div', 'msg msg--me', prompt), true);
+
+  const controller = new AbortController();
+  const run = { runId: null, controller, mode: S.mode, account: S.account, prompt, sawPlan: false, resultText: null, resultError: false, cwd: null, limitShown: false };
+  S.run = run;
+  setRunning(true);
+  setStatus('Spouštím Claude…', true);
+
+  const state = { msgBlocks: new Map(), finalized: new Set() };
+  try {
+    const res = await api('/api/runs', {
+      method: 'POST',
+      signal: controller.signal,
+      body: { account: S.account, project: S.project, mode: S.mode, prompt, resume: S.sessionId },
+    });
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`;
+      try { msg = (await res.json()).error || msg; } catch { }
+      throw new Error(msg);
+    }
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        const chunk = buf.slice(0, idx); buf = buf.slice(idx + 2);
+        for (const line of chunk.split('\n')) {
+          if (!line.startsWith('data: ')) continue;
+          let ev; try { ev = JSON.parse(line.slice(6)); } catch { continue; }
+          handleEvent(ev, run, state);
+        }
+      }
+    }
+  } catch (e) {
+    if (e.name !== 'AbortError') showError('Běh se nepodařilo spustit', e.message);
+  } finally {
+    S.run = null;
+    setRunning(false);
+    if (!$('#status').textContent.startsWith('Hotovo') && !$('#status').textContent.startsWith('Zastaveno')) setStatus('');
+    loadSessions();
+    loadGit();
+    ta.focus();
+  }
+}
+
+function textBlock(state, messageId, index) {
+  const key = `${messageId}:${index ?? 0}`;
+  let b = state.msgBlocks.get(key);
+  if (!b) {
+    const node = append(el('div', 'msg msg--claude md'));
+    b = { node, raw: '', messageId, pending: false };
+    state.msgBlocks.set(key, b);
+  }
+  return b;
+}
+function scheduleRender(b) {
+  if (b.pending) return;
+  b.pending = true;
+  requestAnimationFrame(() => { b.pending = false; renderMd(b.node, b.raw, false); scrollDown(); });
+}
+
+function handleEvent(ev, run, state) {
+  switch (ev.type) {
+    case 'run':
+      run.runId = ev.runId;
+      break;
+    case 'init':
+      S.sessionId = ev.sessionId;
+      run.cwd = ev.cwd;
+      markCurrentSession();
+      $('#foot-model').textContent = `${ev.model || ''} • ${ev.permissionMode || ''} • v${ev.version || ''}`;
+      setStatus(run.mode === 'plan' ? 'Claude plánuje…' : 'Claude pracuje…', true);
+      break;
+    case 'text_delta': {
+      if (ev.parent) break;
+      const b = textBlock(state, ev.messageId, ev.index);
+      b.raw += ev.text || '';
+      scheduleRender(b);
+      setStatus('Claude píše…', true);
+      break;
+    }
+    case 'text': {
+      if (ev.parent) break;
+      // Najdi první nefinalizovaný blok této zprávy, jinak vytvoř nový.
+      let target = null;
+      for (const [key, b] of state.msgBlocks) {
+        if (b.messageId === ev.messageId && !state.finalized.has(key)) { target = [key, b]; break; }
+      }
+      if (!target) {
+        const key = `${ev.messageId}:final${state.msgBlocks.size}`;
+        const b = { node: append(el('div', 'msg msg--claude md')), raw: '', messageId: ev.messageId };
+        state.msgBlocks.set(key, b);
+        target = [key, b];
+      }
+      const [key, b] = target;
+      state.finalized.add(key);
+      b.raw = ev.text || '';
+      renderMd(b.node, b.raw, true);
+      scrollDown();
+      break;
+    }
+    case 'tool_start': {
+      const t = toolCard(ev.id, ev.name, ev.parent);
+      t.nm.textContent = ev.name;
+      setStatus(`Nástroj ${ev.name}…`, true);
+      break;
+    }
+    case 'tool_use': {
+      const t = toolCard(ev.id, ev.name, ev.parent);
+      fillToolInput(t, ev.name, ev.input, run.cwd);
+      break;
+    }
+    case 'tool_result': {
+      const t = tools.get(ev.id);
+      if (t) fillToolResult(t, ev);
+      setStatus('Claude pracuje…', true);
+      break;
+    }
+    case 'rate_limit':
+      if (ev.status === 'rejected') { run.limitShown = true; showLimit(run.account, ev.resetsAt); }
+      else if (ev.status === 'allowed_warning') {
+        const pct = ev.utilization != null ? ` (${Math.round(ev.utilization * 100)} %)` : '';
+        const acc = accountById(run.account);
+        showBanner('warn', [el('strong', null, `Účet ${acc ? acc.label : ''} se blíží limitu${pct}.`),
+          document.createTextNode(ev.resetsAt ? ` Obnova v ${fmtTime(ev.resetsAt)}.` : '')], []);
+      }
+      break;
+    case 'retry':
+      setStatus(`API hlásí chybu, zkouším znovu (pokus ${ev.attempt ?? '?'})…`, true);
+      break;
+    case 'plan':
+      run.sawPlan = true;
+      showPlanCard(ev.content, 'Plán ke schválení');
+      break;
+    case 'result': {
+      run.resultText = ev.result;
+      run.resultError = !!ev.isError;
+      if (ev.sessionId) { S.sessionId = ev.sessionId; markCurrentSession(); }
+      if (typeof ev.costUsd === 'number') {
+        S.totalCost += ev.costUsd;
+        $('#foot-cost').textContent = `poslední běh $${ev.costUsd.toFixed(3)} • ${ev.numTurns ?? '?'} ${plural(ev.numTurns, 'tah', 'tahy', 'tahů')} • ${(ev.durationMs / 1000).toFixed(1)} s`;
+      }
+      const looksLikeLimit = ev.isError && (ev.apiErrorStatus === 429 || /limit|rate.?limit|usage/i.test(ev.result || ''));
+      if (looksLikeLimit && !run.limitShown) { run.limitShown = true; showLimit(run.account, null, ev.result); }
+      else if (ev.isError && !run.limitShown) showError(`Claude skončil s chybou (${ev.subtype || 'error'})`, ev.result || '');
+      if (ev.denials && ev.denials.length) {
+        const names = [...new Set(ev.denials.map((d) => d.toolName))].join(', ');
+        append(el('div', 'msg msg--note', `Zamítnuto ${ev.denials.length}× (${names}) – ${run.mode === 'plan' ? 'režim Plán nic nemění' : 'oprávnění'}.`));
+      }
+      break;
+    }
+    case 'exit':
+      if (ev.stopped) { append(el('div', 'msg msg--note', 'Zastaveno.')); setStatus('Zastaveno.'); }
+      else if (ev.code !== 0 && ev.stderr && !run.limitShown) showError(`claude skončil kódem ${ev.code}`, ev.stderr);
+      else setStatus('Hotovo.');
+      // Plan bez souboru plánu → plán je text odpovědi.
+      if (run.mode === 'plan' && !run.sawPlan && !ev.stopped && !run.resultError && run.resultText) showPlanCard(null, 'Plán je výše – schválit?');
+      break;
+    case 'error':
+      showError('Chyba běhu', ev.message);
+      break;
+  }
+}
+
+async function stop() {
+  const run = S.run;
+  if (!run) return;
+  setStatus('Zastavuji…', true);
+  if (run.runId) {
+    try { await api(`/api/runs/${run.runId}/stop`, { method: 'POST' }); } catch { }
+  } else run.controller.abort();
+}
+
+/* ---------- Start ---------- */
+async function main() {
+  setupMarkdown();
+  if (!S.token) {
+    showError('Chybí přístupový klíč', 'Okno otevřete spouštěčem aplikace (klíč platí jen pro jedno spuštění a obnovením stránky se ztratí).');
+    $('#composer').hidden = true;
+    return;
+  }
+
+  $('#composer').addEventListener('submit', (e) => { e.preventDefault(); send(); });
+  $('#prompt').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); }
+  });
+  $('#stop').addEventListener('click', stop);
+  $('#new-session').addEventListener('click', newSession);
+  $('#project').addEventListener('change', (e) => switchProject(e.target.value));
+  document.querySelectorAll('input[name="mode"]').forEach((i) => i.addEventListener('change', () => { S.mode = i.value; }));
+  window.addEventListener('beforeunload', (e) => { if (S.run) { e.preventDefault(); e.returnValue = ''; } });
+
+  try {
+    let st = await loadState();
+    // Účty se ověřují na pozadí – chvíli počkej na výsledek.
+    for (let i = 0; i < 20 && st.accounts.some((a) => !a.ok && a.error === 'Ověřuji…'); i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      st = await loadState();
+    }
+    const cur = accountById(S.account);
+    if (cur && !cur.ok) {
+      const alt = otherAccount(S.account);
+      showBanner('err', [el('strong', null, `Účet ${cur.label} není dostupný: `), document.createTextNode(cur.error || '')],
+        alt ? [button(`Použít ${alt.label}`, 'btn-accent', () => switchAccount(alt.id))] : []);
+    }
+    await Promise.all([loadSessions(), loadGit()]);
+  } catch (e) {
+    showError('Aplikace nemůže načíst stav', e.message);
+  }
+
+  // Průběžně: stav účtů (a zároveň signál pro backend, že okno žije).
+  setInterval(async () => {
+    try { if (!S.run) { await loadState(); } else await api('/api/ping'); } catch { }
+  }, 30000);
+  setInterval(() => { if (!S.run) loadGit(); }, 60000);
+  $('#prompt').focus();
+}
+
+document.addEventListener('DOMContentLoaded', main);

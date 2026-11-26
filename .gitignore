@@ -1,0 +1,20 @@
+# Vlastní nastavení, vzhled a soukromé poznámky (nikdy do veřejného repa)
+local/
+
+# Node (žádné závislosti; jen pro jistotu)
+node_modules/
+
+# lokální stav, logy, testy
+logs/
+*.log
+.test-state/
+
+# dočasné soubory skriptu fetch-vendor
+.vendor-tmp/
+
+# Chrome profil, pokud by vznikl v repu
+chrome-profile/
+
+# macOS / editory
+.DS_Store
+.vs/

@@ -1,0 +1,15 @@
+{
+  "name": "agent-command-desk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local desktop window for Claude Code: allowlisted accounts and projects, streaming, plan approval. No dependencies – Node.js built-ins only.",
+  "license": "MIT",
+  "author": "Tobias Otta",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node src/server/server.mjs",
+    "test": "node --test \"tests/*.test.mjs\"",
+    "check": "node --check src/server/server.mjs && node --check src/server/wwwroot/app.js"
+  }
+}
