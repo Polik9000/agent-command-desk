@@ -16,6 +16,9 @@ The UI is in Czech.
 - Project switcher (allowlisted folders only), git branch and change count.
 - **Auto** / **Plan** modes: Plan writes a plan and changes nothing; **Approve plan** continues in Auto in the same session.
 - Session list with history and resume, Stop button (kills the whole process tree).
+- **Message queue**: keep typing while Claude works – messages wait in a queue (reorder, edit, remove) and are sent
+  one by one to the same session. Stop, an error, a usage limit or a plan waiting for approval pauses the queue;
+  nothing is sent on its own after an interruption.
 - Usage-limit warnings; when an account hits its limit, one click switches to another account and resends.
 - Security: loopback only, per-launch token, Host/Origin checks, strict CSP – see [docs/security.md](docs/security.md).
 - Your name, look and icon come from one config value and one CSS file (see *Customize*).
@@ -83,7 +86,7 @@ Vendor libraries and optional fonts: `scripts/fetch-vendor.ps1` (pinned versions
 How the CLI is driven: [docs/claude-code-headless.md](docs/claude-code-headless.md).
 
 ## Roadmap
-Message queue, attachments (drag & drop, paste screenshots), model/effort picker, read-only git diff view,
+Attachments (drag & drop, paste screenshots), model/effort picker, read-only git diff view,
 command palette, notifications. Interactive permission prompts are being researched.
 
 ## Uninstall

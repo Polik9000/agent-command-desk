@@ -11,6 +11,7 @@
   <script src="vendor/marked.umd.js" defer></script>
   <script src="vendor/purify.min.js" defer></script>
   <script src="vendor/highlight.min.js" defer></script>
+  <script src="queue.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>
@@ -58,6 +59,7 @@
       </section>
 
       <form class="composer" id="composer">
+        <section class="queue" id="queue" aria-label="Fronta zpráv" hidden></section>
         <label for="prompt" class="sr-only">Zpráva pro Claude</label>
         <textarea id="prompt" rows="3" placeholder="Napište zprávu… (Ctrl+Enter odešle)" autocomplete="off"></textarea>
         <div class="composer-bar">

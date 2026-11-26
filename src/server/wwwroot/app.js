@@ -23,6 +23,10 @@ const S = {
   run: null,          // { runId, controller, mode, account, prompt, sawPlan, resultText, resultError }
   lastPrompt: null,
   totalCost: 0,
+  queue: new MessageQueue(),
+  queueEdit: null,       // id položky fronty, která se právě upravuje
+  queueWaitingEdit: false,
+  queueNotice: null,
 };
 
 /* ---------- Token ---------- */
@@ -206,8 +210,21 @@ function markCurrentSession() {
   $('#foot-session').textContent = S.sessionId ? `sezení ${S.sessionId.slice(0, 8)}` : 'Nové sezení';
 }
 
+/** Přepnutí účtu/projektu/sezení: fronta patří k aktuálnímu sezení → po potvrzení se zahodí. */
+function leaveContext() {
+  if (!S.queue.length) return true;
+  const n = S.queue.length;
+  const what = plural(n, 'čeká 1 zpráva', `čekají ${n} zprávy`, `čeká ${n} zpráv`);
+  if (!confirm(`Ve frontě ${what} pro toto sezení. Při přepnutí se fronta zahodí. Pokračovat?`)) return false;
+  S.queue.clear();
+  S.queueEdit = null;
+  S.queueWaitingEdit = false;
+  renderQueue();
+  return true;
+}
+
 function newSession() {
-  if (S.run) return;
+  if (S.run || !leaveContext()) return;
   S.sessionId = null;
   clearChat();
   hideBanner();
@@ -216,7 +233,7 @@ function newSession() {
 }
 
 async function openSession(id) {
-  if (S.run) return;
+  if (S.run || !leaveContext()) return;
   S.sessionId = id;
   markCurrentSession();
   clearChat();
@@ -247,17 +264,21 @@ async function openSession(id) {
   }
 }
 
+/** @returns {Promise<boolean>} zda se účet opravdu přepnul */
 async function switchAccount(id) {
-  if (S.run || id === S.account) return;
+  if (S.run || id === S.account) return false;
+  if (!leaveContext()) { renderAccounts(); return false; }
   S.account = id;
   applyAccent();
   renderAccounts();
   newSession();
   await loadSessions();
+  return true;
 }
 
 async function switchProject(id) {
   if (S.run || id === S.project) return;
+  if (!leaveContext()) { $('#project').value = S.project; return; }
   S.project = id;
   newSession();
   await Promise.all([loadSessions(), loadGit()]);
@@ -293,8 +314,7 @@ function showLimit(accountId, resetsAt, detail) {
   if (other) {
     actions.push(button(`Přepnout na ${other.label} a poslat znovu`, 'btn-accent', async () => {
       const prompt = S.lastPrompt;
-      await switchAccount(other.id);
-      if (prompt) { $('#prompt').value = prompt; send(); }
+      if (await switchAccount(other.id) && prompt) { $('#prompt').value = prompt; send(); }
     }));
     actions.push(button(`Jen přepnout`, 'btn-ghost', () => switchAccount(other.id)));
   }
@@ -439,8 +459,8 @@ function approvePlan(btn) {
   if (S.run || !S.sessionId) return;
   btn.disabled = true;
   setMode('auto');
-  $('#prompt').value = APPROVE_PROMPT;
-  send();
+  if (S.queue.paused === 'plan') S.queue.resume(); // schválením je důvod pauzy vyřešen; fronta pokračuje po provedení plánu
+  startRun(APPROVE_PROMPT, 'auto');
 }
 
 function setMode(m) {
@@ -450,26 +470,35 @@ function setMode(m) {
 
 /* ---------- Běh ---------- */
 function setRunning(on) {
-  $('#send').hidden = on;
+  $('#send').textContent = on ? 'Do fronty' : 'Odeslat';
   $('#stop').hidden = !on;
   $('#prompt').disabled = false;
-  document.querySelectorAll('input[name="mode"]').forEach((i) => { i.disabled = on; });
+  $('#prompt').placeholder = on ? 'Další zpráva půjde do fronty… (Ctrl+Enter)' : 'Napište zprávu… (Ctrl+Enter odešle)';
   $('#new-session').disabled = on;
   renderAccounts();
   renderProjects();
+  renderQueue();
 }
 
-async function send() {
+/** Odeslat: když Claude pracuje, zpráva jde do fronty. */
+function send() {
   const ta = $('#prompt');
   const prompt = ta.value.trim();
-  if (!prompt || S.run) return;
+  if (!prompt) return;
+  if (S.run) { enqueue(prompt); return; }
+  ta.value = '';
+  startRun(prompt, S.mode);
+}
+
+async function startRun(prompt, mode) {
+  if (S.run) return;
   hideBanner();
   S.lastPrompt = prompt;
-  ta.value = '';
   append(el('div', 'msg msg--me', prompt), true);
 
   const controller = new AbortController();
-  const run = { runId: null, controller, mode: S.mode, account: S.account, prompt, sawPlan: false, resultText: null, resultError: false, cwd: null, limitShown: false };
+  const run = { runId: null, controller, mode, account: S.account, prompt, sawPlan: false, resultText: null,
+    resultError: false, hadError: false, cwd: null, limitShown: false, outcome: null, sessionId: S.sessionId };
   S.run = run;
   setRunning(true);
   setStatus('Spouštím Claude…', true);
@@ -479,7 +508,7 @@ async function send() {
     const res = await api('/api/runs', {
       method: 'POST',
       signal: controller.signal,
-      body: { account: S.account, project: S.project, mode: S.mode, prompt, resume: S.sessionId },
+      body: { account: S.account, project: S.project, mode, prompt, resume: S.sessionId },
     });
     if (!res.ok) {
       let msg = `HTTP ${res.status}`;
@@ -505,14 +534,124 @@ async function send() {
     }
   } catch (e) {
     if (e.name !== 'AbortError') showError('Běh se nepodařilo spustit', e.message);
+    run.outcome ??= e.name === 'AbortError' ? 'stopped' : 'error';
   } finally {
     S.run = null;
     setRunning(false);
     if (!$('#status').textContent.startsWith('Hotovo') && !$('#status').textContent.startsWith('Zastaveno')) setStatus('');
     loadSessions();
     loadGit();
-    ta.focus();
+    $('#prompt').focus();
+    afterRun(run);
   }
+}
+
+/* ---------- Fronta zpráv ---------- */
+function enqueue(prompt) {
+  try {
+    S.queue.add({ prompt, mode: S.mode, account: S.account, project: S.project, sessionId: S.sessionId, run: S.run });
+    $('#prompt').value = '';
+    S.queueNotice = null;
+  } catch (e) {
+    S.queueNotice = e.message;
+  }
+  renderQueue();
+}
+
+/** Konec běhu → výsledek pro frontu: ok | stopped | error | limit | plan. */
+function afterRun(run) {
+  const go = S.queue.onRunEnd(run.outcome ?? 'error');
+  renderQueue();
+  if (go) setTimeout(dispatchNext, 0);
+}
+
+function dispatchNext() {
+  if (S.run) return;
+  if (S.queueEdit !== null) { S.queueWaitingEdit = true; renderQueue(); return; }
+  const item = S.queue.takeNext({ account: S.account, project: S.project, sessionId: S.sessionId });
+  renderQueue();
+  if (item) startRun(item.prompt, item.mode);
+}
+
+function finishQueueEdit() {
+  S.queueEdit = null;
+  if (S.queueWaitingEdit) { S.queueWaitingEdit = false; if (!S.run) setTimeout(dispatchNext, 0); }
+  renderQueue();
+}
+
+function iconButton(text, label, onClick, disabled) {
+  const b = button(text, 'btn-ghost btn-icon', onClick);
+  b.setAttribute('aria-label', label);
+  b.title = label;
+  b.disabled = !!disabled;
+  return b;
+}
+
+function renderQueue() {
+  const box = $('#queue');
+  const q = S.queue;
+  box.textContent = '';
+  if (!q.length && !S.queueNotice) { box.hidden = true; return; }
+  box.hidden = false;
+
+  const head = el('div', 'queue-head');
+  head.appendChild(el('span', 'eyebrow', `Fronta (${q.length})`));
+  let state = '';
+  if (q.length) {
+    state = q.paused ? `Pozastaveno – ${q.pauseText}` : S.queueWaitingEdit ? 'Čeká na dokončení úprav.'
+      : S.run ? 'Odešle se postupně po dokončení běhu.' : 'Čeká.';
+  }
+  head.appendChild(el('span', 'queue-state' + (q.paused ? ' paused' : ''), state));
+  if (q.length && q.paused && !S.run && q.paused !== 'context')
+    head.appendChild(button('Pokračovat', 'btn-accent btn-small', () => { q.resume(); dispatchNext(); }));
+  if (q.length && !q.paused && S.run)
+    head.appendChild(button('Pozastavit', 'btn-ghost btn-small', () => { q.pause('manual'); renderQueue(); }));
+  if (q.length)
+    head.appendChild(button('Vyprázdnit', 'btn-ghost btn-small', () => {
+      q.clear(); S.queueEdit = null; S.queueWaitingEdit = false; S.queueNotice = null; renderQueue();
+    }));
+  box.appendChild(head);
+  if (S.queueNotice) box.appendChild(el('div', 'queue-notice', S.queueNotice));
+
+  const ol = el('ol', 'queue-list');
+  q.items.forEach((it, idx) => {
+    const li = el('li', 'queue-item');
+    li.appendChild(el('span', 'queue-mode', it.mode === 'plan' ? 'Plán' : 'Auto'));
+    if (S.queueEdit === it.id) {
+      const ta = el('textarea', 'queue-edit');
+      ta.value = it.prompt;
+      ta.rows = 3;
+      ta.setAttribute('aria-label', `Upravit zprávu ${idx + 1}`);
+      const save = () => {
+        try { q.update(it.id, ta.value); S.queueNotice = null; } catch (e) { S.queueNotice = e.message; renderQueue(); return; }
+        finishQueueEdit();
+      };
+      ta.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); e.stopPropagation(); save(); }
+        if (e.key === 'Escape') { e.preventDefault(); finishQueueEdit(); }
+      });
+      const actions = el('span', 'queue-tools');
+      actions.append(button('Uložit', 'btn-accent btn-small', save), button('Zrušit', 'btn-ghost btn-small', finishQueueEdit));
+      li.append(ta, actions);
+      ol.appendChild(li);
+      setTimeout(() => ta.focus(), 0);
+      return;
+    }
+    li.appendChild(el('span', 'queue-text', it.prompt));
+    const tools = el('span', 'queue-tools');
+    tools.append(
+      iconButton('↑', `Posunout zprávu ${idx + 1} výš`, () => { q.move(it.id, -1); renderQueue(); }, idx === 0),
+      iconButton('↓', `Posunout zprávu ${idx + 1} níž`, () => { q.move(it.id, 1); renderQueue(); }, idx === q.length - 1),
+      iconButton('✎', `Upravit zprávu ${idx + 1}`, () => { S.queueEdit = it.id; renderQueue(); }),
+      iconButton('✕', `Odebrat zprávu ${idx + 1}`, () => {
+        q.remove(it.id);
+        if (S.queueEdit === it.id) finishQueueEdit(); else renderQueue();
+      }),
+    );
+    li.appendChild(tools);
+    ol.appendChild(li);
+  });
+  box.appendChild(ol);
 }
 
 function textBlock(state, messageId, index) {
@@ -538,6 +677,8 @@ function handleEvent(ev, run, state) {
       break;
     case 'init':
       S.sessionId = ev.sessionId;
+      run.sessionId = ev.sessionId;
+      S.queue.bindSession(run, ev.sessionId);
       run.cwd = ev.cwd;
       markCurrentSession();
       $('#foot-model').textContent = `${ev.model || ''} • ${ev.permissionMode || ''} • v${ev.version || ''}`;
@@ -607,7 +748,7 @@ function handleEvent(ev, run, state) {
     case 'result': {
       run.resultText = ev.result;
       run.resultError = !!ev.isError;
-      if (ev.sessionId) { S.sessionId = ev.sessionId; markCurrentSession(); }
+      if (ev.sessionId) { S.sessionId = ev.sessionId; S.queue.bindSession(run, ev.sessionId); markCurrentSession(); }
       if (typeof ev.costUsd === 'number') {
         S.totalCost += ev.costUsd;
         $('#foot-cost').textContent = `poslední běh $${ev.costUsd.toFixed(3)} • ${ev.numTurns ?? '?'} ${plural(ev.numTurns, 'tah', 'tahy', 'tahů')} • ${(ev.durationMs / 1000).toFixed(1)} s`;
@@ -622,6 +763,8 @@ function handleEvent(ev, run, state) {
       break;
     }
     case 'exit':
+      run.outcome = ev.stopped ? 'stopped' : run.limitShown ? 'limit'
+        : (ev.code !== 0 || run.resultError || run.hadError) ? 'error' : run.mode === 'plan' ? 'plan' : 'ok';
       if (ev.stopped) { append(el('div', 'msg msg--note', 'Zastaveno.')); setStatus('Zastaveno.'); }
       else if (ev.code !== 0 && ev.stderr && !run.limitShown) showError(`claude skončil kódem ${ev.code}`, ev.stderr);
       else setStatus('Hotovo.');
@@ -629,6 +772,7 @@ function handleEvent(ev, run, state) {
       if (run.mode === 'plan' && !run.sawPlan && !ev.stopped && !run.resultError && run.resultText) showPlanCard(null, 'Plán je výše – schválit?');
       break;
     case 'error':
+      run.hadError = true;
       showError('Chyba běhu', ev.message);
       break;
   }
@@ -660,7 +804,7 @@ async function main() {
   $('#new-session').addEventListener('click', newSession);
   $('#project').addEventListener('change', (e) => switchProject(e.target.value));
   document.querySelectorAll('input[name="mode"]').forEach((i) => i.addEventListener('change', () => { S.mode = i.value; }));
-  window.addEventListener('beforeunload', (e) => { if (S.run) { e.preventDefault(); e.returnValue = ''; } });
+  window.addEventListener('beforeunload', (e) => { if (S.run || S.queue.length) { e.preventDefault(); e.returnValue = ''; } });
 
   try {
     let st = await loadState();

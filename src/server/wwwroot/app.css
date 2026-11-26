@@ -192,6 +192,23 @@ textarea {
 }
 textarea:focus { border-color: var(--accent); outline: none; }
 textarea::placeholder { color: var(--gray-3); }
+/* ---------- Fronta zpráv ---------- */
+.queue { border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--gray-1); padding: var(--space-2) var(--space-3); display: grid; gap: var(--space-2); }
+.queue-head { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.queue-state { flex: 1; font-size: var(--fs-small); color: var(--text-muted); min-width: 10rem; }
+.queue-state.paused { color: var(--accent); }
+.queue-notice { font-size: var(--fs-small); color: var(--err); }
+.queue-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-1); max-height: 30vh; overflow-y: auto; counter-reset: q; }
+.queue-item { display: flex; align-items: flex-start; gap: var(--space-2); padding: var(--space-1) 0; border-top: 1px solid var(--line); counter-increment: q; }
+.queue-item:first-child { border-top: 0; }
+.queue-item::before { content: counter(q) "."; font: 700 var(--fs-small)/1.6 var(--font-head); color: var(--gray-3); min-width: 1.4em; }
+.queue-mode { font: 700 .68rem/1 var(--font-head); letter-spacing: .1em; text-transform: uppercase; color: var(--accent); border: 1px solid var(--line); border-radius: 999px; padding: .35em .6em; margin-top: .2em; white-space: nowrap; }
+.queue-text { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: .92rem; line-height: 1.45;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.queue-tools { display: flex; gap: var(--space-1); flex-shrink: 0; }
+.queue-edit { flex: 1; min-height: 3.5rem; font-size: .92rem; }
+.btn-icon { padding: .35em .6em; font-size: .85rem; letter-spacing: 0; min-width: 2em; }
+
 .composer-bar { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
 .status { flex: 1; font: 700 var(--fs-small)/1.3 var(--font-head); letter-spacing: .04em; color: var(--text-muted); min-width: 8rem; }
 .status .spin::before { content: var(--spinner); }
