@@ -94,3 +94,17 @@ test('vyprázdnění i smazání poslední položky zruší pozastavení', () =>
   assert.equal(q.paused, null);
   assert.equal(q.length, 0);
 });
+
+test('přetažení: moveTo na libovolnou pozici', () => {
+  const q = new MessageQueue();
+  const [a, b, c, d] = ['A', 'B', 'C', 'D'].map((t) => add(q, t));
+  assert.equal(q.moveTo(d.id, 0), true);
+  assert.deepEqual([...q.items.map((i) => i.prompt)], ['D', 'A', 'B', 'C']);
+  q.moveTo(d.id, 99);
+  assert.deepEqual([...q.items.map((i) => i.prompt)], ['A', 'B', 'C', 'D']);
+  assert.equal(q.moveTo(b.id, 1), false);
+  q.moveTo(a.id, 2);
+  assert.deepEqual([...q.items.map((i) => i.prompt)], ['B', 'C', 'A', 'D']);
+  assert.equal(q.moveTo(999, 0), false);
+  void c;
+});

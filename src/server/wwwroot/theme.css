@@ -12,6 +12,7 @@
   --bubble: #232835;      /* bublina odpovědi */
   --text-muted: #b4b8c2;
   --line: #2a2f3a;        /* okraje */
+  --scroll-thumb: #3a404d; /* posuvníky */
   --accent: #7aa2ff;      /* přepisuje app.js podle účtu */
   --on-accent: #000;      /* text na akcentu */
   --ok: #7ee0a1;

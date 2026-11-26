@@ -25,6 +25,10 @@ The UI is in Czech.
   gif, webp), PDF and text files (txt, md, csv, json, log); type is checked by content, size is limited. Files are stored
   in the app state folder (never in the repo) and Claude gets read access only to the current account's and project's
   attachment folder (`--add-dir`), so it can re-read them later in the same session. Removed after 7 days.
+- **Comfortable typing**: Enter after `1. item` or `- item` continues the list, Enter on an empty item ends it,
+  Shift+Enter is a plain new line; queued messages can also be reordered by dragging the ⠿ handle.
+- **Notifications** (optional, footer toggle): when Claude finishes, a plan waits for approval or a limit is hit while
+  the window is in the background; the window title gets a ● marker.
 - Usage-limit warnings; when an account hits its limit, one click switches to another account and resends.
 - Security: loopback only, per-launch token, Host/Origin checks, strict CSP – see [docs/security.md](docs/security.md).
 - Your name, look and icon come from one config value and one CSS file (see *Customize*).

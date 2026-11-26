@@ -147,6 +147,7 @@ function renderAccounts() {
     input.checked = a.id === S.account;
     const pending = !a.ok && a.error === 'Ověřuji…';
     input.disabled = (!a.ok && !pending) || !!S.run;
+    if (!a.ok && !pending) label.dataset.unavailable = 'true';
     const span = el('span');
     span.appendChild(el('i', 'swatch'));
     span.appendChild(document.createTextNode(a.label));
@@ -172,7 +173,46 @@ function renderProjects() {
 function applyAccent() {
   const a = accountById(S.account);
   if (a) document.documentElement.style.setProperty('--accent', a.accent);
-  document.title = a ? `${S.appName} – ${a.label}` : S.appName;
+  document.title = (S.attention ? '● ' : '') + (a ? `${S.appName} – ${a.label}` : S.appName);
+}
+
+/* ---------- Oznámení (volitelná, jen když okno není aktivní) ---------- */
+const NOTIFY_KEY = 'acd.notify';
+const notifyEnabled = () => localStorage.getItem(NOTIFY_KEY) === '1' && 'Notification' in window && Notification.permission === 'granted';
+
+function renderNotifyToggle() {
+  const b = $('#notify-toggle');
+  if (!b) return;
+  const supported = 'Notification' in window;
+  const denied = supported && Notification.permission === 'denied';
+  const on = notifyEnabled();
+  b.textContent = on ? 'Oznámení: zapnuto' : 'Oznámení: vypnuto';
+  b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  b.title = !supported ? 'Prohlížeč oznámení nepodporuje.'
+    : denied ? 'Oznámení jsou v prohlížeči zakázaná (ikona zámku vedle adresy → Oznámení).'
+      : 'Upozornit, když Claude doběhne nebo čeká (jen když okno není aktivní).';
+  b.disabled = !supported;
+}
+
+async function toggleNotify() {
+  if (!('Notification' in window)) return;
+  if (notifyEnabled()) { localStorage.setItem(NOTIFY_KEY, '0'); renderNotifyToggle(); return; }
+  let perm = Notification.permission;
+  if (perm === 'default') { try { perm = await Notification.requestPermission(); } catch { perm = 'denied'; } }
+  localStorage.setItem(NOTIFY_KEY, perm === 'granted' ? '1' : '0');
+  renderNotifyToggle();
+}
+
+/** Upozorní, jen když se uživatel zrovna nedívá. */
+function notify(title, body) {
+  if (document.hasFocus() && !document.hidden) return;
+  S.attention = true;
+  applyAccent();
+  if (!notifyEnabled()) return;
+  try {
+    const n = new Notification(title, { body: (body || '').slice(0, 180), icon: 'favicon.svg', tag: 'acd-run' });
+    n.onclick = () => { window.focus(); n.close(); };
+  } catch { /* oznámení nejde zobrazit */ }
 }
 
 async function loadGit() {
@@ -639,9 +679,18 @@ function enqueue(prompt, files = []) {
 
 /** Konec běhu → výsledek pro frontu: ok | stopped | error | limit | plan. */
 function afterRun(run) {
-  const go = S.queue.onRunEnd(run.outcome ?? 'error');
+  const outcome = run.outcome ?? 'error';
+  const go = S.queue.onRunEnd(outcome);
   renderQueue();
-  if (go) setTimeout(dispatchNext, 0);
+  if (go) { setTimeout(dispatchNext, 0); return; }
+  const queued = S.queue.length ? ` Ve frontě čeká ${S.queue.length}.` : '';
+  const texts = {
+    ok: ['Claude doběhl', (run.resultText || 'Hotovo.') + queued],
+    plan: ['Plán čeká na schválení', 'Podívejte se na plán a schvalte ho.' + queued],
+    limit: ['Účet narazil na limit', 'Přepněte na jiný účet, nebo počkejte na obnovení.' + queued],
+    error: ['Běh skončil chybou', (run.resultText || 'Podívejte se do okna.') + queued],
+  };
+  if (texts[outcome]) notify(...texts[outcome]);
 }
 
 function dispatchNext() {
@@ -748,13 +797,31 @@ function setupAttachments() {
   const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
   document.addEventListener('dragenter', (e) => { if (hasFiles(e)) { depth++; hint.hidden = false; } });
   document.addEventListener('dragleave', (e) => { if (hasFiles(e) && --depth <= 0) { depth = 0; hint.hidden = true; } });
-  document.addEventListener('dragover', (e) => { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = hasFiles(e) ? 'copy' : 'none'; });
+  document.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    if (e.dataTransfer && S.queueDrag == null) e.dataTransfer.dropEffect = hasFiles(e) ? 'copy' : 'none';
+  });
   document.addEventListener('drop', (e) => {
     e.preventDefault();
     depth = 0; hint.hidden = true;
     const files = [...(e.dataTransfer?.files || [])];
     if (files.length) addFiles(files);
   });
+}
+
+/** Enter v seznamu doplní další číslo / odrážku; Shift+Enter = obyčejný nový řádek (výchozí chování). */
+function listKeydown(e) {
+  if (e.key !== 'Enter' || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey || e.isComposing || e.defaultPrevented) return;
+  const ta = e.target;
+  if (ta.selectionStart !== ta.selectionEnd) return;
+  const r = window.ListEditor.continueList(ta.value, ta.selectionStart);
+  if (!r) return;
+  e.preventDefault();
+  ta.setSelectionRange(r.from, r.to);
+  // execCommand zachová Ctrl+Z; kdyby nebyl k dispozici, setRangeText.
+  const ok = r.insert ? document.execCommand('insertText', false, r.insert) : document.execCommand('delete');
+  if (!ok) ta.setRangeText(r.insert, r.from, r.to, 'end');
+  ta.setSelectionRange(r.caret, r.caret);
 }
 
 function iconButton(text, label, onClick, disabled) {
@@ -809,6 +876,7 @@ function renderQueue() {
       ta.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); e.stopPropagation(); save(); }
         if (e.key === 'Escape') { e.preventDefault(); finishQueueEdit(); }
+        listKeydown(e);
       });
       const actions = el('span', 'queue-tools');
       actions.append(button('Uložit', 'btn-accent btn-small', save), button('Zrušit', 'btn-ghost btn-small', finishQueueEdit));
@@ -817,6 +885,41 @@ function renderQueue() {
       setTimeout(() => ta.focus(), 0);
       return;
     }
+    const handle = el('span', 'queue-handle', '⠿');
+    handle.draggable = true;
+    handle.title = 'Přetáhněte pro změnu pořadí (klávesnicí šipkami)';
+    handle.setAttribute('aria-hidden', 'true');
+    handle.addEventListener('dragstart', (e) => {
+      S.queueDrag = it.id;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/x-acd-queue', String(it.id));
+      e.dataTransfer.setDragImage(li, 12, 12);
+      li.classList.add('dragging');
+    });
+    handle.addEventListener('dragend', () => { S.queueDrag = null; renderQueue(); });
+    li.addEventListener('dragover', (e) => {
+      if (S.queueDrag == null) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = 'move';
+      const after = e.clientY > li.getBoundingClientRect().top + li.offsetHeight / 2;
+      li.classList.toggle('drop-after', after);
+      li.classList.toggle('drop-before', !after);
+    });
+    li.addEventListener('dragleave', () => li.classList.remove('drop-before', 'drop-after'));
+    li.addEventListener('drop', (e) => {
+      if (S.queueDrag == null) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const from = q.items.findIndex((x) => x.id === S.queueDrag);
+      let to = idx + (li.classList.contains('drop-after') ? 1 : 0);
+      if (from < to) to -= 1;
+      S.queueFocus = { id: S.queueDrag, action: 'up' };
+      q.moveTo(S.queueDrag, to);
+      S.queueDrag = null;
+      renderQueue();
+    });
+    li.prepend(handle);
     const txt = el('span', 'queue-text', it.prompt);
     if (it.attachments.length) txt.appendChild(el('span', 'queue-files', ` 📎 ${it.attachments.length}`));
     li.appendChild(txt);
@@ -1010,8 +1113,12 @@ async function main() {
 
   $('#composer').addEventListener('submit', (e) => { e.preventDefault(); send(); });
   $('#prompt').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(e.shiftKey ? 'queue' : 'now'); }
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(e.shiftKey ? 'queue' : 'now'); return; }
+    listKeydown(e);
   });
+  $('#notify-toggle').addEventListener('click', toggleNotify);
+  renderNotifyToggle();
+  window.addEventListener('focus', () => { if (S.attention) { S.attention = false; applyAccent(); } });
   $('#stop').addEventListener('click', stop);
   $('#queue-send').addEventListener('click', () => send('queue'));
   setupAttachments();

@@ -275,3 +275,23 @@ textarea::placeholder { color: var(--gray-3); }
 /* Zpráva poslaná do běžícího tahu */
 .msg--injected { opacity: .85; }
 .msg-inject-state { display: block; margin-top: .4em; font: 700 .7rem/1.2 var(--font-head); letter-spacing: .08em; text-transform: uppercase; opacity: .75; }
+
+/* ---------- Posuvníky v barvách tématu ---------- */
+* { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb, var(--gray-3)) transparent; }
+
+/* ---------- Účty: přeškrtnutý jen nedostupný účet, během běhu jen ztlumený ---------- */
+.seg-item input:disabled + span { text-decoration: none; }
+.seg-item[data-unavailable] input:disabled + span { text-decoration: line-through; }
+
+/* ---------- Fronta: úchyt pro přetažení ---------- */
+.queue-handle { cursor: grab; color: var(--gray-3); font-size: 1.05rem; line-height: 1.5; padding: 0 .15em; user-select: none; -webkit-user-select: none; }
+.queue-handle:hover { color: var(--fg); }
+.queue-handle:active { cursor: grabbing; }
+.queue-item.dragging { opacity: .45; }
+.queue-item.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+.queue-item.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
+
+/* ---------- Patička: přepínač oznámení ---------- */
+.foot-btn { margin-left: auto; background: none; border: 0; padding: 0; font: inherit; color: var(--gray-3); cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+.foot-btn:hover:not(:disabled) { color: var(--fg); }
+.foot-btn[aria-pressed="true"] { color: var(--accent); }

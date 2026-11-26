@@ -60,6 +60,16 @@
       return true;
     }
 
+    /** Přesune položku na pozici `index` (po vyjmutí; mimo rozsah se ořízne). */
+    moveTo(id, index) {
+      const i = this.items.findIndex((x) => x.id === id);
+      if (i < 0) return false;
+      const [it] = this.items.splice(i, 1);
+      const j = Math.max(0, Math.min(this.items.length, index));
+      this.items.splice(j, 0, it);
+      return i !== j;
+    }
+
     update(id, prompt) {
       const it = this.items.find((x) => x.id === id);
       const text = String(prompt || '').trim();
