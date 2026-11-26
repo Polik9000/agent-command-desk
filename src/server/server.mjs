@@ -217,6 +217,26 @@ async function handleApi(req, res, url) {
 
   if (req.method === 'POST' && p === '/api/runs') return startRun(req, res);
 
+  // Zpráva do běžícího tahu („Poslat hned“). 409 = běh už vstup nepřijímá → UI ji dá do fronty.
+  if (req.method === 'POST' && (m = /^\/api\/runs\/([0-9a-f]+)\/message$/.exec(p))) {
+    let body;
+    try { body = await readJson(req); } catch (e) { return problem(res, e.status ?? 400, e.message); }
+    const run = runner.find(m[1]);
+    if (!run) return problem(res, 404, 'Běh neexistuje.');
+    if (!body || typeof body.prompt !== 'string' || !body.prompt.trim() || body.prompt.length > MAX_PROMPT)
+      return problem(res, 400, 'Prázdná nebo příliš dlouhá zpráva.');
+    const ids = body.attachments ?? [];
+    if (!Array.isArray(ids) || ids.length > MAX_ATTACHMENTS) return problem(res, 400, `Nejvýš ${MAX_ATTACHMENTS} příloh.`);
+    const files = [];
+    for (const id of ids) {
+      const f = attachments.resolve(run.accountId, run.projectId, id);
+      if (!f) return problem(res, 400, 'Příloha neexistuje (nahrajte ji znovu).');
+      files.push(f);
+    }
+    if (!run.inject(body.prompt + attachmentsPrompt(files))) return problem(res, 409, 'Běh už končí – zpráva půjde do fronty.');
+    return sendJson(res, 200, { accepted: true });
+  }
+
   if (req.method === 'POST' && (m = /^\/api\/runs\/([0-9a-f]+)\/stop$/.exec(p))) {
     const run = runner.find(m[1]);
     if (!run) return problem(res, 404, 'Běh neexistuje.');
@@ -252,8 +272,10 @@ async function startRun(req, res) {
     files.push(f);
   }
   const prompt = body.prompt + attachmentsPrompt(files);
+  // Složka příloh vždy existuje, aby šly přílohy poslat i do běžícího tahu; Claude si je může přečíst i později.
   const attachDir = attachments.dirFor(account.id, project.id);
-  const addDirs = existsSync(attachDir) ? [attachDir] : []; // i v dalších zprávách sezení si může přílohu znovu přečíst
+  mkdirSync(attachDir, { recursive: true });
+  const addDirs = [attachDir];
 
   const status = await accounts.getVerified(account);
   if (!status.ok || !status.projectsDirectory) return problem(res, 409, `Účet ${account.label} není ověřen: ${status.error}`);

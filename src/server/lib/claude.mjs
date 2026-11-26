@@ -15,6 +15,9 @@ export const MODES = ['auto', 'plan'];
 const MAX_PLAN_BYTES = 512 * 1024;
 const ACCOUNT_MAX_AGE_MS = 10 * 60 * 1000;
 
+/** Jeden řádek vstupu --input-format stream-json se zprávou uživatele. */
+export const userLine = (text) => JSON.stringify({ type: 'user', message: { role: 'user', content: text } }) + '\n';
+
 /** Prostředí potomka: bez CLAUDE*, ANTHROPIC_*; CLAUDE_CONFIG_DIR z allowlistu. */
 export function claudeEnv(account) {
   /** @type {Record<string,string>} */
@@ -143,8 +146,10 @@ export class ClaudeRunner {
     if (!MODES.includes(mode)) throw new Error('Neplatný režim.');
     if (resume && this.busySessions.has(resume)) throw new Error('Toto sezení už běží.');
 
-    const args = ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
-      '--permission-mode', mode, '--permission-prompts', 'none'];
+    // Vstup jako stream-json: stdin zůstane otevřený, dokud tah neskončí, takže lze poslat další zprávu
+    // do běžícího tahu (Claude ji převezme na nejbližším předělu; --replay-user-messages to potvrdí).
+    const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
+      '--include-partial-messages', '--replay-user-messages', '--permission-mode', mode, '--permission-prompts', 'none'];
     if (resume) args.push('--resume', resume);
     if (this.cfg.appendSystemPrompt) args.push('--append-system-prompt', this.cfg.appendSystemPrompt);
     if (this.cfg.disallowedTools.length) args.push('--disallowedTools', ...this.cfg.disallowedTools);
@@ -161,11 +166,29 @@ export class ClaudeRunner {
       sessionId: resume ?? null,
       stopped: false,
       ended: false,
+      acceptingInput: true, // dokud je stdin otevřený
+      injected: 0,          // zprávy poslané do běžícího tahu
+      replayed: 0,          // potvrzení převzetí od claude (včetně úvodního promptu)
       stop() {
         if (run.ended) return;
         run.stopped = true;
+        run.closeInput();
         killTree(child.pid);
       },
+      /** Pošle zprávu do běžícího tahu. @returns {boolean} false, pokud už běh vstup nepřijímá */
+      inject(text) {
+        if (!run.acceptingInput || run.ended || run.stopped) return false;
+        run.injected++;
+        child.stdin.write(userLine(text), 'utf8');
+        return true;
+      },
+      closeInput() {
+        if (!run.acceptingInput) return;
+        run.acceptingInput = false;
+        clearTimeout(run.closeTimer);
+        try { child.stdin.end(); } catch { /* už zavřeno */ }
+      },
+      closeTimer: /** @type {any} */ (null),
     });
     if (resume) this.busySessions.add(resume);
     this.runs.set(run.id, run);
@@ -182,7 +205,7 @@ export class ClaudeRunner {
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (d) => { stderr = (stderr + d).slice(-4000); });
     child.stdin.on('error', () => { /* proces skončil dřív, než přečetl stdin */ });
-    child.stdin.end(prompt, 'utf8');
+    child.stdin.write(userLine(prompt), 'utf8');
 
     const rl = createInterface({ input: child.stdout, crlfDelay: Infinity });
     rl.on('line', (line) => {
@@ -190,6 +213,17 @@ export class ClaudeRunner {
         if (e.type === 'init' && parser.sessionId && !run.sessionId) {
           run.sessionId = parser.sessionId;
           this.busySessions.add(parser.sessionId);
+        }
+        if (e.type === 'user_replay') {
+          run.replayed++;
+          clearTimeout(run.closeTimer);
+        }
+        if (e.type === 'result') {
+          // Tah skončil. Čeká-li ještě vložená zpráva (ještě nepřevzatá), claude ji vezme jako další tah;
+          // jinak vstup zavřít, aby proces skončil. Pojistka: bez převzetí do 60 s zavřít i tak.
+          clearTimeout(run.closeTimer);
+          if (run.injected <= run.replayed - 1) run.closeInput();
+          else run.closeTimer = setTimeout(() => run.closeInput(), 60_000);
         }
         run.emit('event', e);
       }
@@ -209,6 +243,8 @@ export class ClaudeRunner {
       run.emit('event', ev('exit', { code: exitCode, stopped: run.stopped, sessionId: run.sessionId, stderr: err }));
       this.log(`Běh ${run.id} skončil kódem ${exitCode}${run.stopped ? ' (zastaven)' : ''}`);
     }).finally(() => {
+      clearTimeout(run.closeTimer);
+      run.acceptingInput = false;
       run.ended = true;
       this.runs.delete(run.id);
       if (run.sessionId) this.busySessions.delete(run.sessionId);

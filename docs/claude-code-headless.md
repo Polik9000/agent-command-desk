@@ -5,11 +5,15 @@ Verified with Claude Code 2.1.332 on Windows. Sources: real runs and
 
 ## Command
 ```
-claude -p --output-format stream-json --verbose --include-partial-messages
-       --permission-mode <auto|plan> --permission-prompts none
-       [--resume <session_id>] [--append-system-prompt <text>] [--disallowedTools <tools…>]
+claude -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages
+       --replay-user-messages --permission-mode <auto|plan> --permission-prompts none
+       [--resume <session_id>] [--append-system-prompt <text>] [--disallowedTools <tools…>] [--add-dir <attachments>]
 ```
-The prompt is written to stdin. Environment: `CLAUDE_CONFIG_DIR` from the account allowlist; inherited `CLAUDECODE`,
+The prompt is written to stdin as one JSON line `{"type":"user","message":{"role":"user","content":"…"}}`; stdin stays
+open until the turn ends. A message written during the turn is picked up at the next tool boundary and answered in the
+same turn (verified on 2.1.332); `--replay-user-messages` echoes each accepted message (`type: "user"`, `isReplay: true`),
+the first echo being the initial prompt. After `result`, stdin is closed unless an injected message has not been echoed
+yet (then Claude answers it as a follow-up turn; a 60 s fallback closes stdin anyway). Environment: `CLAUDE_CONFIG_DIR` from the account allowlist; inherited `CLAUDECODE`,
 `CLAUDE_CODE_*`, `CLAUDE_PID` and `ANTHROPIC_*` are removed.
 
 One process per message + `--resume` (no long-lived process): the mode is a start-up flag, Stop simply kills the tree,

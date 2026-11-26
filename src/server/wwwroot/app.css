@@ -269,3 +269,9 @@ textarea::placeholder { color: var(--gray-3); }
 }
 .attach-chip .btn-icon { padding: .25em .5em; border-color: transparent; font-size: .75rem; min-width: 0; }
 .attach-chip .btn-icon:hover:not(:disabled) { border-color: var(--line); }
+/* Tlačítko Přiložit ve velikosti přepínače Auto/Plán */
+.btn-pill { padding: .6em 1.05em; letter-spacing: .06em; border-width: 2px; color: var(--text-muted); }
+.btn-pill:hover:not(:disabled) { color: var(--fg); border-color: var(--gray-3); }
+/* Zpráva poslaná do běžícího tahu */
+.msg--injected { opacity: .85; }
+.msg-inject-state { display: block; margin-top: .4em; font: 700 .7rem/1.2 var(--font-head); letter-spacing: .08em; text-transform: uppercase; opacity: .75; }

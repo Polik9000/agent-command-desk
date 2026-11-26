@@ -61,3 +61,14 @@ test('nevalidní řádky se ignorují', () => {
   assert.deepEqual(p.parse(''), []);
   assert.deepEqual(p.parse('42'), []);
 });
+
+test('replay: potvrzení převzaté zprávy (--replay-user-messages)', () => {
+  const p = new StreamParser(path.join(os.tmpdir(), 'x', 'plans'));
+  const [a] = p.parse(JSON.stringify({ type: 'user', isReplay: true, message: { role: 'user', content: 'Doplňující pokyn' } }));
+  assert.deepEqual(a, { type: 'user_replay', text: 'Doplňující pokyn' });
+  const [b] = p.parse(JSON.stringify({ type: 'user', isReplay: true, message: { role: 'user', content: [{ type: 'text', text: 'blok' }] } }));
+  assert.equal(b.text, 'blok');
+  // tool_result bez isReplay se dál zpracuje jako výsledek nástroje
+  const [c] = p.parse(JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't', content: 'ok' }] } }));
+  assert.equal(c.type, 'tool_result');
+});

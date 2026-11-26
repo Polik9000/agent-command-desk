@@ -140,3 +140,11 @@ test('běh: neexistující příloha nebo příloha z jiného projektu → 400 (
   assert.equal((await run(['../../x'])).status, 400);
   assert.equal((await run(Array(11).fill(a.id))).status, 400);
 });
+
+test('zpráva do běhu: bez Origin 403, neexistující běh 404', async () => {
+  const body = Buffer.from(JSON.stringify({ prompt: 'ahoj' }));
+  const h = { 'Content-Type': 'application/json', 'Content-Length': body.length };
+  assert.equal((await req('POST', '/api/runs/abc123/message', { 'X-ACD-Token': TOKEN, ...h }, body)).status, 403);
+  assert.equal((await req('POST', '/api/runs/abc123/message', { ...origin(), ...h }, body)).status, 404);
+  assert.equal((await req('POST', '/api/runs/zzz/message', { ...origin(), ...h }, body)).status, 404);
+});

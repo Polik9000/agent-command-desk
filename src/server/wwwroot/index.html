@@ -69,10 +69,11 @@
             <label class="seg-item"><input type="radio" name="mode" value="auto" checked><span>Auto</span></label>
             <label class="seg-item"><input type="radio" name="mode" value="plan"><span>Plán</span></label>
           </fieldset>
-          <button type="button" class="btn btn-ghost" id="attach" title="Přiložit soubory (nebo je přetáhněte do okna, obrázek vložte Ctrl+V)">Přiložit</button>
-          <input type="file" id="file-input" multiple hidden accept=".png,.jpg,.jpeg,.gif,.webp,.pdf,.txt,.md,.csv,.json,.log">
           <span class="status" id="status" role="status" aria-live="polite"></span>
+          <button type="button" class="btn btn-ghost btn-pill" id="attach" title="Přiložit soubory (nebo je přetáhněte do okna, obrázek vložte Ctrl+V)">Přiložit</button>
+          <input type="file" id="file-input" multiple hidden accept=".png,.jpg,.jpeg,.gif,.webp,.pdf,.txt,.md,.csv,.json,.log">
           <button type="button" class="btn btn-ghost" id="stop" hidden>Zastavit</button>
+          <button type="button" class="btn btn-ghost" id="queue-send" hidden title="Odešle se až po dokončení běhu (Ctrl+Shift+Enter)">Do fronty</button>
           <button type="submit" class="btn btn-accent" id="send">Odeslat</button>
         </div>
       </form>

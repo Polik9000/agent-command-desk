@@ -75,6 +75,14 @@ export class StreamParser {
       }
 
       case 'user': {
+        // --replay-user-messages: Claude Code potvrzuje, že zprávu ze vstupu převzal (první = úvodní prompt).
+        if (e.isReplay === true) {
+          const c = e.message?.content;
+          const text = typeof c === 'string' ? c
+            : Array.isArray(c) ? c.filter((b) => b?.type === 'text').map((b) => b.text ?? '').join('\n') : '';
+          if (text) out.push(ev('user_replay', { text: text.slice(0, 200) }));
+          break;
+        }
         /** @type {Map<string, any>} */
         const decisions = new Map();
         for (const m of Array.isArray(e.tool_result_meta) ? e.tool_result_meta : [])

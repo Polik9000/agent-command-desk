@@ -16,7 +16,9 @@ The UI is in Czech.
 - Project switcher (allowlisted folders only), git branch and change count.
 - **Auto** / **Plan** modes: Plan writes a plan and changes nothing; **Approve plan** continues in Auto in the same session.
 - Session list with history and resume, Stop button (kills the whole process tree).
-- **Message queue**: keep typing while Claude works – messages wait in a queue (reorder, edit, remove) and are sent
+- **Send now**: while Claude works, *Poslat hned* (Ctrl+Enter) passes your message into the running turn – Claude
+  picks it up at the next step, like in the Claude Code terminal, and the message shows when it was read.
+- **Message queue**: *Do fronty* (Ctrl+Shift+Enter) – messages wait in a queue (reorder, edit, remove) and are sent
   one by one to the same session. Stop, an error, a usage limit or a plan waiting for approval pauses the queue;
   nothing is sent on its own after an interruption.
 - **Attachments**: drag & drop files into the window, paste a screenshot with Ctrl+V or use *Přiložit*. Images (png, jpg,

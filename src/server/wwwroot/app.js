@@ -480,27 +480,71 @@ function setMode(m) {
 
 /* ---------- Běh ---------- */
 function setRunning(on) {
-  $('#send').textContent = on ? 'Do fronty' : 'Odeslat';
+  $('#send').textContent = on ? 'Poslat hned' : 'Odeslat';
+  $('#send').title = on ? 'Claude si zprávu přečte ještě během práce (Ctrl+Enter)' : 'Odeslat (Ctrl+Enter)';
+  $('#queue-send').hidden = !on;
   $('#stop').hidden = !on;
   $('#prompt').disabled = false;
-  $('#prompt').placeholder = on ? 'Další zpráva půjde do fronty… (Ctrl+Enter)' : 'Napište zprávu… (Ctrl+Enter odešle)';
+  $('#prompt').placeholder = on ? 'Ctrl+Enter = poslat hned do běžící práce, Ctrl+Shift+Enter = do fronty'
+    : 'Napište zprávu… (Ctrl+Enter odešle)';
   $('#new-session').disabled = on;
   renderAccounts();
   renderProjects();
   renderQueue();
 }
 
-/** Odeslat: když Claude pracuje, zpráva jde do fronty. */
-function send() {
+/**
+ * Odeslat. Když Claude pracuje: target 'now' = do běžícího tahu (Claude ji přečte na nejbližším předělu),
+ * 'queue' = do fronty (odešle se po dokončení).
+ */
+function send(target = 'now') {
   const ta = $('#prompt');
   if (S.pending.some((a) => a.status === 'uploading')) { S.attachNotice = 'Počkejte, až se přílohy nahrají.'; renderAttachments(); return; }
   const files = S.pending.filter((a) => a.status === 'ok').map(({ id, name, type, size }) => ({ id, name, type, size }));
   const prompt = ta.value.trim() || (files.length ? DEFAULT_ATTACH_TEXT : '');
   if (!prompt) return;
-  if (S.run) { if (enqueue(prompt, files)) clearPending(); return; }
+  if (S.run) {
+    if (target === 'queue' || !S.run.runId) { if (enqueue(prompt, files)) clearPending(); return; }
+    ta.value = '';
+    clearPending();
+    injectNow(S.run, prompt, files);
+    return;
+  }
   ta.value = '';
   clearPending();
   startRun(prompt, S.mode, files);
+}
+
+/** Zpráva do běžícího tahu; když už běh končí (409), jde do fronty. */
+async function injectNow(run, prompt, files) {
+  let res;
+  try {
+    res = await api(`/api/runs/${run.runId}/message`, { method: 'POST', body: { prompt, attachments: files.map((f) => f.id) } });
+  } catch (e) {
+    showError('Zprávu se nepodařilo poslat', e.message);
+    return;
+  }
+  if (res.status === 409 || res.status === 404) {
+    if (S.run === run || S.run === null) {
+      enqueue(prompt, files);
+      S.queueNotice = 'Claude už práci dokončoval – zpráva je ve frontě a odešle se hned po něm.';
+      renderQueue();
+      if (!S.run) setTimeout(dispatchNext, 0);
+    }
+    return;
+  }
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try { msg = (await res.json()).error || msg; } catch { }
+    showError('Zprávu se nepodařilo poslat', msg);
+    return;
+  }
+  const bubble = userBubble(prompt, files);
+  bubble.classList.add('msg--injected');
+  const state = el('span', 'msg-inject-state', 'Posláno do běžící práce – čeká, až si ji Claude přečte…');
+  bubble.appendChild(state);
+  append(bubble, true);
+  run.injectedBubbles.push(state);
 }
 
 /** Bublina mé zprávy; text z historie může obsahovat blok s cestami k přílohám. */
@@ -529,7 +573,8 @@ async function startRun(prompt, mode, files = []) {
 
   const controller = new AbortController();
   const run = { runId: null, controller, mode, account: S.account, prompt, sawPlan: false, resultText: null,
-    resultError: false, hadError: false, cwd: null, limitShown: false, outcome: null, sessionId: S.sessionId };
+    resultError: false, hadError: false, cwd: null, limitShown: false, outcome: null, sessionId: S.sessionId,
+    replays: 0, injectedBubbles: [] };
   S.run = run;
   setRunning(true);
   setStatus('Spouštím Claude…', true);
@@ -896,6 +941,14 @@ function handleEvent(ev, run, state) {
           document.createTextNode(ev.resetsAt ? ` Obnova v ${fmtTime(ev.resetsAt)}.` : '')], []);
       }
       break;
+    case 'user_replay':
+      // První potvrzení je úvodní prompt; další = zprávy poslané do běžícího tahu, v pořadí odeslání.
+      run.replays++;
+      if (run.replays > 1) {
+        const st = run.injectedBubbles.shift();
+        if (st) st.textContent = 'Claude si zprávu přečetl';
+      }
+      break;
     case 'retry':
       setStatus(`API hlásí chybu, zkouším znovu (pokus ${ev.attempt ?? '?'})…`, true);
       break;
@@ -921,6 +974,7 @@ function handleEvent(ev, run, state) {
       break;
     }
     case 'exit':
+      for (const st of run.injectedBubbles.splice(0)) st.textContent = 'Claude zprávu nestihl převzít – pošlete ji prosím znovu.';
       run.outcome = ev.stopped ? 'stopped' : run.limitShown ? 'limit'
         : (ev.code !== 0 || run.resultError || run.hadError) ? 'error' : run.mode === 'plan' ? 'plan' : 'ok';
       if (ev.stopped) { append(el('div', 'msg msg--note', 'Zastaveno.')); setStatus('Zastaveno.'); }
@@ -956,9 +1010,10 @@ async function main() {
 
   $('#composer').addEventListener('submit', (e) => { e.preventDefault(); send(); });
   $('#prompt').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); }
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(e.shiftKey ? 'queue' : 'now'); }
   });
   $('#stop').addEventListener('click', stop);
+  $('#queue-send').addEventListener('click', () => send('queue'));
   setupAttachments();
   $('#new-session').addEventListener('click', newSession);
   $('#project').addEventListener('change', (e) => switchProject(e.target.value));
