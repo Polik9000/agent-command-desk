@@ -723,6 +723,7 @@ function iconButton(text, label, onClick, disabled) {
 function renderQueue() {
   const box = $('#queue');
   const q = S.queue;
+  const prevScroll = box.querySelector('.queue-list')?.scrollTop ?? 0;
   box.textContent = '';
   if (!q.length && !S.queueNotice) { box.hidden = true; return; }
   box.hidden = false;
@@ -775,11 +776,19 @@ function renderQueue() {
     if (it.attachments.length) txt.appendChild(el('span', 'queue-files', ` 📎 ${it.attachments.length}`));
     li.appendChild(txt);
     const tools = el('span', 'queue-tools');
+    const tool = (text, action, label, onClick, disabled) => {
+      const b = iconButton(text, label, () => { S.queueFocus = { id: it.id, action }; onClick(); }, disabled);
+      b.dataset.q = `${it.id}:${action}`;
+      return b;
+    };
     tools.append(
-      iconButton('↑', `Posunout zprávu ${idx + 1} výš`, () => { q.move(it.id, -1); renderQueue(); }, idx === 0),
-      iconButton('↓', `Posunout zprávu ${idx + 1} níž`, () => { q.move(it.id, 1); renderQueue(); }, idx === q.length - 1),
-      iconButton('✎', `Upravit zprávu ${idx + 1}`, () => { S.queueEdit = it.id; renderQueue(); }),
-      iconButton('✕', `Odebrat zprávu ${idx + 1}`, () => {
+      tool('↑', 'up', `Posunout zprávu ${idx + 1} výš`, () => { q.move(it.id, -1); renderQueue(); }, idx === 0),
+      tool('↓', 'down', `Posunout zprávu ${idx + 1} níž`, () => { q.move(it.id, 1); renderQueue(); }, idx === q.length - 1),
+      tool('✎', 'edit', `Upravit zprávu ${idx + 1}`, () => { S.queueEdit = it.id; renderQueue(); }),
+      tool('✕', 'remove', `Odebrat zprávu ${idx + 1}`, () => {
+        // Po smazání zůstat na sousední zprávě (další, jinak předchozí).
+        const neighbour = q.items[idx + 1] ?? q.items[idx - 1];
+        S.queueFocus = neighbour ? { id: neighbour.id, action: 'remove' } : null;
         q.remove(it.id);
         if (S.queueEdit === it.id) finishQueueEdit(); else renderQueue();
       }),
@@ -788,6 +797,19 @@ function renderQueue() {
     ol.appendChild(li);
   });
   box.appendChild(ol);
+
+  // Překreslení nesmí skočit na začátek: zachovat posun seznamu a výběr na stejné zprávě.
+  ol.scrollTop = prevScroll;
+  const f = S.queueFocus;
+  S.queueFocus = null;
+  if (f) {
+    const order = [f.action, f.action === 'up' ? 'down' : 'up', 'edit'];
+    const btn = order.map((a) => ol.querySelector(`[data-q="${f.id}:${a}"]`)).find((b) => b && !b.disabled);
+    if (btn) {
+      btn.focus({ preventScroll: true });
+      btn.closest('li')?.scrollIntoView({ block: 'nearest' });
+    }
+  }
 }
 
 function textBlock(state, messageId, index) {
