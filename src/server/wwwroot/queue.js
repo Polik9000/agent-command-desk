@@ -17,7 +17,7 @@
 
   class MessageQueue {
     constructor() {
-      /** @type {{id:number, prompt:string, mode:string, account:string, project:string, sessionId:string|null, run:any}[]} */
+      /** @type {{id:number, prompt:string, mode:string, account:string, project:string, sessionId:string|null, run:any, attachments:any[]}[]} */
       this.items = [];
       /** @type {string|null} */
       this.paused = null;
@@ -31,13 +31,14 @@
      * Přidá zprávu. `run` = právě běžící běh; dokud nezná své sezení (nové sezení), doplní ho bindSession.
      * @returns {{id:number}} @throws {Error}
      */
-    add({ prompt, mode, account, project, sessionId, run }) {
+    add({ prompt, mode, account, project, sessionId, run, attachments }) {
       const text = String(prompt || '').trim();
       if (!text) throw new Error('Prázdná zpráva.');
       if (text.length > MAX_PROMPT) throw new Error('Zpráva je příliš dlouhá.');
       if (this.items.length >= MAX_ITEMS) throw new Error(`Fronta je plná (max. ${MAX_ITEMS}).`);
       if (mode !== 'auto' && mode !== 'plan') throw new Error('Neplatný režim.');
-      const item = { id: this.nextId++, prompt: text, mode, account, project, sessionId: sessionId || null, run: run || null };
+      const files = Array.isArray(attachments) ? attachments.slice(0, 10) : [];
+      const item = { id: this.nextId++, prompt: text, mode, account, project, sessionId: sessionId || null, run: run || null, attachments: files };
       this.items.push(item);
       return item;
     }

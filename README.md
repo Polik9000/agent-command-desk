@@ -19,6 +19,10 @@ The UI is in Czech.
 - **Message queue**: keep typing while Claude works – messages wait in a queue (reorder, edit, remove) and are sent
   one by one to the same session. Stop, an error, a usage limit or a plan waiting for approval pauses the queue;
   nothing is sent on its own after an interruption.
+- **Attachments**: drag & drop files into the window, paste a screenshot with Ctrl+V or use *Přiložit*. Images (png, jpg,
+  gif, webp), PDF and text files (txt, md, csv, json, log); type is checked by content, size is limited. Files are stored
+  in the app state folder (never in the repo) and Claude gets read access only to the current account's and project's
+  attachment folder (`--add-dir`), so it can re-read them later in the same session. Removed after 7 days.
 - Usage-limit warnings; when an account hits its limit, one click switches to another account and resends.
 - Security: loopback only, per-launch token, Host/Origin checks, strict CSP – see [docs/security.md](docs/security.md).
 - Your name, look and icon come from one config value and one CSS file (see *Customize*).
@@ -86,7 +90,7 @@ Vendor libraries and optional fonts: `scripts/fetch-vendor.ps1` (pinned versions
 How the CLI is driven: [docs/claude-code-headless.md](docs/claude-code-headless.md).
 
 ## Roadmap
-Attachments (drag & drop, paste screenshots), model/effort picker, read-only git diff view,
+Model/effort picker, read-only git diff view,
 command palette, notifications. Interactive permission prompts are being researched.
 
 ## Uninstall

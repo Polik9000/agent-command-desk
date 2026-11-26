@@ -11,6 +11,7 @@ import { AccountGuard, ClaudeRunner, MODES } from './lib/claude.mjs';
 import { ev } from './lib/parser.mjs';
 import { listSessions, history, transcriptPath } from './lib/sessions.mjs';
 import { gitStatus } from './lib/git.mjs';
+import { AttachmentStore, attachmentsPrompt, MAX_PER_RUN as MAX_ATTACHMENTS } from './lib/attachments.mjs';
 import { openWindow, createHeartbeat } from './lib/window.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -71,6 +72,8 @@ const secret = createSecret();
 const heartbeat = createHeartbeat();
 const accounts = new AccountGuard(cfg, log);
 const runner = new ClaudeRunner(cfg, log);
+const attachments = new AttachmentStore(stateDir, log);
+attachments.cleanup();
 
 /* ---------- Pomocné ---------- */
 const MIME = {
@@ -197,6 +200,21 @@ async function handleApi(req, res, url) {
     return file ? sendJson(res, 200, history(file)) : problem(res, 404, 'Sezení neexistuje.');
   }
 
+  if (req.method === 'POST' && p === '/api/attachments') {
+    const account = findAccount(cfg, q.get('account'));
+    const project = findProject(cfg, q.get('project'));
+    if (!account || !project) { req.resume(); return problem(res, 400, 'Neznámý účet nebo projekt.'); }
+    try { return sendJson(res, 200, await attachments.save(req, account.id, project.id, q.get('name'))); }
+    catch (e) { return problem(res, e.status ?? 500, e.status ? e.message : 'Uložení přílohy selhalo.'); }
+  }
+
+  if (req.method === 'DELETE' && (m = /^\/api\/attachments\/([0-9a-f]{32})$/.exec(p))) {
+    const account = findAccount(cfg, q.get('account'));
+    const project = findProject(cfg, q.get('project'));
+    if (!account || !project) return problem(res, 400, 'Neznámý účet nebo projekt.');
+    return sendJson(res, 200, { removed: attachments.remove(account.id, project.id, m[1]) });
+  }
+
   if (req.method === 'POST' && p === '/api/runs') return startRun(req, res);
 
   if (req.method === 'POST' && (m = /^\/api\/runs\/([0-9a-f]+)\/stop$/.exec(p))) {
@@ -224,6 +242,19 @@ async function startRun(req, res) {
     return problem(res, 400, 'Prázdná nebo příliš dlouhá zpráva.');
   if (!existsSync(project.pathFull)) return problem(res, 400, 'Složka projektu neexistuje.');
 
+  // Přílohy: jen id nahraná pro tento účet a projekt; cesty doplní server, Claude dostane jen jejich složku.
+  const ids = body.attachments ?? [];
+  if (!Array.isArray(ids) || ids.length > MAX_ATTACHMENTS) return problem(res, 400, `Nejvýš ${MAX_ATTACHMENTS} příloh.`);
+  const files = [];
+  for (const id of ids) {
+    const f = attachments.resolve(account.id, project.id, id);
+    if (!f) return problem(res, 400, 'Příloha neexistuje (nahrajte ji znovu).');
+    files.push(f);
+  }
+  const prompt = body.prompt + attachmentsPrompt(files);
+  const attachDir = attachments.dirFor(account.id, project.id);
+  const addDirs = existsSync(attachDir) ? [attachDir] : []; // i v dalších zprávách sezení si může přílohu znovu přečíst
+
   const status = await accounts.getVerified(account);
   if (!status.ok || !status.projectsDirectory) return problem(res, 409, `Účet ${account.label} není ověřen: ${status.error}`);
 
@@ -237,7 +268,7 @@ async function startRun(req, res) {
   }
 
   let run;
-  try { run = runner.start(account, project, body.mode, body.prompt, resume); }
+  try { run = runner.start(account, project, body.mode, prompt, resume, { addDirs }); }
   catch (e) { return problem(res, 409, e.message); }
 
   res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'X-Accel-Buffering': 'no' });

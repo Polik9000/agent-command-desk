@@ -137,8 +137,9 @@ export class ClaudeRunner {
    * Spustí claude; události emituje jako 'event', na konci 'end'.
    * @param {import('./config.mjs').Account} account @param {import('./config.mjs').Project} project
    * @param {string} mode @param {string} prompt @param {string|null} resume
+   * @param {{addDirs?: string[]}} [opts] addDirs = další složky jen pro tento běh (přílohy)
    */
-  start(account, project, mode, prompt, resume) {
+  start(account, project, mode, prompt, resume, { addDirs = [] } = {}) {
     if (!MODES.includes(mode)) throw new Error('Neplatný režim.');
     if (resume && this.busySessions.has(resume)) throw new Error('Toto sezení už běží.');
 
@@ -147,6 +148,7 @@ export class ClaudeRunner {
     if (resume) args.push('--resume', resume);
     if (this.cfg.appendSystemPrompt) args.push('--append-system-prompt', this.cfg.appendSystemPrompt);
     if (this.cfg.disallowedTools.length) args.push('--disallowedTools', ...this.cfg.disallowedTools);
+    for (const d of addDirs) args.push('--add-dir', d);
 
     const child = spawn(claudeExePath(this.cfg), args, {
       cwd: project.pathFull, env: claudeEnv(account), shell: false, stdio: ['pipe', 'pipe', 'pipe'], ...childSpawnOptions(),

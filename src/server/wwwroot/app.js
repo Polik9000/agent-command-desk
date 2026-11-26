@@ -27,7 +27,14 @@ const S = {
   queueEdit: null,       // id položky fronty, která se právě upravuje
   queueWaitingEdit: false,
   queueNotice: null,
+  pending: [],           // přílohy připravené k odeslání
+  attachNotice: null,
 };
+
+const DEFAULT_ATTACH_TEXT = 'Podívej se na přílohy.';
+const ATTACH_RX = /\.(png|jpe?g|gif|webp|pdf|txt|md|csv|json|log)$/i;
+const ATTACH_MAX = 10;
+const ATTACH_MARK = '\n\nPřílohy od uživatele (soubory jen ke čtení, přečti je nástrojem Read):\n';
 
 /* ---------- Token ---------- */
 (function takeToken() {
@@ -110,6 +117,7 @@ function fmtRelative(iso) {
   if (diff < 86400) return `před ${Math.floor(diff / 3600)} h`;
   return d.toLocaleDateString('cs-CZ', { day: 'numeric', month: 'numeric', year: 'numeric' });
 }
+const fmtSize = (b) => (b < 1024 ? `${b} B` : b < 1024 * 1024 ? `${Math.round(b / 1024)} kB` : `${(b / 1024 / 1024).toFixed(1)} MB`);
 const plural = (n, one, few, many) => (n === 1 ? one : n >= 2 && n <= 4 ? few : many);
 const accountById = (id) => S.accounts.find((a) => a.id === id);
 const otherAccount = (id) => S.accounts.find((a) => a.id !== id && a.ok);
@@ -250,7 +258,7 @@ async function openSession(id) {
         continue;
       }
       tools = null;
-      if (it.role === 'user') append(el('div', 'msg msg--me', it.text));
+      if (it.role === 'user') append(userBubble(it.text));
       else {
         const m = append(el('div', 'msg msg--claude md'));
         renderMd(m, it.text, true);
@@ -268,6 +276,7 @@ async function openSession(id) {
 async function switchAccount(id) {
   if (S.run || id === S.account) return false;
   if (!leaveContext()) { renderAccounts(); return false; }
+  discardPending();
   S.account = id;
   applyAccent();
   renderAccounts();
@@ -279,6 +288,7 @@ async function switchAccount(id) {
 async function switchProject(id) {
   if (S.run || id === S.project) return;
   if (!leaveContext()) { $('#project').value = S.project; return; }
+  discardPending();
   S.project = id;
   newSession();
   await Promise.all([loadSessions(), loadGit()]);
@@ -483,18 +493,39 @@ function setRunning(on) {
 /** Odeslat: když Claude pracuje, zpráva jde do fronty. */
 function send() {
   const ta = $('#prompt');
-  const prompt = ta.value.trim();
+  if (S.pending.some((a) => a.status === 'uploading')) { S.attachNotice = 'Počkejte, až se přílohy nahrají.'; renderAttachments(); return; }
+  const files = S.pending.filter((a) => a.status === 'ok').map(({ id, name, type, size }) => ({ id, name, type, size }));
+  const prompt = ta.value.trim() || (files.length ? DEFAULT_ATTACH_TEXT : '');
   if (!prompt) return;
-  if (S.run) { enqueue(prompt); return; }
+  if (S.run) { if (enqueue(prompt, files)) clearPending(); return; }
   ta.value = '';
-  startRun(prompt, S.mode);
+  clearPending();
+  startRun(prompt, S.mode, files);
 }
 
-async function startRun(prompt, mode) {
+/** Bublina mé zprávy; text z historie může obsahovat blok s cestami k přílohám. */
+function userBubble(text, files) {
+  let body = text;
+  let names = (files || []).map((f) => `${f.name} (${fmtSize(f.size)})`);
+  const at = body.indexOf(ATTACH_MARK);
+  if (at >= 0) {
+    names = body.slice(at + ATTACH_MARK.length).split('\n').map((l) => l.replace(/^- /, '').split(/[\\/]/).pop()).filter(Boolean);
+    body = body.slice(0, at);
+  }
+  const box = el('div', 'msg msg--me', body);
+  if (names.length) {
+    const list = el('div', 'msg-attachments');
+    for (const n of names) list.appendChild(el('span', 'msg-attachment', `📎 ${n}`));
+    box.appendChild(list);
+  }
+  return box;
+}
+
+async function startRun(prompt, mode, files = []) {
   if (S.run) return;
   hideBanner();
   S.lastPrompt = prompt;
-  append(el('div', 'msg msg--me', prompt), true);
+  append(userBubble(prompt, files), true);
 
   const controller = new AbortController();
   const run = { runId: null, controller, mode, account: S.account, prompt, sawPlan: false, resultText: null,
@@ -508,7 +539,7 @@ async function startRun(prompt, mode) {
     const res = await api('/api/runs', {
       method: 'POST',
       signal: controller.signal,
-      body: { account: S.account, project: S.project, mode, prompt, resume: S.sessionId },
+      body: { account: S.account, project: S.project, mode, prompt, resume: S.sessionId, attachments: files.map((f) => f.id) },
     });
     if (!res.ok) {
       let msg = `HTTP ${res.status}`;
@@ -547,15 +578,18 @@ async function startRun(prompt, mode) {
 }
 
 /* ---------- Fronta zpráv ---------- */
-function enqueue(prompt) {
+function enqueue(prompt, files = []) {
+  let ok = false;
   try {
-    S.queue.add({ prompt, mode: S.mode, account: S.account, project: S.project, sessionId: S.sessionId, run: S.run });
+    S.queue.add({ prompt, mode: S.mode, account: S.account, project: S.project, sessionId: S.sessionId, run: S.run, attachments: files });
     $('#prompt').value = '';
     S.queueNotice = null;
+    ok = true;
   } catch (e) {
     S.queueNotice = e.message;
   }
   renderQueue();
+  return ok;
 }
 
 /** Konec běhu → výsledek pro frontu: ok | stopped | error | limit | plan. */
@@ -570,13 +604,112 @@ function dispatchNext() {
   if (S.queueEdit !== null) { S.queueWaitingEdit = true; renderQueue(); return; }
   const item = S.queue.takeNext({ account: S.account, project: S.project, sessionId: S.sessionId });
   renderQueue();
-  if (item) startRun(item.prompt, item.mode);
+  if (item) startRun(item.prompt, item.mode, item.attachments);
 }
 
 function finishQueueEdit() {
   S.queueEdit = null;
   if (S.queueWaitingEdit) { S.queueWaitingEdit = false; if (!S.run) setTimeout(dispatchNext, 0); }
   renderQueue();
+}
+
+/* ---------- Přílohy ---------- */
+let attachSeq = 0;
+const attachUrl = (extra = '') => `?account=${encodeURIComponent(S.account)}&project=${encodeURIComponent(S.project)}${extra}`;
+
+function deleteAttachment(id) {
+  if (id) api(`/api/attachments/${id}${attachUrl()}`, { method: 'DELETE' }).catch(() => {});
+}
+function clearPending() { S.pending = []; S.attachNotice = null; renderAttachments(); }
+function discardPending() { for (const a of S.pending) deleteAttachment(a.id); clearPending(); }
+
+async function addFiles(fileList, fromClipboard) {
+  for (const file of fileList) {
+    if (S.pending.length >= ATTACH_MAX) { S.attachNotice = `Nejvýš ${ATTACH_MAX} příloh ke zprávě.`; break; }
+    let name = file.name || 'soubor';
+    if (fromClipboard && file.type.startsWith('image/')) {
+      const t = new Date().toTimeString().slice(0, 8).replaceAll(':', '');
+      name = `schránka-${t}.${(file.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`;
+    }
+    if (!ATTACH_RX.test(name)) { S.attachNotice = `${name}: nepodporovaný typ (obrázky, PDF, txt, md, csv, json, log).`; continue; }
+    const item = { key: ++attachSeq, name, size: file.size, type: file.type, status: 'uploading', id: null, thumb: null };
+    S.pending.push(item);
+    if (file.type.startsWith('image/') && file.size < 5 * 1024 * 1024) {
+      const r = new FileReader();
+      r.onload = () => { item.thumb = String(r.result); renderAttachments(); };
+      r.readAsDataURL(file);
+    }
+    renderAttachments();
+    upload(item, file);
+  }
+  renderAttachments();
+}
+
+async function upload(item, file) {
+  try {
+    const res = await fetch(`/api/attachments${attachUrl(`&name=${encodeURIComponent(item.name)}`)}`, {
+      method: 'POST', headers: { 'X-ACD-Token': S.token, 'Content-Type': 'application/octet-stream' }, body: file, cache: 'no-store',
+    });
+    let data = null;
+    try { data = await res.json(); } catch { /* prázdné tělo */ }
+    if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+    if (!S.pending.includes(item)) { deleteAttachment(data.id); return; } // mezitím odebráno
+    Object.assign(item, { id: data.id, name: data.name, type: data.type, size: data.size, status: 'ok' });
+  } catch (e) {
+    item.status = 'error';
+    item.error = e.message;
+  }
+  renderAttachments();
+}
+
+function renderAttachments() {
+  const box = $('#attach-list');
+  box.textContent = '';
+  if (!S.pending.length && !S.attachNotice) { box.hidden = true; return; }
+  box.hidden = false;
+  for (const a of S.pending) {
+    const chip = el('div', 'attach-chip');
+    chip.dataset.state = a.status;
+    if (a.thumb) { const img = el('img', 'attach-thumb'); img.src = a.thumb; img.alt = ''; chip.appendChild(img); }
+    else chip.appendChild(el('span', 'attach-ext', (a.name.split('.').pop() || '?').toUpperCase()));
+    const info = el('span', 'attach-info');
+    info.append(el('span', 'attach-name', a.name),
+      el('span', 'attach-meta', a.status === 'uploading' ? 'nahrávám…' : a.status === 'error' ? a.error : `${a.type || '?'} • ${fmtSize(a.size)}`));
+    chip.appendChild(info);
+    chip.appendChild(iconButton('✕', `Odebrat přílohu ${a.name}`, () => {
+      S.pending = S.pending.filter((x) => x !== a);
+      deleteAttachment(a.id);
+      S.attachNotice = null;
+      renderAttachments();
+    }));
+    box.appendChild(chip);
+  }
+  if (S.attachNotice) box.appendChild(el('div', 'queue-notice', S.attachNotice));
+}
+
+function setupAttachments() {
+  const input = $('#file-input');
+  $('#attach').addEventListener('click', () => input.click());
+  input.addEventListener('change', () => { addFiles([...input.files]); input.value = ''; });
+  $('#prompt').addEventListener('paste', (e) => {
+    const files = [...(e.clipboardData?.files || [])];
+    if (!files.length) return;
+    if (!e.clipboardData.getData('text/plain')) e.preventDefault();
+    addFiles(files, true);
+  });
+  // Přetažení: vždy zachytit, jinak by Chrome soubor otevřel místo aplikace (a ztratil klíč).
+  const hint = $('#drop-hint');
+  let depth = 0;
+  const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+  document.addEventListener('dragenter', (e) => { if (hasFiles(e)) { depth++; hint.hidden = false; } });
+  document.addEventListener('dragleave', (e) => { if (hasFiles(e) && --depth <= 0) { depth = 0; hint.hidden = true; } });
+  document.addEventListener('dragover', (e) => { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = hasFiles(e) ? 'copy' : 'none'; });
+  document.addEventListener('drop', (e) => {
+    e.preventDefault();
+    depth = 0; hint.hidden = true;
+    const files = [...(e.dataTransfer?.files || [])];
+    if (files.length) addFiles(files);
+  });
 }
 
 function iconButton(text, label, onClick, disabled) {
@@ -608,6 +741,7 @@ function renderQueue() {
     head.appendChild(button('Pozastavit', 'btn-ghost btn-small', () => { q.pause('manual'); renderQueue(); }));
   if (q.length)
     head.appendChild(button('Vyprázdnit', 'btn-ghost btn-small', () => {
+      for (const it of q.items) for (const f of it.attachments) deleteAttachment(f.id);
       q.clear(); S.queueEdit = null; S.queueWaitingEdit = false; S.queueNotice = null; renderQueue();
     }));
   box.appendChild(head);
@@ -637,7 +771,9 @@ function renderQueue() {
       setTimeout(() => ta.focus(), 0);
       return;
     }
-    li.appendChild(el('span', 'queue-text', it.prompt));
+    const txt = el('span', 'queue-text', it.prompt);
+    if (it.attachments.length) txt.appendChild(el('span', 'queue-files', ` 📎 ${it.attachments.length}`));
+    li.appendChild(txt);
     const tools = el('span', 'queue-tools');
     tools.append(
       iconButton('↑', `Posunout zprávu ${idx + 1} výš`, () => { q.move(it.id, -1); renderQueue(); }, idx === 0),
@@ -801,10 +937,11 @@ async function main() {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); }
   });
   $('#stop').addEventListener('click', stop);
+  setupAttachments();
   $('#new-session').addEventListener('click', newSession);
   $('#project').addEventListener('change', (e) => switchProject(e.target.value));
   document.querySelectorAll('input[name="mode"]').forEach((i) => i.addEventListener('change', () => { S.mode = i.value; }));
-  window.addEventListener('beforeunload', (e) => { if (S.run || S.queue.length) { e.preventDefault(); e.returnValue = ''; } });
+  window.addEventListener('beforeunload', (e) => { if (S.run || S.queue.length || S.pending.length) { e.preventDefault(); e.returnValue = ''; } });
 
   try {
     let st = await loadState();

@@ -30,4 +30,9 @@ Claude Code login and never reads, copies or stores credentials.
     can ever be served; `local/config.json` never is.
 13. **Token on the browser command line.** The window is opened with `--app=http://127.0.0.1:<port>/#t=<token>`.
     Only processes of the same OS user can read it (they could read the page memory anyway); it is valid until the app exits.
-14. **Single instance** per user via a pid file in the state directory.
+14. **Attachments.** Upload requires token + Origin like any other write; the account and project must be in the
+    allowlist. Only listed extensions, checked against the file signature (text: no NUL bytes); size limits per type;
+    the file name is reduced to its last segment without reserved characters. Stored in
+    `<state>/attachments/<account>/<project>/<random id>/`; a run accepts only ids from the same account and project and
+    gets `--add-dir` for that folder only. Old uploads are deleted after 7 days.
+15. **Single instance** per user via a pid file in the state directory.
