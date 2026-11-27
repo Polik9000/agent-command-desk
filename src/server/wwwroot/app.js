@@ -674,6 +674,7 @@ function openStats() {
 }
 
 function setupStats() {
+  renderFootStats(); // tlačítko je vidět hned po spuštění, ne až po první zprávě
   $('#foot-cost').addEventListener('click', openStats);
   $('#stats-close').addEventListener('click', () => $('#statsdlg').close());
   $('#statsdlg').addEventListener('click', (e) => { if (e.target === e.currentTarget) e.currentTarget.close(); });
