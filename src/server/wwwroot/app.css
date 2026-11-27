@@ -365,3 +365,17 @@ textarea::placeholder { color: var(--gray-3); }
 .diff .hunk { color: var(--accent); background: var(--gray-1); }
 .git-note { color: var(--text-muted); font-size: var(--fs-small); margin: var(--space-2) 0; }
 @media (max-width: 52rem) { .git-body { grid-template-columns: 1fr; grid-template-rows: minmax(8rem, 35%) 1fr; } }
+
+/* ---------- Paleta příkazů ---------- */
+.palette { width: min(40rem, calc(100vw - 2rem)); padding: var(--space-2); margin-top: 12vh; }
+.palette-input { width: 100%; font: 400 1.05rem/1.3 var(--font-body); color: var(--fg); background: var(--gray-1);
+  border: 2px solid var(--accent); border-radius: var(--radius); padding: .6em .8em; outline: none; }
+.palette-list { list-style: none; margin: var(--space-2) 0 0; padding: 0; max-height: 50vh; overflow-y: auto; display: grid; gap: 1px; }
+.palette-group { font: 700 .68rem/1 var(--font-head); letter-spacing: .14em; text-transform: uppercase; color: var(--accent); padding: .8em .6em .35em; }
+.palette-item { display: flex; align-items: baseline; gap: .7em; padding: .45em .6em; border-radius: var(--radius); cursor: pointer; }
+.palette-item[aria-selected="true"] { background: var(--gray-2); box-shadow: inset 3px 0 0 var(--accent); }
+.palette-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.palette-item[data-kind="cmd"] .palette-label { font-family: var(--font-mono); font-size: .9rem; }
+.palette-meta { font: .72rem/1.2 var(--font-mono); color: var(--text-muted); white-space: nowrap; }
+.palette-empty { padding: .8em .6em; color: var(--text-muted); font-size: var(--fs-small); }
+.palette-hint { margin: var(--space-2) .4em .2em; font-size: .72rem; line-height: 1.4; color: var(--text-muted); }

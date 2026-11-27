@@ -7,6 +7,9 @@ import { isUnder } from './config.mjs';
 
 const MAX_TOOL_OUTPUT = 20_000;
 const str = (v) => (typeof v === 'string' ? v : undefined);
+const NAME_RX = /^[A-Za-z0-9][\w:.-]{0,99}$/;
+/** Názvy příkazů a skillů z init (pro paletu): jen rozumné řetězce, nejvýš 300. */
+const names = (v) => (Array.isArray(v) ? [...new Set(v.filter((x) => typeof x === 'string' && NAME_RX.test(x)))].slice(0, 300) : []);
 
 /** Odstraní undefined/null pole (menší SSE zprávy). */
 export function ev(type, fields = {}) {
@@ -52,7 +55,7 @@ export class StreamParser {
         if (e.subtype === 'init') {
           this.sessionId = str(e.session_id);
           out.push(ev('init', { sessionId: this.sessionId, model: str(e.model), permissionMode: str(e.permissionMode),
-            cwd: str(e.cwd), version: str(e.claude_code_version) }));
+            cwd: str(e.cwd), version: str(e.claude_code_version), slashCommands: names(e.slash_commands), skills: names(e.skills) }));
         } else if (e.subtype === 'api_retry') {
           out.push(ev('retry', { attempt: e.attempt, maxRetries: e.max_retries, error: str(e.error), errorStatus: e.error_status }));
         }

@@ -18,6 +18,8 @@ test('vzorek streamu → init, tool karta, text, limit, výsledek', () => {
     assert.ok(types.has(t), `chybí ${t}`);
   const init = events.find((e) => e.type === 'init');
   assert.equal(p.sessionId, init.sessionId);
+  assert.deepEqual(init.slashCommands, ['compact', 'context', 'cost', 'init', 'review']);
+  assert.deepEqual(init.skills, []);
   const use = events.find((e) => e.type === 'tool_use');
   const res = events.find((e) => e.type === 'tool_result');
   assert.equal(use.id, res.id);
@@ -71,4 +73,12 @@ test('replay: potvrzení převzaté zprávy (--replay-user-messages)', () => {
   // tool_result bez isReplay se dál zpracuje jako výsledek nástroje
   const [c] = p.parse(JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't', content: 'ok' }] } }));
   assert.equal(c.type, 'tool_result');
+});
+
+test('init: názvy příkazů a skillů jen jako rozumné řetězce', () => {
+  const p = new StreamParser(path.join(os.tmpdir(), 'x', 'plans'));
+  const [init] = p.parse(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's',
+    slash_commands: ['kickoff', 'commit-commands:commit', 'kickoff', 42, '-x', 'a b', '<img>', 'x'.repeat(101)], skills: 'nic' }));
+  assert.deepEqual(init.slashCommands, ['kickoff', 'commit-commands:commit']);
+  assert.deepEqual(init.skills, []);
 });

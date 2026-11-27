@@ -44,6 +44,9 @@ Runs on Windows and macOS (experimental). The UI is in Czech.
 - **Attachments** – drag & drop into the window, paste a screenshot with Ctrl+V or use *Přiložit*. Images (png, jpg, gif,
   webp), PDF and text files (txt, md, csv, json, log); type checked by content, size limited, stored outside the repo and
   deleted after 7 days. Claude can read only the current account's and project's attachment folder.
+- **Command palette** (Ctrl+K or *Příkazy*) – your custom commands and skills (learned from the first run in a project),
+  app actions (new session, Auto/Plan, model presets, git changes, settings, full screen) and recent messages; type to
+  filter (diacritics ignored), Enter inserts `/command ` into the message. Recent messages are kept in memory only.
 - **Comfortable typing** – Enter after `1. item`, `- item` or `- [ ] item` continues the list, Enter on an empty item ends
   it, Shift+Enter is a plain new line.
 - **Settings** (*Nastavení* in the header) – add, rename and remove projects without editing JSON (the folder must
@@ -61,6 +64,7 @@ Runs on Windows and macOS (experimental). The UI is in Czech.
 ### Keyboard
 | Keys | Action |
 |---|---|
+| Ctrl+K | Command palette |
 | Ctrl+Enter | Send; while Claude works: send now into the running turn |
 | Ctrl+Shift+Enter | While Claude works: add to the queue |
 | Enter | New line; continues a numbered/bulleted list |
@@ -130,7 +134,7 @@ Only create files inside local/, do not change anything else and do not commit. 
 
 ## Development
 ```
-npm test        # 75 tests: stream parser, config (incl. model allowlist), settings writes, git view, account guard, queue, list editing, attachments, 401/403/CSP
+npm test        # 76 tests: stream parser, config (incl. model allowlist), settings writes, git view, account guard, queue, list editing, attachments, 401/403/CSP
 npm run check   # syntax check
 ACD_OPEN_BROWSER=0 node src/server/server.mjs   # prints the URL with token on an interactive console
 ```
@@ -140,7 +144,7 @@ Vendor libraries and optional fonts: `scripts/fetch-vendor.ps1` (pinned versions
 How the CLI is driven (stream-json input/output, sending into a running turn): [docs/claude-code-headless.md](docs/claude-code-headless.md).
 
 ## Roadmap
-Command palette, usage statistics, session search and rename. Interactive permission prompts are being researched.
+Usage statistics, session search and rename. Interactive permission prompts are being researched.
 
 ## Uninstall
 Windows: `powershell -ExecutionPolicy Bypass -File scripts\uninstall.ps1` · macOS: `sh scripts/uninstall.sh`.
@@ -171,5 +175,5 @@ Kliknutím na větev a počet změn v hlavičce se otevře **přehled změn v gi
 
 Nebo dejte Claudovi prompt z části *Customize* a nechte ho nastavit všechno za vás.
 
-**Klávesy:** Ctrl+Enter odešle (během práce = poslat hned), Ctrl+Shift+Enter = do fronty, Enter v seznamu doplní další
+**Klávesy:** Ctrl+K otevře paletu příkazů (vlastní příkazy, skilly, akce, nedávné zprávy), Ctrl+Enter odešle (během práce = poslat hned), Ctrl+Shift+Enter = do fronty, Enter v seznamu doplní další
 číslo či odrážku, Shift+Enter = obyčejný nový řádek, Ctrl+V vloží screenshot jako přílohu.

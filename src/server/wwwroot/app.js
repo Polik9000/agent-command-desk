@@ -350,6 +350,7 @@ function leaveContext() {
 function newSession() {
   if (S.run || !leaveContext()) return;
   S.sessionId = null;
+  P.sessionPrompts = [];
   clearChat();
   hideBanner();
   markCurrentSession();
@@ -365,6 +366,7 @@ async function openSession(id) {
   setStatus('Načítám sezení…', true);
   try {
     const items = await apiJson(`/api/sessions/${encodeURIComponent(id)}?account=${encodeURIComponent(S.account)}&project=${encodeURIComponent(S.project)}`);
+    P.sessionPrompts = items.filter((it) => it.role === 'user').map((it) => it.text).slice(-30);
     let tools = null;
     for (const it of items) {
       if (it.role === 'tool') {
@@ -409,6 +411,145 @@ async function switchProject(id) {
   S.project = id;
   newSession();
   await Promise.all([loadSessions(), loadGit()]);
+}
+
+/* ---------- Paleta příkazů (Ctrl+K) ---------- */
+// Příkazy a skilly z posledního init daného účtu a projektu (localStorage – jen názvy, ne obsah zpráv).
+// Nedávné zprávy jen v paměti okna (odeslané v tomto okně + zprávy otevřeného sezení); na disk se neukládají.
+const CMDS_KEY = (acc, proj) => `acd.cmds.${acc}.${proj}`;
+const P = { items: [], sel: 0, recent: [], sessionPrompts: [] };
+
+function rememberCommands(ev) {
+  const list = [...new Set([...(ev.slashCommands || []), ...(ev.skills || [])])];
+  if (!list.length) return;
+  try { localStorage.setItem(CMDS_KEY(S.account, S.project), JSON.stringify(list.slice(0, 300))); } catch { }
+}
+function knownCommands() {
+  try { const a = JSON.parse(localStorage.getItem(CMDS_KEY(S.account, S.project)) || '[]'); return Array.isArray(a) ? a.filter((x) => typeof x === 'string') : []; }
+  catch { return []; }
+}
+function rememberPrompt(text) {
+  const t = String(text || '').trim();
+  if (!t) return;
+  P.recent = [t, ...P.recent.filter((x) => x !== t)].slice(0, 20);
+}
+
+const fold = (s) => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase(); // bez diakritiky a velikosti písmen
+
+function paletteActions() {
+  return [
+    { label: 'Nové sezení', run: () => newSession() },
+    { label: 'Režim Auto', run: () => setMode('auto') },
+    { label: 'Režim Plán', run: () => setMode('plan') },
+    ...PRESETS.filter((x) => !x.model || S.models.some((m) => m.id === x.model))
+      .map((p) => ({ label: `Model: ${p.label}`, meta: `${modelLabel(p.model)} · ${p.effort || 'výchozí'}`, run: () => setRunOpts(p.model, p.effort) })),
+    { label: 'Přiložit soubory', run: () => $('#file-input').click() },
+    { label: 'Změny v gitu', run: () => openGit() },
+    { label: 'Nastavení', run: () => openSettings() },
+    { label: document.fullscreenElement ? 'Ukončit celou obrazovku' : 'Celá obrazovka', run: () => toggleFullscreen() },
+  ];
+}
+
+function insertIntoPrompt(text, { replaceEmpty = true } = {}) {
+  const ta = $('#prompt');
+  if (replaceEmpty && !ta.value.trim()) { ta.value = text; ta.setSelectionRange(text.length, text.length); }
+  else {
+    const a = ta.selectionStart ?? ta.value.length, b = ta.selectionEnd ?? a;
+    ta.value = ta.value.slice(0, a) + text + ta.value.slice(b);
+    ta.setSelectionRange(a + text.length, a + text.length);
+  }
+  ta.focus();
+}
+
+function buildPalette(q) {
+  const f = fold(q.trim());
+  const match = (label) => !f || fold(label).includes(f);
+  const score = (label) => (f && fold(label).startsWith(f) ? 0 : 1);
+  const groups = [];
+  const cmds = knownCommands().map((c) => ({ kind: 'cmd', label: `/${c}`, run: () => insertIntoPrompt(`/${c} `) }))
+    .filter((x) => match(x.label) || match(x.label.slice(1)));
+  const acts = paletteActions().map((a) => ({ kind: 'act', ...a })).filter((x) => match(x.label));
+  const seen = new Set();
+  const recent = [...P.recent, ...P.sessionPrompts.slice().reverse()].filter((t) => !seen.has(t) && seen.add(t)).slice(0, 30)
+    .map((t) => ({ kind: 'msg', label: t.replace(/\s+/g, ' '), meta: t.length > 90 ? `${t.length} znaků` : '', run: () => insertIntoPrompt(t) }))
+    .filter((x) => match(x.label));
+  const sort = (a) => a.sort((x, y) => score(x.label) - score(y.label));
+  // Lomítko na začátku = hledám příkaz.
+  if (q.trim().startsWith('/')) groups.push(['Příkazy a skilly', sort(cmds)]);
+  else groups.push(['Akce', sort(acts)], ['Příkazy a skilly', sort(cmds)], ['Nedávné zprávy', recent]);
+  return groups.filter(([, items]) => items.length);
+}
+
+function renderPalette() {
+  const ul = $('#palette-list');
+  ul.textContent = '';
+  const groups = buildPalette($('#palette-input').value);
+  P.items = [];
+  for (const [title, items] of groups) {
+    const g = el('li', 'palette-group', title);
+    g.setAttribute('role', 'presentation');
+    ul.appendChild(g);
+    for (const it of items) {
+      const li = el('li', 'palette-item');
+      li.id = `pal-${P.items.length}`;
+      li.setAttribute('role', 'option');
+      li.dataset.kind = it.kind;
+      li.appendChild(el('span', 'palette-label', it.label));
+      if (it.meta) li.appendChild(el('span', 'palette-meta', it.meta));
+      const idx = P.items.length;
+      li.addEventListener('mousemove', () => { if (P.sel !== idx) { P.sel = idx; markPalette(); } });
+      li.addEventListener('click', () => { P.sel = idx; runPalette(); });
+      ul.appendChild(li);
+      P.items.push({ ...it, node: li });
+    }
+  }
+  if (!P.items.length) {
+    const e = el('li', 'palette-empty', knownCommands().length || $('#palette-input').value ? 'Nic nenalezeno.' : 'Nic nenalezeno. Příkazy se objeví po prvním běhu v tomto projektu.');
+    e.setAttribute('role', 'presentation');
+    ul.appendChild(e);
+  }
+  P.sel = Math.min(P.sel, Math.max(0, P.items.length - 1));
+  markPalette();
+}
+
+function markPalette() {
+  P.items.forEach((it, i) => it.node.setAttribute('aria-selected', i === P.sel ? 'true' : 'false'));
+  const cur = P.items[P.sel];
+  const input = $('#palette-input');
+  if (cur) { input.setAttribute('aria-activedescendant', cur.node.id); cur.node.scrollIntoView({ block: 'nearest' }); }
+  else input.removeAttribute('aria-activedescendant');
+}
+
+function runPalette() {
+  const it = P.items[P.sel];
+  if (!it) return;
+  $('#palette').close();
+  it.run();
+}
+
+function openPalette() {
+  const d = $('#palette');
+  if (d.open) { d.close(); return; }
+  for (const x of document.querySelectorAll('dialog[open]')) x.close();
+  $('#palette-input').value = '';
+  P.sel = 0;
+  renderPalette();
+  d.showModal();
+  $('#palette-input').focus();
+}
+
+function setupPalette() {
+  $('#palette-open').addEventListener('click', openPalette);
+  $('#palette-input').addEventListener('input', () => { P.sel = 0; renderPalette(); });
+  $('#palette-input').addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); P.sel = Math.min(P.sel + 1, P.items.length - 1); markPalette(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); P.sel = Math.max(P.sel - 1, 0); markPalette(); }
+    else if (e.key === 'Enter') { e.preventDefault(); runPalette(); }
+  });
+  $('#palette').addEventListener('click', (e) => { if (e.target === e.currentTarget) e.currentTarget.close(); });
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k') { e.preventDefault(); openPalette(); }
+  });
 }
 
 /* ---------- Git přehled (jen pro čtení) ---------- */
@@ -857,11 +998,13 @@ function send(target = 'now') {
     if (target === 'queue' || !S.run.runId) { if (enqueue(prompt, files)) clearPending(); return; }
     ta.value = '';
     clearPending();
+    rememberPrompt(prompt);
     injectNow(S.run, prompt, files);
     return;
   }
   ta.value = '';
   clearPending();
+  rememberPrompt(prompt);
   startRun(prompt, S.mode, files);
 }
 
@@ -1298,6 +1441,7 @@ function handleEvent(ev, run, state) {
       run.sessionId = ev.sessionId;
       S.queue.bindSession(run, ev.sessionId);
       run.cwd = ev.cwd;
+      rememberCommands(ev);
       markCurrentSession();
       $('#foot-model').textContent = `${ev.model || ''} • ${ev.permissionMode || ''}`
         + (run.effort ? ` • effort ${run.effort} (požadováno)` : '') + ` • v${ev.version || ''}`;
@@ -1438,6 +1582,7 @@ async function main() {
   setupRunOpts();
   setupSettings();
   setupGit();
+  setupPalette();
   $('#new-session').addEventListener('click', newSession);
   $('#project').addEventListener('change', (e) => switchProject(e.target.value));
   document.querySelectorAll('input[name="mode"]').forEach((i) => i.addEventListener('change', () => { S.mode = i.value; }));

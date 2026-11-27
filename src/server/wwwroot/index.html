@@ -35,6 +35,7 @@
       </label>
 
       <button type="button" class="git" id="git" title="Větev a změněné soubory – kliknutím zobrazíte změny (jen pro čtení)" aria-haspopup="dialog"></button>
+      <button type="button" class="btn btn-ghost btn-small" id="palette-open" aria-haspopup="dialog" title="Příkazy, skilly, akce a nedávné zprávy (Ctrl+K)">Příkazy</button>
       <button type="button" class="btn btn-ghost btn-small" id="settings-open" aria-haspopup="dialog">Nastavení</button>
     </div>
   </header>
@@ -140,6 +141,14 @@
         <label><input type="checkbox" value="problem"> Chyba, limit účtu nebo pozastavená fronta</label>
       </fieldset>
     </section>
+  </dialog>
+
+  <dialog class="dialog palette" id="palette" aria-label="Paleta příkazů">
+    <input type="text" id="palette-input" class="palette-input" role="combobox" aria-expanded="true" aria-controls="palette-list"
+      aria-autocomplete="list" autocomplete="off" spellcheck="false" placeholder="Hledat příkaz, skill, akci nebo nedávnou zprávu…">
+    <ul class="palette-list" id="palette-list" role="listbox" aria-label="Výsledky"></ul>
+    <p class="palette-hint">↑↓ výběr • Enter použít • Esc zavřít. Příkazy a skilly se načtou z prvního běhu v projektu; vestavěné
+      příkazy terminálu (např. /cost) v aplikaci nemusí fungovat.</p>
   </dialog>
 
   <dialog class="dialog dialog--wide" id="gitdlg" aria-labelledby="git-title">
