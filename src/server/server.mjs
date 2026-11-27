@@ -5,7 +5,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { existsSync, mkdirSync, openSync, writeSync, closeSync, readFileSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadConfig, configPath, findAccount, findProject } from './lib/config.mjs';
+import { loadConfig, configPath, findAccount, findProject, EFFORTS } from './lib/config.mjs';
 import { createSecret, setSecurityHeaders, checkRequest } from './lib/guard.mjs';
 import { AccountGuard, ClaudeRunner, MODES } from './lib/claude.mjs';
 import { ev } from './lib/parser.mjs';
@@ -170,6 +170,8 @@ async function handleApi(req, res, url) {
       defaultAccount: cfg.defaultAccount,
       defaultProject: findProject(cfg, cfg.defaultProject)?.id ?? cfg.projects[0].id,
       modes: MODES,
+      models: cfg.models.map((x) => ({ id: x.id, label: x.label })),
+      efforts: EFFORTS,
     });
   }
 
@@ -258,6 +260,10 @@ async function startRun(req, res) {
   if (!account) return problem(res, 400, 'Neznámý účet.');
   if (!project) return problem(res, 400, 'Neznámý projekt.');
   if (!MODES.includes(body.mode)) return problem(res, 400, 'Režim musí být auto nebo plan.');
+  const model = body.model ?? '';
+  const effort = body.effort ?? '';
+  if (typeof model !== 'string' || !cfg.models.some((x) => x.id === model)) return problem(res, 400, 'Neznámý model.');
+  if (!EFFORTS.includes(effort)) return problem(res, 400, 'Neplatný effort.');
   if (typeof body.prompt !== 'string' || !body.prompt.trim() || body.prompt.length > MAX_PROMPT)
     return problem(res, 400, 'Prázdná nebo příliš dlouhá zpráva.');
   if (!existsSync(project.pathFull)) return problem(res, 400, 'Složka projektu neexistuje.');
@@ -290,12 +296,12 @@ async function startRun(req, res) {
   }
 
   let run;
-  try { run = runner.start(account, project, body.mode, prompt, resume, { addDirs }); }
+  try { run = runner.start(account, project, body.mode, prompt, resume, { addDirs, model, effort }); }
   catch (e) { return problem(res, 409, e.message); }
 
   res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'X-Accel-Buffering': 'no' });
   const send = (e) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(e)}\n\n`); };
-  send(ev('run', { runId: run.id, account: account.id, project: project.id, mode: body.mode }));
+  send(ev('run', { runId: run.id, account: account.id, project: project.id, mode: body.mode, model, effort }));
   run.on('event', send);
   run.once('end', () => res.end());
   // Okno zavřeno / spojení přerušeno → běh nenecháme viset.

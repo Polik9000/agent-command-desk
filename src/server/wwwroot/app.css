@@ -295,3 +295,16 @@ textarea::placeholder { color: var(--gray-3); }
 .foot-btn { margin-left: auto; background: none; border: 0; padding: 0; font: inherit; color: var(--gray-3); cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
 .foot-btn:hover:not(:disabled) { color: var(--fg); }
 .foot-btn[aria-pressed="true"] { color: var(--accent); }
+
+/* ---------- Model a effort ---------- */
+.runopts { position: relative; }
+.runopts > summary { list-style: none; display: inline-block; }
+.runopts > summary::-webkit-details-marker { display: none; }
+.runopts > summary.is-custom { color: var(--accent); border-color: var(--accent); }
+.runopts-panel { position: absolute; bottom: calc(100% + .5rem); left: 0; z-index: 15; width: 23rem; max-width: calc(100vw - 2rem); display: grid; gap: var(--space-2);
+  background: var(--gray-1); border: 1px solid var(--line); border-radius: var(--radius-card); padding: var(--space-3); box-shadow: 0 8px 24px rgba(0, 0, 0, .45); }
+.runopts-presets { display: flex; gap: var(--space-1); flex-wrap: wrap; }
+.runopts-presets .btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.runopts-panel .field { justify-content: space-between; }
+.runopts-panel select { min-width: 10rem; }
+.runopts-hint { margin: 0; font-size: .75rem; line-height: 1.4; color: var(--text-muted); }

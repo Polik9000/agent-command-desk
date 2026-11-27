@@ -27,6 +27,10 @@ const S = {
   queueEdit: null,       // id položky fronty, která se právě upravuje
   queueWaitingEdit: false,
   queueNotice: null,
+  models: [{ id: '', label: 'Výchozí účtu' }],
+  efforts: [''],
+  model: '',             // pro další zprávy (pamatuje se pro každý účet)
+  effort: '',
   pending: [],           // přílohy připravené k odeslání
   attachNotice: null,
 };
@@ -126,6 +130,8 @@ const otherAccount = (id) => S.accounts.find((a) => a.id !== id && a.ok);
 async function loadState() {
   const st = await apiJson('/api/state');
   if (st.app && st.app.name) { S.appName = st.app.name; $('#brand-name').textContent = st.app.name; }
+  if (Array.isArray(st.models)) S.models = st.models;
+  if (Array.isArray(st.efforts)) S.efforts = st.efforts;
   S.accounts = st.accounts;
   S.projects = st.projects;
   if (!S.account) S.account = st.defaultAccount;
@@ -174,6 +180,61 @@ function applyAccent() {
   const a = accountById(S.account);
   if (a) document.documentElement.style.setProperty('--accent', a.accent);
   document.title = (S.attention ? '● ' : '') + (a ? `${S.appName} – ${a.label}` : S.appName);
+}
+
+/* ---------- Model a effort ---------- */
+const RUNOPTS_KEY = (acc) => `acd.runopts.${acc}`;
+const PRESETS = [
+  { label: 'Rychlé', model: 'sonnet', effort: 'low' },
+  { label: 'Běžná práce', model: '', effort: '' },
+  { label: 'Důkladné', model: 'opus', effort: 'high' },
+];
+const modelLabel = (id) => (S.models.find((m) => m.id === id) || { label: id || 'Výchozí účtu' }).label;
+
+function loadRunOpts() {
+  let o = {};
+  try { o = JSON.parse(localStorage.getItem(RUNOPTS_KEY(S.account)) || '{}'); } catch { o = {}; }
+  S.model = S.models.some((m) => m.id === o.model) ? o.model : '';
+  S.effort = S.efforts.includes(o.effort) ? o.effort : '';
+  renderRunOpts();
+}
+
+function setRunOpts(model, effort) {
+  S.model = S.models.some((m) => m.id === model) ? model : '';
+  S.effort = S.efforts.includes(effort) ? effort : '';
+  localStorage.setItem(RUNOPTS_KEY(S.account), JSON.stringify({ model: S.model, effort: S.effort }));
+  renderRunOpts();
+}
+
+function renderRunOpts() {
+  const sum = $('#runopts-summary');
+  if (!sum) return;
+  const custom = S.model || S.effort;
+  sum.textContent = custom ? `${modelLabel(S.model)} · ${S.effort || 'výchozí'}` : 'Model: výchozí';
+  sum.classList.toggle('is-custom', !!custom);
+  const ms = $('#model'), es = $('#effort'), box = $('#runopts-presets');
+  // Volby a předvolby se staví jen jednou: přestavění by zrušilo fokus a klik by vypadal jako klik mimo panel.
+  if (!box.childElementCount) {
+    for (const m of S.models) { const o = el('option', null, m.label); o.value = m.id; ms.appendChild(o); }
+    for (const e of S.efforts) { const o = el('option', null, e || 'Výchozí'); o.value = e; es.appendChild(o); }
+    for (const p of PRESETS.filter((x) => !x.model || S.models.some((m) => m.id === x.model))) {
+      const b = button(p.label, 'btn-ghost btn-small', () => setRunOpts(p.model, p.effort));
+      b.title = `${modelLabel(p.model)} · effort ${p.effort || 'výchozí'}`;
+      b.dataset.model = p.model; b.dataset.effort = p.effort;
+      box.appendChild(b);
+    }
+  }
+  ms.value = S.model; es.value = S.effort;
+  for (const b of box.children)
+    b.setAttribute('aria-pressed', b.dataset.model === S.model && b.dataset.effort === S.effort ? 'true' : 'false');
+}
+
+function setupRunOpts() {
+  $('#model').addEventListener('change', (e) => setRunOpts(e.target.value, S.effort));
+  $('#effort').addEventListener('change', (e) => setRunOpts(S.model, e.target.value));
+  const d = $('#runopts');
+  document.addEventListener('click', (e) => { if (d.open && !d.contains(e.target)) d.open = false; });
+  d.addEventListener('keydown', (e) => { if (e.key === 'Escape') { d.open = false; $('#runopts-summary').focus(); } });
 }
 
 /* ---------- Oznámení (volitelná, jen když okno není aktivní) ---------- */
@@ -318,6 +379,7 @@ async function switchAccount(id) {
   if (!leaveContext()) { renderAccounts(); return false; }
   discardPending();
   S.account = id;
+  loadRunOpts();
   applyAccent();
   renderAccounts();
   newSession();
@@ -605,7 +667,7 @@ function userBubble(text, files) {
   return box;
 }
 
-async function startRun(prompt, mode, files = []) {
+async function startRun(prompt, mode, files = [], opts = { model: S.model, effort: S.effort }) {
   if (S.run) return;
   hideBanner();
   S.lastPrompt = prompt;
@@ -614,7 +676,7 @@ async function startRun(prompt, mode, files = []) {
   const controller = new AbortController();
   const run = { runId: null, controller, mode, account: S.account, prompt, sawPlan: false, resultText: null,
     resultError: false, hadError: false, cwd: null, limitShown: false, outcome: null, sessionId: S.sessionId,
-    replays: 0, injectedBubbles: [] };
+    replays: 0, injectedBubbles: [], model: opts.model || '', effort: opts.effort || '' };
   S.run = run;
   setRunning(true);
   setStatus('Spouštím Claude…', true);
@@ -624,7 +686,7 @@ async function startRun(prompt, mode, files = []) {
     const res = await api('/api/runs', {
       method: 'POST',
       signal: controller.signal,
-      body: { account: S.account, project: S.project, mode, prompt, resume: S.sessionId, attachments: files.map((f) => f.id) },
+      body: { account: S.account, project: S.project, mode, prompt, resume: S.sessionId, attachments: files.map((f) => f.id), model: run.model, effort: run.effort },
     });
     if (!res.ok) {
       let msg = `HTTP ${res.status}`;
@@ -666,7 +728,8 @@ async function startRun(prompt, mode, files = []) {
 function enqueue(prompt, files = []) {
   let ok = false;
   try {
-    S.queue.add({ prompt, mode: S.mode, account: S.account, project: S.project, sessionId: S.sessionId, run: S.run, attachments: files });
+    S.queue.add({ prompt, mode: S.mode, account: S.account, project: S.project, sessionId: S.sessionId, run: S.run, attachments: files,
+      opts: { model: S.model, effort: S.effort } });
     $('#prompt').value = '';
     S.queueNotice = null;
     ok = true;
@@ -698,7 +761,7 @@ function dispatchNext() {
   if (S.queueEdit !== null) { S.queueWaitingEdit = true; renderQueue(); return; }
   const item = S.queue.takeNext({ account: S.account, project: S.project, sessionId: S.sessionId });
   renderQueue();
-  if (item) startRun(item.prompt, item.mode, item.attachments);
+  if (item) startRun(item.prompt, item.mode, item.attachments, { model: S.model, effort: S.effort, ...item.opts });
 }
 
 function finishQueueEdit() {
@@ -987,7 +1050,8 @@ function handleEvent(ev, run, state) {
       S.queue.bindSession(run, ev.sessionId);
       run.cwd = ev.cwd;
       markCurrentSession();
-      $('#foot-model').textContent = `${ev.model || ''} • ${ev.permissionMode || ''} • v${ev.version || ''}`;
+      $('#foot-model').textContent = `${ev.model || ''} • ${ev.permissionMode || ''}`
+        + (run.effort ? ` • effort ${run.effort} (požadováno)` : '') + ` • v${ev.version || ''}`;
       setStatus(run.mode === 'plan' ? 'Claude plánuje…' : 'Claude pracuje…', true);
       break;
     case 'text_delta': {
@@ -1122,6 +1186,7 @@ async function main() {
   $('#stop').addEventListener('click', stop);
   $('#queue-send').addEventListener('click', () => send('queue'));
   setupAttachments();
+  setupRunOpts();
   $('#new-session').addEventListener('click', newSession);
   $('#project').addEventListener('change', (e) => switchProject(e.target.value));
   document.querySelectorAll('input[name="mode"]').forEach((i) => i.addEventListener('change', () => { S.mode = i.value; }));
@@ -1129,6 +1194,7 @@ async function main() {
 
   try {
     let st = await loadState();
+    loadRunOpts();
     // Účty se ověřují na pozadí – chvíli počkej na výsledek.
     for (let i = 0; i < 20 && st.accounts.some((a) => !a.ok && a.error === 'Ověřuji…'); i++) {
       await new Promise((r) => setTimeout(r, 1000));

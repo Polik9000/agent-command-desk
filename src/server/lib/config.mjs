@@ -19,6 +19,15 @@ export { expand, norm, samePath, isUnder } from './platform.mjs';
  */
 
 const APP_ID_RX = /^[a-z0-9][a-z0-9-]{0,62}$/;
+const MODEL_ID_RX = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/; // nikdy nezačíná „-“ → nejde podstrčit přepínač
+/** Úsilí (effort) podle `claude --help`; '' = výchozí. */
+export const EFFORTS = ['', 'low', 'medium', 'high', 'xhigh', 'max'];
+const DEFAULT_MODELS = [
+  { id: '', label: 'Výchozí účtu' },
+  { id: 'opus', label: 'Opus' },
+  { id: 'sonnet', label: 'Sonnet' },
+  { id: 'fable', label: 'Fable' },
+];
 
 /** Cesta ke konfiguraci: ACD_CONFIG, jinak <repo>/local/config.json. */
 export function configPath(repoRoot) {
@@ -78,6 +87,14 @@ export function loadConfig(file, { checkExe = true } = {}) {
 
   if (checkExe) { const err = checkClaudeExe(cfg.claudeExeFull); if (err) fail(err); }
   if (!Number.isInteger(cfg.port) || cfg.port < 0 || cfg.port > 65535) fail('neplatný port');
+  // Povolené modely pro výběr v UI (id = alias nebo plný název pro `claude --model`; '' = výchozí model účtu).
+  cfg.models ??= DEFAULT_MODELS;
+  if (!Array.isArray(cfg.models)) fail('models musí být pole');
+  for (const m of cfg.models) {
+    if (!m || typeof m.label !== 'string' || typeof m.id !== 'string' || (m.id !== '' && !MODEL_ID_RX.test(m.id)))
+      fail('models: každá položka potřebuje id (písmena, číslice, . - _) a label');
+  }
+  if (!cfg.models.some((m) => m.id === '')) cfg.models = [{ id: '', label: 'Výchozí účtu' }, ...cfg.models];
   cfg.disallowedTools ??= [];
   cfg.appendSystemPrompt = String(cfg.appendSystemPrompt ?? '').replaceAll('{appName}', cfg.app.name);
   return cfg;

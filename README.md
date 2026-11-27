@@ -27,6 +27,11 @@ Runs on Windows and macOS (experimental). The UI is in Czech.
   verified via `claude auth status`. Any other login (e.g. a personal account) cannot be used, not even by mistake.
 - **Projects** – only allowlisted folders; git branch and number of changes shown in the header.
 - **Auto / Plan** – Plan writes a plan and changes nothing; **Approve plan** continues in Auto in the same session.
+- **Model and effort** – the *Model* button next to Auto/Plan offers presets (*Rychlé* = Sonnet + low effort,
+  *Běžná práce* = account default, *Důkladné* = Opus + high effort) or any allowlisted model and effort level. The choice
+  is remembered per account, applies from the next message (also inside a running session) and queued messages keep
+  theirs. The footer shows the model Claude Code actually used; effort is marked *požadováno* (requested) because the
+  CLI does not report it back.
 - **Sessions** – list with history, resume any session, Stop kills the whole process tree.
 - **Send now** – while Claude works, *Poslat hned* passes your message into the running turn; Claude picks it up at the
   next step (like in the Claude Code terminal) and the message shows when it was read.
@@ -79,7 +84,12 @@ Runs on Windows and macOS (experimental). The UI is in Czech.
 3. **Configure:** copy `config.example.json` to `local/config.json` and edit accounts (id, label, `configDir`,
    `expectedEmail`, `accent` colour) and projects (id, label, `path`). Paths may use `~`, `%VAR%` or `$VAR`, and any path
    can be per-platform: `{ "win32": "...", "darwin": "..." }`. Optional: `claudeExe`, `gitExe`, `browserExe`, `stateDir`,
-   `disallowedTools`, `appendSystemPrompt` (`{appName}` is replaced).
+   `disallowedTools`, `appendSystemPrompt` (`{appName}` is replaced), `models` – the models offered in the picker
+   (`id` is an alias or full model name passed to `claude --model`; `""` = the account's default is always added):
+   ```json
+   "models": [{ "id": "opus", "label": "Opus" }, { "id": "sonnet", "label": "Sonnet" }, { "id": "fable", "label": "Fable" }]
+   ```
+   The server accepts only these ids and the effort levels `low`, `medium`, `high`, `xhigh`, `max`.
 4. **Install the launcher:**
    - Windows: `powershell -ExecutionPolicy Bypass -File scripts\install.ps1` → creates `%USERPROFILE%\bin\<app id>.cmd`
      (make sure `%USERPROFILE%\bin` is on `PATH`).
@@ -112,7 +122,7 @@ Only create files inside local/, do not change anything else and do not commit. 
 
 ## Development
 ```
-npm test        # 58 tests: stream parser, config, account guard, queue, list editing, attachments, 401/403/CSP
+npm test        # 61 tests: stream parser, config (incl. model allowlist), account guard, queue, list editing, attachments, 401/403/CSP
 npm run check   # syntax check
 ACD_OPEN_BROWSER=0 node src/server/server.mjs   # prints the URL with token on an interactive console
 ```
@@ -122,7 +132,7 @@ Vendor libraries and optional fonts: `scripts/fetch-vendor.ps1` (pinned versions
 How the CLI is driven (stream-json input/output, sending into a running turn): [docs/claude-code-headless.md](docs/claude-code-headless.md).
 
 ## Roadmap
-Model and effort picker, settings panel (accounts, projects, full screen), read-only git diff view, command palette,
+Settings panel (accounts, projects, full screen), read-only git diff view, command palette,
 usage statistics. Interactive permission prompts are being researched.
 
 ## Uninstall
@@ -136,12 +146,14 @@ Removes the launcher and the state folder; your Claude Code accounts and the rep
 
 ## Česky
 Malé lokální okno nad Claude Code: povolené účty a projekty, streamované odpovědi, karty nástrojů s diffem, režim Plán
-se schválením jedním tlačítkem, pokračování sezení. Během práce lze poslat zprávu hned do běžícího tahu, nebo ji dát
+se schválením jedním tlačítkem, pokračování sezení, volba modelu a effortu (předvolby Rychlé / Běžná práce / Důkladné,
+pamatuje se pro každý účet). Během práce lze poslat zprávu hned do běžícího tahu, nebo ji dát
 do fronty; přikládat jde screenshoty (Ctrl+V), PDF a textové soubory. Rozhraní je české.
 
 **Nastavení**
 1. Každý účet = vlastní složka `CLAUDE_CONFIG_DIR` (alias viz *Setup*), jednou `/login`.
 2. `config.example.json` zkopírujte do `local/config.json` a vyplňte účty (včetně očekávaného e-mailu) a projekty.
+   Volitelně `models` = seznam modelů nabízených ve výběru (viz *Setup*).
 3. Vlastní název: `app.name` v configu. Vlastní vzhled: `local/theme.css` (vzor `src/server/wwwroot/theme.css`),
    ikona `local/favicon.svg`. Složka `local/` se nikdy necommituje.
 4. Spouštěč: Windows `scripts\install.ps1`, macOS `scripts/install.sh`; pak příkaz podle `app.id`.

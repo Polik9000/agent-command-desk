@@ -70,6 +70,16 @@
             <label class="seg-item"><input type="radio" name="mode" value="auto" checked><span>Auto</span></label>
             <label class="seg-item"><input type="radio" name="mode" value="plan"><span>Plán</span></label>
           </fieldset>
+          <details class="runopts" id="runopts">
+            <summary class="btn btn-ghost btn-pill" id="runopts-summary" title="Model a effort pro další zprávy">Model</summary>
+            <div class="runopts-panel" role="group" aria-label="Model a effort">
+              <div class="eyebrow">Předvolby</div>
+              <div class="runopts-presets" id="runopts-presets"></div>
+              <label class="field"><span class="eyebrow">Model</span><select id="model"></select></label>
+              <label class="field"><span class="eyebrow">Effort</span><select id="effort"></select></label>
+              <p class="runopts-hint">Platí od další zprávy, i v rozpracovaném sezení. Skutečně použitý model je v patičce.</p>
+            </div>
+          </details>
           <span class="status" id="status" role="status" aria-live="polite"></span>
           <button type="button" class="btn btn-ghost btn-pill" id="attach" title="Přiložit soubory (nebo je přetáhněte do okna, obrázek vložte Ctrl+V)">Přiložit</button>
           <input type="file" id="file-input" multiple hidden accept=".png,.jpg,.jpeg,.gif,.webp,.pdf,.txt,.md,.csv,.json,.log">

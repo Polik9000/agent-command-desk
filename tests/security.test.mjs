@@ -148,3 +148,21 @@ test('zpráva do běhu: bez Origin 403, neexistující běh 404', async () => {
   assert.equal((await req('POST', '/api/runs/abc123/message', { ...origin(), ...h }, body)).status, 404);
   assert.equal((await req('POST', '/api/runs/zzz/message', { ...origin(), ...h }, body)).status, 404);
 });
+
+test('běh: model mimo allowlist a neplatný effort → 400 (claude se nespustí)', async () => {
+  const run = (extra) => {
+    const body = Buffer.from(JSON.stringify({ account: 'a', project: 'p', mode: 'auto', prompt: 'ahoj', ...extra }));
+    return req('POST', '/api/runs', { ...origin(), 'Content-Type': 'application/json', 'Content-Length': body.length }, body);
+  };
+  assert.match(JSON.parse((await run({ model: 'gpt-5' })).body).error, /model/i);
+  assert.equal((await run({ model: '--dangerously-skip-permissions' })).status, 400);
+  assert.equal((await run({ model: 42 })).status, 400);
+  assert.match(JSON.parse((await run({ effort: 'ultra' })).body).error, /effort/i);
+  // povolené hodnoty projdou validací (pak skončí na neověřeném účtu → 409)
+  assert.equal((await run({ model: 'opus', effort: 'high' })).status, 409);
+});
+test('/api/state: seznam modelů a effortů', async () => {
+  const st = JSON.parse((await req('GET', '/api/state', { 'X-ACD-Token': TOKEN })).body);
+  assert.ok(st.models.some((m) => m.id === '' ) && st.models.some((m) => m.id === 'opus'));
+  assert.deepEqual(st.efforts, ['', 'low', 'medium', 'high', 'xhigh', 'max']);
+});
