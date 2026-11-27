@@ -1,8 +1,9 @@
 # Agent Command Desk
 
-A small local desktop window for **Claude Code**. Pick an allowlisted account and project, chat with streamed answers,
-see every tool call (edits as diffs), plan first and approve with one click, send messages while Claude works, queue the
-next ones and attach screenshots or PDFs.
+A small local desktop window for **Claude Code** that works like the terminal and shows more. Pick an allowlisted
+account and project, chat with streamed answers, watch every tool call and every agent Claude starts, see a live task
+list with progress and time left, plan first and approve with one click, switch mode or model while Claude works,
+send messages into a running turn, queue the next ones, rewind files, and attach screenshots or PDFs.
 
 No dependencies – just Node.js built-ins, a Chrome app window and the official `claude` CLI you are already logged into.
 Runs on Windows and macOS (experimental). The UI is in Czech.
@@ -21,119 +22,91 @@ Runs on Windows and macOS (experimental). The UI is in Czech.
 | ![Plan](docs/screenshots/04-plan.png) |
 
 ## Features
-- **Chat with Claude Code** – streamed answers, tool cards (Edit/MultiEdit/Write shown as diffs, Bash commands, results),
-  clear "denied" badges, model and cost of the last run in the footer.
-- **Accounts with an allowlist** – each account is a separate Claude Code config directory with an expected e-mail,
-  verified via `claude auth status`. Any other login (e.g. a personal account) cannot be used, not even by mistake.
-- **Projects** – only allowlisted folders; git branch and number of changes shown in the header.
-- **Git changes (read-only)** – click the branch/changes in the header: changed files grouped as conflicts, staged,
-  changed and new, with a coloured diff per file (new text files shown as added). Nothing can be staged, committed or
-  pushed from the app.
-- **Auto / Plan** – Plan writes a plan and changes nothing; **Approve plan** continues in Auto in the same session.
-- **Model and effort** – the *Model* button next to Auto/Plan offers presets (*Rychlé* = Sonnet + low effort,
-  *Běžná práce* = account default, *Důkladné* = Opus + high effort) or any allowlisted model and effort level. The choice
-  is remembered per account, applies from the next message (also inside a running session) and queued messages keep
-  theirs. The footer shows the model Claude Code actually used; effort is marked *požadováno* (requested) because the
-  CLI does not report it back.
-- **Sessions** – list with history, resume any session, Stop kills the whole process tree. Search across your and
-  Claude's messages in the account's and project's sessions (case and diacritics ignored, matching snippet shown) and
-  rename sessions with ✎ (the name is stored in the app only; Claude Code's transcripts are never modified).
-- **Fast follow-ups** – after a reply Claude Code keeps running for a while, so the next message in the same session
-  (same mode and model) is answered without start-up – about 0.8 s instead of 3 s for a short reply.
-- **Send now** – while Claude works, *Poslat hned* passes your message into the running turn; Claude picks it up at the
-  next step (like in the Claude Code terminal) and the message shows when it was read.
-- **Message queue** – *Do fronty* keeps messages until the run finishes, then sends them one by one to the same session.
-  Reorder (arrows or drag the ⠿ handle), edit, remove, pause. Stop, an error, a usage limit or a plan waiting for approval
-  pauses the queue – nothing is sent on its own after an interruption.
-- **Attachments** – drag & drop into the window, paste a screenshot with Ctrl+V or use *Přiložit*. Images (png, jpg, gif,
-  webp), PDF and text files (txt, md, csv, json, log); type checked by content, size limited, stored outside the repo and
-  deleted after 7 days. Claude can read only the current account's and project's attachment folder.
-- **Command palette** (Ctrl+K or *Příkazy*) – your custom commands and skills (learned from the first run in a project),
-  app actions (new session, Auto/Plan, model presets, git changes, settings, full screen) and recent messages; type to
-  filter (diacritics ignored), Enter inserts `/command ` into the message. Recent messages are kept in memory only.
-  Typing `/` at the start of a message suggests the same commands and skills right in the text box.
-- **Project files** (*Soubory*) – read-only file finder and viewer with syntax highlighting: search by name or path,
-  insert the path into your message, copy the content. Lists what git tracks plus new files (nothing ignored by
-  `.gitignore`), outside git it skips build and cache folders; key, certificate and `.env` files are never shown.
-- **Progress** – for bigger tasks Claude Code keeps its own task list (like Ctrl+T in the terminal); a panel on the right
-  shows the steps, where Claude is now, the percentage and an estimate of the time left (from how long the finished
-  steps took). No extra tokens.
-- **Agents and background work** – every agent Claude starts gets one card: task, type, state, tools used, tokens and
-  time; expand it to watch live what the agent reads, searches and runs, and what it writes. Commands and agents running
-  in the background are listed under *Na pozadí* with a *Stop* button.
-- **Like the terminal** – *Zastavit* interrupts like Esc (the session stays ready for the next message); the mode (Auto,
-  Plán, **Úpravy** = file edits without asking, Ručně) and the model can be switched while Claude works (like Shift+Tab
-  and /model); the footer shows how full the **context** is (like /context) with a breakdown and *Zhustit* (/compact);
-  **questions with options** from Claude appear as a card you answer in the window (needs `interactivePermissions`);
-  ↶ next to your message **rewinds the project files** to the state before it (like Esc Esc, with a list of files to
-  confirm); ⑂ **continues in a copy** of a session; ✎ renames the session in Claude Code itself (shown in the terminal
-  too); *Bokem* asks a **side question** answered from the session's context in Plan mode and never saved (like /btw,
-  which Claude Code does not offer in this mode); commands and skills come with descriptions and argument hints,
-  your agents are in the palette; sessions open in the terminal or running in the background are marked in the list.
-- **Review** – edits waiting for permission show a coloured diff; *Připomínkovat* on a plan lets you comment on its lines
-  and sends the comments back; a queued message can be returned to the text box (↩); images from tools (screenshots,
-  read images) are shown in the tool card; *Exportovat* in the session overview saves the conversation as Markdown.
+
+### Conversation
+- **Chat with Claude Code** – streamed answers, tool cards (Edit/MultiEdit/Write as coloured diffs, commands, results,
+  images such as screenshots), clear "denied" badges; *Kopírovat* under every reply copies it as Markdown.
+- **Modes** – **Auto**, **Plán** (writes a plan, changes nothing; *Schválit plán* continues in Auto in the same session,
+  *Připomínkovat* lets you comment on lines of the plan and sends the comments back), **Úpravy** (file edits without
+  asking, commands ask) and **Ručně** (asks before every edit and command; needs `interactivePermissions`).
+- **Model and effort** – the *Model* button offers presets (*Rychlé* = Sonnet + low effort, *Běžná práce* = account
+  default, *Důkladné* = Opus + high effort) or any allowlisted model and effort level, remembered per account. The footer
+  shows the model Claude Code actually used.
+- **Send now and queue** – while Claude works, *Poslat hned* passes your message into the running turn (Claude reads it
+  at the next step, like in the terminal); *Do fronty* keeps messages until the run finishes, then sends them one by one.
+  Reorder (arrows or drag ⠿), edit, return to the text box (↩), remove, pause. Stop, an error, a usage limit or a plan
+  waiting for approval pauses the queue.
+- **Attachments** – drag & drop, paste a screenshot with Ctrl+V or use *Přiložit*: images, PDF and text files; type
+  checked by content, size limited, stored outside the repo, deleted after 7 days.
+- **`/` and `@` in the text box** – `/` suggests your commands and skills with descriptions and argument hints, `@`
+  suggests project files (Claude Code reads the file right away).
+- **Find** – Ctrl+F finds text in the conversation (diacritics and case ignored; matches in collapsed cards open them).
+- **Comfortable typing** – lists continue on Enter, Shift+Enter is a plain new line; unsent drafts are kept per session.
+
+### Like the Claude Code terminal
+| Terminal | In the app |
+|---|---|
+| Esc | *Zastavit* interrupts; the session stays ready, the next message answers at once |
+| Shift+Tab, `/model` | mode and model can be switched while Claude works |
+| Ctrl+T (task list) | **Průběh** panel on the right: Claude's own task list, current step, %, time left |
+| subagents | one **agent card** each – task, type, state, tools, tokens, time; expand to watch live what it does |
+| Ctrl+B (background) | **Na pozadí** list of background commands and agents with *Zastavit* |
+| `/context`, `/compact` | footer *Kontext 42 %* with a breakdown and *Zhustit* |
+| Esc Esc, `/rewind` | ↶ next to your message rewinds the project files to the state before it (file list shown first) |
+| questions with options | a card with choices and your own answer (needs `interactivePermissions`) |
+| permission prompts | cards *Povolit jednou / Povolit vždy / Zamítnout*, edits shown as a diff (needs `interactivePermissions`) |
+| `/btw` | *Bokem* – a side question answered from the session in Plan mode, never saved |
+| `--fork-session` | ⑂ continue in a copy of a session; the original stays untouched |
+| `/rename` | ✎ renames the session in Claude Code itself (visible in the terminal too) |
+| `/resume` | session list with search across your and Claude's messages; sessions open in a terminal are marked |
+| `/mcp` | MCP servers and their state in *Přehled sezení*; a failed server is noted in the chat |
+| `/export` | *Exportovat* saves the conversation as Markdown |
+
+### Changes and files
+- **Git changes (read-only)** – click the branch in the header: changed files grouped as conflicts, staged, changed and
+  new, with a coloured diff. Click a line (or Enter on it) to write a comment; *Vložit do zprávy* turns all comments
+  into one message for Claude. Nothing can be staged, committed or pushed from the app.
+- **Project files (read-only)** – *Soubory*: search by name or path, view with syntax highlighting, insert the path or
+  copy the content. Only what git tracks plus new files; key, certificate and `.env` files are never shown.
+- **Session overview** – *Přehled sezení* in the footer: files Claude edited (also by agents), the task list, agents
+  and their state, tools used, MCP servers.
+
+### Usage and limits
+- **Statistics** – click the last run in the footer: tokens, turns, time and the API-price estimate for the last run and
+  the session, apart from your **subscription limit** (5-hour and 7-day windows). *Historie a grafy*: per day by
+  project, model or account, limit usage over time, table and CSV export (only numbers are stored, 180 days).
+- **Several accounts** – a warning when an account gets close to its limit; when it hits it, one click switches to
+  another account and resends. Otherwise the app **continues automatically** a minute after the limit resets (window
+  open, cancellable, at most 3 tries).
+- **Fast follow-ups** – after a reply Claude Code keeps running for a while, so the next message in the session starts
+  without start-up (about 0.8 s instead of 3 s for a short reply), also after a mode or model change.
+
+### Window and safety
+- **Accounts with an allowlist** – each account is its own Claude Code config directory with an expected e-mail,
+  verified via `claude auth status`; any other login (e.g. a personal account) cannot be used, not even by mistake.
+- **Projects** – only allowlisted folders; add, rename and remove them in *Nastavení* (accounts only by hand in
+  `local/config.json`).
 - **Claude in Chrome** (optional, only with `interactivePermissions`) – a checkbox in the *Model* panel lets Claude
   control your Chrome through the Claude in Chrome extension; every browser action needs your approval in the window.
-- **Continue after a usage limit** – when an account hits its limit and you do not switch to another one, the app
-  continues the same session automatically a minute after the limit resets (the window must stay open; cancel in the
-  banner; at most 3 attempts; can be turned off in *Nastavení*). The queue stays paused.
-- **Drafts** – an unsent message is kept per session (and per new session) when you switch sessions, projects or
-  accounts; sessions with a draft are marked *koncept*. Only in this browser, at most 30 drafts for 30 days; can be
-  turned off in *Nastavení*.
-- **Files with @** – type `@` and part of a name to insert a project file path; Claude Code reads the file right away
-  (verified in the headless mode the app uses).
-- **Statistics over time** (*Statistiky → Historie a grafy*) – API-price estimate, tokens, runs or working time per day,
-  split by project, model or account (stacked columns), totals, a table, account-limit usage over time (line chart) and
-  CSV export; 7 / 30 / 90 days. Only numbers are stored (no message texts), in the app's data folder, for 180 days.
-- **Comment on the diff** – in the git view (click the branch in the header) click a changed line, or press Enter on it
-  (arrow keys move between lines), and write what Claude should change. *Vložit do zprávy* turns all comments into one
-  message (file, line number, the code, your note) that you review and send. Comments live in the window's memory only.
-- **Session overview** (*Přehled sezení* in the footer) – files Claude edited (also by subagents; click to open in the
-  file viewer), the latest to-do list, agents and their state, tools used, and **MCP servers** with their connection state
-  as Claude Code reports it at start (connected / failed / needs sign-in). Read from the session transcript only; a
-  failed MCP server is also noted in the chat.
-- **Copy and find** – *Kopírovat* under every reply copies it as Markdown; Ctrl+F finds text in the conversation
-  (diacritics and case ignored, Enter / Shift+Enter next / previous, matches in collapsed tool cards open them).
-- **Comfortable typing** – Enter after `1. item`, `- item` or `- [ ] item` continues the list, Enter on an empty item ends
-  it, Shift+Enter is a plain new line.
-- **Settings** (*Nastavení* in the header) – add, rename and remove projects without editing JSON (the folder must
-  exist; drive roots, your home folder and Claude Code account folders are refused; the previous config is kept as
-  `config.json.bak`). Accounts are listed read-only: they are changed only by hand in `local/config.json`, so the UI can
-  never add an unverified (e.g. personal) account. Full-screen toggle (or F11) and notification options.
-- **Notifications** (optional, footer toggle or *Settings*) – when Claude finishes, a plan waits or a limit is hit while the window is
-  in the background; the window title gets a ● marker.
-- **Statistics** (click the last run in the footer) – tokens (input, output, cache read/write), turns, time and the
-  API-price estimate for the last run and the session, kept apart from your **subscription limit** (5-hour and 7-day
-  windows with usage and reset time, as reported by Claude Code). In memory only.
-- **Permission requests** (optional, `"interactivePermissions": true`) – when Claude Code would ask for permission,
-  a card in the chat offers *Povolit jednou* (allow once), *Povolit vždy* (allow always: saves the rule Claude Code
-  suggests, e.g. `Bash(npm test *)`, to the project's `.claude/settings.local.json`, like the terminal does) and
-  *Zamítnout* (deny). No answer in 10 minutes = deny. Off by default: then anything that would ask is denied
-  automatically. In Auto mode Claude Code asks only rarely, so this also adds a third mode, *Ručně* (manual, Claude
-  Code's `default` mode): Claude Code asks before every file edit and command.
-- **Usage limits** – warning when an account gets close; when it hits the limit, one click switches to another account
-  and resends.
-- **Keyboard and screen readers** – everything works from the keyboard (Ctrl+K, Ctrl+Enter, Esc closes dialogs and
-  returns focus), messages are labelled *Vaše zpráva* / *Claude*, errors, plans and permission requests are announced;
-  a permission card never steals focus while you type. Checked with axe-core (WCAG 2.2 AA) in both themes.
-- **Light or dark** – *Nastavení → Vzhled*: dark (default), light, or follow the system. Remembered per browser.
-- **Your own name and look** – one config value and one CSS file (see *Customize*).
-- **Security** – loopback only, per-launch token, Host/Origin checks, strict CSP, permission modes `auto`, `plan`,
-  `acceptEdits` (plus `default` with permission requests on; never `bypassPermissions` or `dontAsk`). Details in [docs/security.md](docs/security.md).
+- **Notifications** – when Claude finishes, asks, a plan waits or a limit is hit while the window is in the background.
+- **Keyboard and screen readers** – everything works from the keyboard; messages, errors, plans, questions and
+  permission requests are announced; checked with axe-core (WCAG 2.2 AA) in both themes.
+- **Light or dark**, **your own name and look** (one config value and one CSS file, see *Customize*).
+- **Security** – loopback only, per-launch token, Host/Origin checks, strict CSP; permission modes `auto`, `plan`,
+  `acceptEdits` (plus `default` with permission requests on; never `bypassPermissions` or `dontAsk`); `claude` only via
+  spawn with an argument array. Details in [docs/security.md](docs/security.md).
 
 ### Keyboard
 | Keys | Action |
 |---|---|
-| Ctrl+K | Command palette |
+| Ctrl+K | Command palette (commands, skills, agents, app actions, recent messages) |
 | `/` · `@` at the start of a word | Suggest commands and skills · project files |
 | Ctrl+F | Find in the conversation (Enter / Shift+Enter or F3 / Shift+F3 = next / previous, Esc closes) |
 | Ctrl+Enter | Send; while Claude works: send now into the running turn |
 | Ctrl+Shift+Enter | While Claude works: add to the queue |
-| Enter | New line; continues a numbered/bulleted list |
-| Shift+Enter | Plain new line (no list continuation) |
+| Enter / Shift+Enter | New line that continues a list / plain new line |
 | Ctrl+V | Paste text, or a screenshot as an attachment |
-| Ctrl+Enter / Esc (editing a queued message) | Save / cancel |
+| Esc | Close a dialog, the find bar or a suggestion list |
 
 ## Requirements
 - **Windows 10/11** or **macOS** (macOS is *experimental*: covered by CI tests, not yet tried by hand).
@@ -157,26 +130,29 @@ Runs on Windows and macOS (experimental). The UI is in Czech.
    default setup and would ask you to log in again).
 3. **Configure:** copy `config.example.json` to `local/config.json` and edit accounts (id, label, `configDir`,
    `expectedEmail`, `accent` colour) and projects (id, label, `path`). Paths may use `~`, `%VAR%` or `$VAR`, and any path
-   can be per-platform: `{ "win32": "...", "darwin": "..." }`. Optional: `claudeExe`, `gitExe`, `browserExe`, `stateDir`,
-   `disallowedTools`, `appendSystemPrompt` (`{appName}` is replaced), `models` – the models offered in the picker
-   (`id` is an alias or full model name passed to `claude --model`; `""` = the account's default is always added):
-   ```json
-   "models": [{ "id": "opus", "label": "Opus" }, { "id": "sonnet", "label": "Sonnet" }, { "id": "fable", "label": "Fable" }]
-   ```
-   The server accepts only these ids and the effort levels `low`, `medium`, `high`, `xhigh`, `max`.
-   `"startFullscreen": true` opens the window in full screen. `"interactivePermissions": true` turns on permission
-   requests in the window (see *Features*). `"sessionProcessMinutes": 10` = how long Claude Code stays running after a
-   reply so the next message in the session starts instantly (`0` = new process for every message).
-   Projects can also be managed later in the app (*Nastavení*).
+   can be per-platform: `{ "win32": "...", "darwin": "..." }`. Optional settings:
+
+   | Key | Meaning |
+   |---|---|
+   | `interactivePermissions` | `true` = permission cards, questions with options, mode *Ručně* and Claude in Chrome. Off by default: whatever Claude Code would ask about is denied automatically. **Recommended `true`.** |
+   | `appendSystemPrompt` | text added to Claude Code's system prompt (`{appName}` is replaced); the example tells Claude it runs in this app and may ask questions with options |
+   | `models` | models offered in the picker, e.g. `[{ "id": "opus", "label": "Opus" }, { "id": "sonnet", "label": "Sonnet" }]` (`id` = alias or full name for `claude --model`; the account default `""` is always added) |
+   | `sessionProcessMinutes` | how long Claude Code stays running after a reply (default 10; `0` = new process every message) |
+   | `startFullscreen` | `true` = open the window in full screen |
+   | `claudeExe`, `gitExe`, `browserExe`, `stateDir`, `disallowedTools` | paths and tools to deny |
+
+   The server accepts only the configured models and the effort levels `low`, `medium`, `high`, `xhigh`, `max`.
 4. **Install the launcher:**
    - Windows: `powershell -ExecutionPolicy Bypass -File scripts\install.ps1` → creates `%USERPROFILE%\bin\<app id>.cmd`
      (make sure `%USERPROFILE%\bin` is on `PATH`).
    - macOS: `sh scripts/install.sh` → creates `~/.local/bin/<app id>`.
-5. **Run** `agent-command-desk` (or your own `app.id`). The server starts hidden and opens a Chrome app window;
-   closing the window stops the server and any running `claude`. Logs (without prompts) are in the state directory
+5. **Run** `agent-command-desk` (or your own `app.id`) in a terminal. The server starts hidden and opens a Chrome app
+   window; closing the window stops the server and any running `claude`. If the app is already running, the launcher
+   just says so – close the window first to start the new version. Logs (without prompts) are in the state directory
    (`%LOCALAPPDATA%\<app id>` / `~/Library/Application Support/<app id>`).
 
-To update later: `git pull`, then close the window and start the app again (your `local/` folder is never touched).
+To update later: `git pull`, close the window and run the launcher again (your `local/` folder is never touched).
+Changes to `local/config.json` also apply only after a restart.
 
 ## Customize
 Everything personal lives in `local/` (git-ignored):
@@ -192,22 +168,27 @@ Ready-made prompt for Claude Code (replace the parts in brackets):
 ```text
 Clone https://github.com/Polik9000/agent-command-desk into [~/code/agent-command-desk] and read README.md.
 Create local/config.json from config.example.json: app name "[My Desk]", account "[Work]" with config dir
-[~/.claude-work] and e-mail [me@example.com], projects [~/code/site, ~/code/app].
+[~/.claude-work] and e-mail [me@example.com], projects [~/code/site, ~/code/app], "interactivePermissions": true.
 Create local/theme.css from src/server/wwwroot/theme.css in my brand: colours [#123456 …], fonts [… – bundle
 woff2 files in local/ only if their licence allows it], and local/favicon.svg.
 Only create files inside local/, do not change anything else and do not commit. Then run npm test and the install script.
 ```
 
+## How it drives Claude Code
+One `claude -p --input-format stream-json --output-format stream-json` process per session, kept for the next message.
+The app talks to it with Claude Code's own control requests (interrupt, permission mode, model, context usage, file
+rewind, background tasks) and turns its stream into the cards above. Claude Code's task list and file checkpoints are
+switched on for these processes. Details: [docs/claude-code-headless.md](docs/claude-code-headless.md).
+
 ## Development
 ```
-npm test        # ~100 tests: stream parser, config, settings writes, git view, project files, session processes (fake claude), permissions, account guard, queue, list editing, attachments, 401/403/CSP
+npm test        # ~120 tests: stream parser, runner with a fake claude (control requests, interrupt, copies), config, settings, git, files, sessions, usage history, permissions, queue, 401/403/CSP
 npm run check   # syntax check
 ACD_OPEN_BROWSER=0 node src/server/server.mjs   # prints the URL with token on an interactive console
 ```
 No real `claude` is needed for the tests; CI runs them on Windows, macOS and Linux.
 Test-only environment variables: `ACD_CONFIG`, `ACD_TOKEN` (≥ 32 chars), `ACD_PORT`, `ACD_OPEN_BROWSER`.
 Vendor libraries and optional fonts: `scripts/fetch-vendor.ps1` (pinned versions, see `src/server/wwwroot/vendor/VERSIONS.md`).
-How the CLI is driven (stream-json input/output, sending into a running turn): [docs/claude-code-headless.md](docs/claude-code-headless.md).
 
 ## Roadmap
 Ideas and feedback welcome – open an issue.
@@ -222,32 +203,30 @@ Removes the launcher and the state folder; your Claude Code accounts and the rep
 ---
 
 ## Česky
-Malé lokální okno nad Claude Code: povolené účty a projekty, streamované odpovědi, karty nástrojů s diffem, režim Plán
-se schválením jedním tlačítkem, pokračování, hledání a přejmenování sezení, volba modelu a effortu (předvolby Rychlé / Běžná práce / Důkladné,
-pamatuje se pro každý účet). Během práce lze poslat zprávu hned do běžícího tahu, nebo ji dát
-do fronty; přikládat jde screenshoty (Ctrl+V), PDF a textové soubory. Rozhraní je české.
+Malé lokální okno nad Claude Code, které funguje jako terminál a ukazuje víc: povolené účty a projekty, streamované
+odpovědi, karty nástrojů s diffem a karty agentů s živým postupem, vpravo **průběh** (seznam úkolů Clauda, procenta,
+odhad času) a **úlohy na pozadí**. Režimy **Auto, Plán, Úpravy, Ručně**; režim i model jde přepnout za běhu. *Zastavit*
+přeruší jako Esc, ↶ u zprávy vrátí soubory, ⑂ pokračuje v kopii sezení, *Bokem* položí otázku mimo sezení, v patičce je
+zaplnění **kontextu** se *Zhustit*. Během práce lze poslat zprávu hned nebo do fronty; přikládat jde screenshoty
+(Ctrl+V), PDF a textové soubory; `/` nabídne příkazy, `@` soubory. Rozhraní je české.
 
 **Nastavení**
 1. Každý účet = vlastní složka `CLAUDE_CONFIG_DIR` (alias viz *Setup*), jednou `/login`.
 2. `config.example.json` zkopírujte do `local/config.json` a vyplňte účty (včetně očekávaného e-mailu) a projekty.
-   Volitelně `models` = seznam modelů nabízených ve výběru (viz *Setup*), `startFullscreen` = okno na celou obrazovku.
-   Projekty jde později přidávat, přejmenovat a odebírat přímo v aplikaci (tlačítko **Nastavení**); účty jen ručně
-   v configu.
+   Doporučeno `"interactivePermissions": true` – karty svolení, otázky s možnostmi, režim Ručně a Claude in Chrome.
+   Volitelně `models` (modely ve výběru), `startFullscreen`, `sessionProcessMinutes`. Projekty jde později spravovat
+   přímo v aplikaci (**Nastavení**); účty jen ručně v configu.
+3. Vlastní název: `app.name`. Vlastní vzhled: `local/theme.css` (vzor `src/server/wwwroot/theme.css`), ikona
+   `local/favicon.svg`. Složka `local/` se nikdy necommituje. Světlý nebo tmavý motiv: **Nastavení → Vzhled**.
+4. Spouštěč: Windows `scripts\install.ps1`, macOS `scripts/install.sh`; pak v terminálu příkaz podle `app.id`.
+   Novou verzi nebo změnu configu načte aplikace po zavření okna a novém spuštění.
 
-Kliknutím na větev a počet změn v hlavičce se otevře **přehled změn v gitu** (soubory a diff, jen pro čtení).
-Tlačítko **Soubory** otevře hledání a náhled souborů projektu (jen pro čtení; soubory s klíči a hesly se neukazují).
-V přehledu změn jde kliknout na řádek a napsat k němu **komentář**; tlačítko *Vložit do zprávy* z komentářů složí zprávu
-pro Clauda. **Přehled sezení** v patičce ukáže upravené soubory, seznam úkolů, agenty a stav MCP serverů. Pod každou
-odpovědí je *Kopírovat*, Ctrl+F hledá v konverzaci (bez ohledu na diakritiku).
-Volitelné **sledování průběhu** (panel Model nebo Nastavení) ukáže vpravo kroky, kde Claude je, procenta a odhad času.
-Po **limitu účtu** aplikace sama pokračuje po jeho obnovení (vypnout jde v Nastavení). Rozepsané zprávy se pamatují
-u každého sezení, `@` nabídne soubory projektu a **Statistiky → Historie a grafy** ukážou spotřebu v čase.
-3. Vlastní název: `app.name` v configu. Vlastní vzhled: `local/theme.css` (vzor `src/server/wwwroot/theme.css`),
-   ikona `local/favicon.svg`. Složka `local/` se nikdy necommituje. Světlý nebo tmavý motiv: **Nastavení → Vzhled**
-   (barvy světlého motivu ve vlastním tématu: blok `:root[data-theme="light"]`).
-4. Spouštěč: Windows `scripts\install.ps1`, macOS `scripts/install.sh`; pak příkaz podle `app.id`.
+Přehled změn v gitu (klik na větev v hlavičce) umí komentáře k řádkům pro Clauda, **Soubory** hledají a ukazují
+soubory projektu, **Přehled sezení** v patičce ukáže upravené soubory, úkoly, agenty a MCP servery, **Statistiky →
+Historie a grafy** spotřebu v čase. Po limitu účtu aplikace sama pokračuje po jeho obnovení.
 
 Nebo dejte Claudovi prompt z části *Customize* a nechte ho nastavit všechno za vás.
 
-**Klávesy:** Ctrl+K otevře paletu příkazů (vlastní příkazy, skilly, akce, nedávné zprávy), Ctrl+F hledá v konverzaci, Ctrl+Enter odešle (během práce = poslat hned), Ctrl+Shift+Enter = do fronty, Enter v seznamu doplní další
-číslo či odrážku, Shift+Enter = obyčejný nový řádek, Ctrl+V vloží screenshot jako přílohu.
+**Klávesy:** Ctrl+K paleta (příkazy, skilly, agenti, akce, nedávné zprávy), Ctrl+F hledání v konverzaci, Ctrl+Enter
+odeslat (během práce = poslat hned), Ctrl+Shift+Enter = do fronty, Enter v seznamu doplní další číslo či odrážku,
+Shift+Enter = obyčejný nový řádek, Ctrl+V vloží screenshot jako přílohu, Esc zavře dialog.

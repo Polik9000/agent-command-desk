@@ -64,3 +64,35 @@ Claude Code writes `{"type":"control_request","request_id":…,"request":{"subty
 `setMode acceptEdits` (session); the app applies only `addRules`. Without `--permission-prompt-tool stdio` nothing is
 asked and everything is denied as with `none`. In `auto` mode the classifier decides almost everything itself; in
 `plan` mode Claude refuses edits on its own, so requests are rare in this app.
+
+## Control requests from the app (verified on Claude Code 2.1.332)
+The host writes `{"type":"control_request","request_id":"…","request":{"subtype":…}}` lines to stdin; Claude Code
+answers with `{"type":"control_response","response":{"subtype":"success"|"error","request_id":"…","response":{…}}}`.
+None of these calls the model.
+
+| Subtype | Payload | Used for |
+|---|---|---|
+| `initialize` | – | commands and skills with descriptions and argument hints, agents (account data in the answer is dropped) |
+| `interrupt` | – | *Zastavit* = Esc: the turn ends with an error result (`terminal_reason: aborted_tools`), the process stays usable |
+| `set_permission_mode` | `mode` | mode switch while working or when reusing a waiting process (a `system/status` event confirms it) |
+| `set_model` | `model` | model switch while working or when reusing a waiting process |
+| `get_context_usage` | – | footer *Kontext*: percentage, tokens, categories |
+| `rewind_files` | `user_message_id`, `dry_run` | ↶ rewind: list of files first, then the real rewind |
+| `stop_task` | `task_id` | *Zastavit* in *Na pozadí* |
+| `background_tasks`, `mcp_status`, `get_settings` | – | available, not used by the UI (`mcp_status` and `get_settings` return configuration, so the app does not call them) |
+
+`supported_commands` is not supported (use `initialize`). A session without a running process gets a short
+`claude -p --resume <id> --permission-mode plan --permission-prompts none` process for these requests (no message for
+the model), closed right after.
+
+Environment for run processes: `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` (TaskCreate / TaskUpdate → *Průběh*) and
+`CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=1` (file checkpoints for rewind). Extra flags: `--forward-subagent-text`
+(agent text in the agent card), `--fork-session` (copy), `--fork-session --no-session-persistence` (side question; `/btw`
+answers "isn't available in this environment" in this mode), `--chrome --settings '{"permissions":{"ask":["mcp__claude-in-chrome"]}}'`.
+Local slash commands such as `/rename <name>`, `/context` and `/compact` work as user messages (`/rename` and `/context`
+cost no tokens). Thinking blocks arrive empty (signature only), so the app does not show thinking.
+
+Events used besides assistant/user/result: `system/task_started|task_progress|task_updated|task_notification`
+(agents and background commands), `system/background_tasks_changed`, `system/session_title_changed`, `system/status`
+(`permissionMode`), `user` replays with `uuid` (needed for rewind). `total_cost_usd` in `result` is the sum for the whole
+process, so the app subtracts the previous value to get the cost of one turn.
