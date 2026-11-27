@@ -646,3 +646,4 @@ textarea::placeholder { color: var(--gray-3); }
 .set-field--color input { padding: 0; height: 2.3rem; cursor: pointer; }
 #set-accounts-msg[data-kind="err"] { color: var(--err); }
 .side-tools { display: flex; justify-content: flex-end; margin-top: var(--space-1); }
+#foot-model:empty { display: none; }
