@@ -121,3 +121,109 @@ export function searchSessions(projectsDirectory, projectPath, q, { maxFiles = S
   }
   return out;
 }
+
+/* ---------- Přehled sezení (jen čtení z transkriptu) ---------- */
+const EDIT_TOOLS = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']);
+const AGENT_TOOLS = new Set(['Task', 'Agent']);
+const OV_MAX_BYTES = 32 * 1024 * 1024;
+const OV_MAX_AGENT_FILES = 40;
+const s300 = (v) => (typeof v === 'string' ? v.slice(0, 300) : '');
+
+/**
+ * Co se v sezení stalo: upravené soubory (i vedlejšími agenty), spuštění agenti, poslední seznam úkolů (TodoWrite),
+ * použité nástroje a MCP servery. Čte jen transkript sezení a soubory jeho agentů (`<id>/subagents/agent-*.jsonl`).
+ * @param {string} file transkript sezení
+ * @param {string} projectPath cesta projektu (soubory uvnitř se ukážou relativně)
+ */
+export function overview(file, projectPath) {
+  const root = path.resolve(projectPath);
+  const rootLc = root.toLowerCase() + path.sep;
+  /** @type {Map<string, {path:string, outside:boolean, edits:number, writes:number, failed:number, main:boolean, agent:boolean}>} */
+  const files = new Map();
+  /** @type {Map<string, {key:string}>} id tool_use → soubor (kvůli chybám) */
+  const pendingEdits = new Map();
+  /** @type {Map<string, {id:string, description:string, type:string, status:string}>} */
+  const agents = new Map();
+  /** @type {Map<string, number>} */ const tools = new Map();
+  /** @type {Map<string, number>} */ const mcp = new Map();
+  let todos = null, todosAt = null, started = null, updated = null, userMsgs = 0, replies = 0;
+
+  const rel = (p) => {
+    const abs = path.resolve(root, p);
+    const inside = (abs.toLowerCase() + path.sep).startsWith(rootLc) || abs.toLowerCase() === root.toLowerCase();
+    return inside ? { path: path.relative(root, abs).replaceAll('\\', '/') || '.', outside: false } : { path: abs, outside: true };
+  };
+  const scan = (lines, fromAgent) => {
+    for (const line of lines) {
+      if (!line || !(line.includes('"type":"assistant"') || line.includes('"type":"user"'))) continue;
+      let o; try { o = JSON.parse(line); } catch { continue; }
+      const sub = fromAgent || o.isSidechain === true;
+      if (!sub && typeof o.timestamp === 'string') { started ??= o.timestamp; updated = o.timestamp; }
+      const content = Array.isArray(o.message?.content) ? o.message.content : [];
+      if (o.type === 'assistant') {
+        if (!sub && content.some((b) => b?.type === 'text' && b.text)) replies++;
+        for (const b of content) {
+          if (b?.type !== 'tool_use' || typeof b.name !== 'string') continue;
+          const input = b.input && typeof b.input === 'object' ? b.input : {};
+          if (!sub) tools.set(b.name, (tools.get(b.name) ?? 0) + 1);
+          const m = /^mcp__(.+?)__/.exec(b.name);
+          if (m) mcp.set(m[1], (mcp.get(m[1]) ?? 0) + 1);
+          if (EDIT_TOOLS.has(b.name)) {
+            const fp = input.file_path ?? input.notebook_path;
+            if (typeof fp !== 'string' || !fp) continue;
+            const r = rel(fp);
+            const key = r.outside ? r.path.toLowerCase() : r.path;
+            const f = files.get(key) ?? { ...r, edits: 0, writes: 0, failed: 0, main: false, agent: false };
+            if (b.name === 'Write') f.writes++; else f.edits++;
+            if (sub) f.agent = true; else f.main = true;
+            files.set(key, f);
+            if (typeof b.id === 'string') pendingEdits.set(b.id, { key });
+          } else if (!sub && AGENT_TOOLS.has(b.name) && typeof b.id === 'string') {
+            agents.set(b.id, { id: b.id, description: s300(input.description) || '(bez popisu)', type: s300(input.subagent_type), status: 'running' });
+          } else if (!sub && b.name === 'TodoWrite' && Array.isArray(input.todos)) {
+            todos = input.todos.slice(0, 100).filter((t) => t && typeof t === 'object')
+              .map((t) => ({ content: s300(t.content), status: ['pending', 'in_progress', 'completed'].includes(t.status) ? t.status : 'pending' }));
+            todosAt = typeof o.timestamp === 'string' ? o.timestamp : null;
+          }
+        }
+      } else if (o.type === 'user') {
+        if (!sub && o.isMeta == null && userText(o)) userMsgs++;
+        for (const b of content) {
+          if (b?.type !== 'tool_result' || typeof b.tool_use_id !== 'string') continue;
+          const pe = pendingEdits.get(b.tool_use_id);
+          if (pe && b.is_error === true) { const f = files.get(pe.key); if (f) f.failed++; }
+          const a = !sub && agents.get(b.tool_use_id);
+          if (a) {
+            const st = typeof o.toolUseResult?.status === 'string' ? o.toolUseResult.status : '';
+            a.status = b.is_error === true ? 'error' : /async|launched|running/i.test(st) ? 'background' : 'done';
+          }
+        }
+      }
+    }
+  };
+
+  try { if (statSync(file).size <= OV_MAX_BYTES) scan(readLines(file), false); } catch { /* chybí */ }
+  // Vedlejší agenti mají vlastní transkripty vedle sezení; meta.json říká, zda agent na pozadí doběhl.
+  const subDir = path.join(path.dirname(file), path.basename(file, '.jsonl'), 'subagents');
+  let names = [];
+  try { names = readdirSync(subDir); } catch { /* sezení bez agentů */ }
+  for (const n of names.filter((x) => /^agent-[\w-]+\.jsonl$/.test(x)).slice(0, OV_MAX_AGENT_FILES)) {
+    const f = path.join(subDir, n);
+    try { if (statSync(f).size <= OV_MAX_BYTES) scan(readLines(f), true); } catch { continue; }
+    try {
+      const meta = JSON.parse(readFileSync(f.replace(/\.jsonl$/, '.meta.json'), 'utf8'));
+      const a = typeof meta?.toolUseId === 'string' && agents.get(meta.toolUseId);
+      if (a && a.status === 'background' && meta.finished === true) a.status = 'done';
+    } catch { /* bez meta */ }
+  }
+
+  const sortBy = (m) => [...m.entries()].sort((a, b) => b[1] - a[1]).map(([name, count]) => ({ name, count }));
+  return {
+    files: [...files.values()].sort((a, b) => Number(a.outside) - Number(b.outside) || a.path.localeCompare(b.path)).slice(0, 300),
+    agents: [...agents.values()].slice(0, 100).map(({ id, ...a }) => a),
+    todos, todosAt,
+    tools: sortBy(tools).slice(0, 30),
+    mcp: sortBy(mcp).slice(0, 30),
+    userMessages: userMsgs, replies, started, updated,
+  };
+}

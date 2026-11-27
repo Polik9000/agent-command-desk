@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, rmSync, utimesSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { listSessions, searchSessions, projectDir } from '../src/server/lib/sessions.mjs';
+import { listSessions, searchSessions, projectDir, overview } from '../src/server/lib/sessions.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const projects = path.join(root, '.test-state', 'sessions', 'projects');
@@ -49,4 +49,46 @@ test('searchSessions: bez diakritiky a velikosti písmen, s úryvkem; ne nástro
   assert.deepEqual(searchSessions(projects, projectPath, 'tajny-prikaz'), []);                  // vstup nástroje ne
   assert.deepEqual(searchSessions(projects, projectPath, 'x'), []);                             // příliš krátké
   assert.deepEqual(searchSessions(projects, path.join(root, 'jiny'), 'piknik'), []);           // jiný projekt
+});
+
+test('overview: upravené soubory (i agenty), agenti, poslední úkoly, nástroje a MCP', () => {
+  const id = '44444444-4444-4444-8444-444444444444';
+  const dir = projectDir(projects, projectPath);
+  const tu = (id, name, input) => ({ type: 'tool_use', id, name, input });
+  const tr = (id, extra = {}) => ({ type: 'tool_result', tool_use_id: id, content: 'ok', ...extra });
+  const a = (blocks, ts) => line({ type: 'assistant', timestamp: ts, message: { content: blocks } });
+  const u = (blocks, extra = {}) => line({ type: 'user', message: { content: blocks }, ...extra });
+  const out = path.join(root, '.test-state', 'jinde.md');
+  writeFileSync(path.join(dir, `${id}.jsonl`), [
+    user('Uprav web', { timestamp: '2026-11-27T10:00:00.000Z' }),
+    a([{ type: 'text', text: 'Jdu na to.' }, tu('e1', 'Edit', { file_path: path.join(projectPath, 'src', 'a.js') }),
+      tu('e2', 'Write', { file_path: path.join(projectPath, 'src', 'a.js') }), tu('e3', 'Edit', { file_path: out })], '2026-11-27T10:01:00.000Z'),
+    u([tr('e1'), tr('e2', { is_error: true }), tr('e3')]),
+    a([tu('t1', 'TodoWrite', { todos: [{ content: 'Starý', status: 'pending' }] }), tu('g1', 'Agent', { description: 'Průzkum', subagent_type: 'Explore' }),
+      tu('g2', 'Task', { description: 'Na pozadí', subagent_type: 'general-purpose' }), tu('m1', 'mcp__github__search', {})]),
+    u([tr('g1'), tr('g2')], { toolUseResult: { status: 'async_launched' } }),
+    a([tu('t2', 'TodoWrite', { todos: [{ content: 'Hotovo', status: 'completed' }, { content: 'Teď', status: 'in_progress' }, { x: 1 }] })], '2026-11-27T10:05:00.000Z'),
+  ].join('\n') + '\n');
+  const sub = path.join(dir, id, 'subagents');
+  mkdirSync(sub, { recursive: true });
+  writeFileSync(path.join(sub, 'agent-abc.jsonl'), a([tu('s1', 'Edit', { file_path: path.join(projectPath, 'README.md') }), tu('s2', 'Bash', {})]) + '\n');
+  writeFileSync(path.join(sub, 'agent-abc.meta.json'), JSON.stringify({ toolUseId: 'g2', finished: true }));
+
+  const o = overview(path.join(dir, `${id}.jsonl`), projectPath);
+  assert.deepEqual(o.files.map((f) => [f.path, f.edits, f.writes, f.failed, f.main, f.agent, f.outside]), [
+    ['README.md', 1, 0, 0, false, true, false],
+    ['src/a.js', 1, 1, 1, true, false, false],
+    [path.resolve(out), 1, 0, 0, true, false, true],
+  ]);
+  // g1 i g2 dostaly stejný toolUseResult (async) → na pozadí; g2 podle meta.json doběhl.
+  assert.deepEqual(o.agents, [{ description: 'Průzkum', type: 'Explore', status: 'background' }, { description: 'Na pozadí', type: 'general-purpose', status: 'done' }]);
+  assert.deepEqual(o.todos, [{ content: 'Hotovo', status: 'completed' }, { content: 'Teď', status: 'in_progress' }, { content: '', status: 'pending' }]);
+  assert.equal(o.todosAt, '2026-11-27T10:05:00.000Z');
+  assert.deepEqual(o.tools.find((t) => t.name === 'Edit'), { name: 'Edit', count: 2 }); // Bash agenta se nepočítá
+  assert.equal(o.tools.some((t) => t.name === 'Bash'), false);
+  assert.deepEqual(o.mcp, [{ name: 'github', count: 1 }]);
+  assert.equal(o.userMessages, 1);
+  assert.equal(o.replies, 1);
+  assert.equal(o.started, '2026-11-27T10:00:00.000Z');
+  assert.equal(o.updated, '2026-11-27T10:05:00.000Z');
 });

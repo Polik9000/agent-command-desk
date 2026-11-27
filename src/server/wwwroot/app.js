@@ -36,6 +36,8 @@ const S = {
   effort: '',
   pending: [],           // přílohy připravené k odeslání
   attachNotice: null,
+  mcp: {},               // stav MCP serverů z posledního init podle účtu a projektu (jen v paměti)
+  mcpWarned: {},
 };
 
 const DEFAULT_ATTACH_TEXT = 'Podívej se na přílohy.';
@@ -470,8 +472,9 @@ async function openSession(id) {
       tools = null;
       if (it.role === 'user') append(userBubble(it.text));
       else {
-        const m = append(el('div', 'msg msg--claude md'));
-        renderMd(m, it.text, true);
+        const m = claudeBubble();
+        append(m.node);
+        setClaudeText(m, it.text, true);
       }
     }
     append(el('div', 'msg msg--note', 'Pokračujte další zprávou.'), true);
@@ -501,6 +504,8 @@ async function switchProject(id) {
   if (!leaveContext()) { $('#project').value = S.project; return; }
   discardPending();
   S.project = id;
+  GC.items = [];
+  renderCommentBar();
   newSession();
   await Promise.all([loadSessions(), loadGit()]);
 }
@@ -641,7 +646,9 @@ function paletteActions() {
     ...PRESETS.filter((x) => !x.model || S.models.some((m) => m.id === x.model))
       .map((p) => ({ label: `Model: ${p.label}`, meta: `${modelLabel(p.model)} · ${p.effort || 'výchozí'}`, run: () => setRunOpts(p.model, p.effort) })),
     { label: 'Přiložit soubory', run: () => $('#file-input').click() },
-    { label: 'Změny v gitu', run: () => openGit() },
+    { label: 'Změny v gitu', meta: 'komentáře k řádkům', run: () => openGit() },
+    { label: 'Přehled sezení', meta: 'soubory, úkoly, agenti, MCP', run: () => openOverview() },
+    { label: 'Hledat v konverzaci', meta: 'Ctrl+F', run: () => openFind() },
     { label: 'Soubory projektu', meta: 'hledání a náhled', run: () => openFiles() },
     { label: 'Nastavení', run: () => openSettings() },
     { label: 'Statistiky a limit účtu', run: () => openStats() },
@@ -800,6 +807,7 @@ async function loadGitFiles() {
     }
     nav.appendChild(g);
   }
+  renderCommentBar();
   if (!all.length) { showDiff(null, 'Žádné změny – pracovní strom je čistý.'); return; }
   const keep = G.sel && all.find((b) => b.dataset.key === G.sel);
   const first = keep || all[0];
@@ -810,6 +818,7 @@ async function loadGitFiles() {
 async function selectGitFile(btn, path, area) {
   for (const b of $('#git-files').querySelectorAll('.git-file')) b.setAttribute('aria-current', b === btn ? 'true' : 'false');
   G.sel = `${area}\n${path}`;
+  G.cur = { path, area };
   const seq = ++G.seq;
   showDiff(null, 'Načítám…');
   try {
@@ -833,19 +842,165 @@ function showDiff(r, message) {
   if (!r) { if (message) box.appendChild(el('p', 'git-note', message)); return; }
   if (r.note) box.appendChild(el('p', 'git-note', r.note));
   if (r.diff) {
-    const d = el('div', 'diff');
-    const lines = r.diff.replace(/\n$/, '').split('\n');
-    for (const line of lines) {
-      const k = /^(diff --git|index |--- |\+\+\+ |new file|deleted file|similarity|rename |old mode|new mode)/.test(line) ? 'file'
-        : line.startsWith('@@') ? 'hunk' : line.startsWith('+') ? 'add' : line.startsWith('-') ? 'del' : 'ctx';
-      d.appendChild(el('div', k, line));
+    const d = el('div', 'diff diff--review');
+    const cur = G.cur || {};
+    let first = true;
+    for (const l of Review.diffLines(r.diff)) {
+      const row = el('div', l.kind === 'meta' ? 'ctx' : l.kind, l.text);
+      if (l.line != null) {
+        row.classList.add('diff-line');
+        row.setAttribute('role', 'button');
+        row.tabIndex = first ? 0 : -1;
+        first = false;
+        row.dataset.line = String(l.line);
+        row.dataset.side = l.side;
+        row.setAttribute('aria-label', `${LINE_WORD[l.kind]} ${l.line}: ${l.text.slice(1).trim() || '(prázdný)'}`);
+        LINE_INFO.set(row, { file: cur.path, area: cur.area, kind: l.kind, line: l.line, side: l.side, text: l.text });
+      }
+      d.appendChild(row);
     }
     box.appendChild(d);
+    renderLineComments(d);
   }
   if (r.truncated) box.appendChild(el('p', 'git-note', 'Diff je příliš dlouhý – zobrazen jen začátek.'));
 }
 
+/* ---------- Komentáře k řádkům diffu → zpráva pro Clauda (jen v paměti okna) ---------- */
+const GC = { items: [], seq: 0 };
+const LINE_INFO = new WeakMap(); // řádek diffu → {file, area, kind, line, side, text}
+const LINE_WORD = { add: 'přidaný řádek', del: 'odebraný řádek', ctx: 'řádek' };
+const sameLine = (c, i) => c.file === i.file && c.area === i.area && c.line === i.line && c.side === i.side;
+
+function diffRows() { return [...$('#git-diff').querySelectorAll('.diff-line')]; }
+
+function renderLineComments(d = $('#git-diff .diff')) {
+  if (!d) return;
+  d.querySelectorAll('.diff-comment').forEach((n) => n.remove());
+  for (const row of d.querySelectorAll('.diff-line')) {
+    const info = LINE_INFO.get(row);
+    const mine = GC.items.filter((c) => sameLine(c, info));
+    row.classList.toggle('has-comment', mine.length > 0);
+    let after = row;
+    for (const c of mine) {
+      const box = el('div', 'diff-comment');
+      box.appendChild(el('p', null, c.note));
+      const del = button('Smazat', 'btn-ghost btn-small', () => {
+        GC.items = GC.items.filter((x) => x !== c);
+        renderLineComments();
+        renderCommentBar();
+        announce('Komentář smazán.');
+        row.focus();
+      });
+      del.setAttribute('aria-label', `Smazat komentář k řádku ${c.line}`);
+      box.appendChild(del);
+      after.after(box);
+      after = box;
+    }
+  }
+}
+
+function renderCommentBar() {
+  const n = GC.items.length;
+  $('#git-comments').hidden = n === 0;
+  $('#git-comments-count').textContent = `${n} ${plural(n, 'komentář', 'komentáře', 'komentářů')}`
+    + (n ? ` v ${new Set(GC.items.map((c) => c.file)).size} ${plural(new Set(GC.items.map((c) => c.file)).size, 'souboru', 'souborech', 'souborech')}` : '');
+  for (const b of $('#git-files').querySelectorAll('.git-file')) {
+    const [area, path] = (b.dataset.key || '').split('\n');
+    const k = GC.items.filter((c) => c.file === path && c.area === area).length;
+    let badge = b.querySelector('.git-ccount');
+    if (!k) { if (badge) badge.remove(); continue; }
+    if (!badge) { badge = el('span', 'git-ccount'); badge.setAttribute('aria-hidden', 'true'); b.appendChild(badge); }
+    badge.textContent = `💬 ${k}`;
+  }
+}
+
+function openCommentForm(row) {
+  const info = LINE_INFO.get(row);
+  if (!info) return;
+  closeCommentForm();
+  const form = el('div', 'diff-form');
+  const ta = el('textarea');
+  ta.rows = 3;
+  ta.maxLength = 2000;
+  ta.setAttribute('aria-label', `Komentář k řádku ${info.line} souboru ${info.file}`);
+  ta.placeholder = 'Co má Claude na tomto řádku změnit? (Ctrl+Enter přidá, Esc zruší)';
+  const actions = el('div', 'diff-form-actions');
+  const add = () => {
+    const note = ta.value.trim();
+    if (!note) { ta.focus(); return; }
+    GC.items.push({ id: ++GC.seq, ...info, note });
+    closeCommentForm();
+    renderLineComments();
+    renderCommentBar();
+    announce(`Komentář přidán. Celkem ${GC.items.length}.`);
+    row.focus();
+  };
+  actions.append(button('Přidat komentář', 'btn-accent btn-small', add),
+    button('Zrušit', 'btn-ghost btn-small', () => { closeCommentForm(); row.focus(); }));
+  ta.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); add(); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeCommentForm(); row.focus(); }
+  });
+  form.append(ta, actions);
+  let after = row;
+  while (after.nextElementSibling && after.nextElementSibling.classList.contains('diff-comment')) after = after.nextElementSibling;
+  after.after(form);
+  ta.focus();
+}
+function closeCommentForm() { document.querySelectorAll('#git-diff .diff-form').forEach((f) => f.remove()); }
+
+function sendComments() {
+  if (!GC.items.length) return;
+  const text = Review.commentsMessage(GC.items);
+  $('#gitdlg').close();
+  const ta = $('#prompt');
+  if (ta.value.trim()) { ta.setSelectionRange(ta.value.length, ta.value.length); insertIntoPrompt(`\n\n${text}`, { replaceEmpty: false }); }
+  else insertIntoPrompt(text);
+  GC.items = [];
+  renderCommentBar();
+  announce('Komentáře jsou ve zprávě – zkontrolujte ji a odešlete.');
+}
+
+function setupGitComments() {
+  const box = $('#git-diff');
+  box.addEventListener('click', (e) => {
+    const row = e.target.closest('.diff-line');
+    if (row && !window.getSelection().toString()) openCommentForm(row); // označování textu myší komentář neotevře
+  });
+  box.addEventListener('focusin', (e) => {
+    const row = e.target.closest('.diff-line');
+    if (!row) return;
+    for (const r of box.querySelectorAll('.diff-line[tabindex="0"]')) if (r !== row) r.tabIndex = -1;
+    row.tabIndex = 0;
+  });
+  box.addEventListener('keydown', (e) => {
+    const row = e.target.closest('.diff-line');
+    if (!row || e.target !== row) return;
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openCommentForm(row); return; }
+    const all = diffRows();
+    const i = all.indexOf(row);
+    const to = e.key === 'ArrowDown' ? i + 1 : e.key === 'ArrowUp' ? i - 1 : e.key === 'Home' ? 0 : e.key === 'End' ? all.length - 1
+      : e.key === 'PageDown' ? i + 20 : e.key === 'PageUp' ? i - 20 : null;
+    if (to == null) return;
+    e.preventDefault();
+    const next = all[Math.max(0, Math.min(all.length - 1, to))];
+    if (next) { next.focus(); next.scrollIntoView({ block: 'nearest' }); }
+  });
+  $('#gitdlg').addEventListener('cancel', (e) => {
+    if ($('#git-diff .diff-form')) { e.preventDefault(); closeCommentForm(); }
+  });
+  $('#git-comments-send').addEventListener('click', sendComments);
+  $('#git-comments-clear').addEventListener('click', () => {
+    const n = GC.items.length;
+    if (!n || !confirm(`Zahodit ${n} ${plural(n, 'komentář', 'komentáře', 'komentářů')}?`)) return;
+    GC.items = [];
+    renderLineComments();
+    renderCommentBar();
+  });
+}
+
 function setupGit() {
+  setupGitComments();
   $('#git').addEventListener('click', openGit);
   $('#git-refresh').addEventListener('click', loadGitFiles);
   $('#git-close').addEventListener('click', () => $('#gitdlg').close());
@@ -1160,6 +1315,35 @@ function showError(title, detail) {
   if (detail) box.appendChild(el('pre', null, detail));
   append(box, true);
   announce(`${title}${detail ? ': ' + detail.slice(0, 200) : ''}`);
+}
+
+/* ---------- Odpověď Claude: Markdown + tlačítko Kopírovat ---------- */
+const RAW = new WeakMap(); // bublina → původní Markdown odpovědi
+function claudeBubble() {
+  const node = el('div', 'msg msg--claude');
+  node.setAttribute('role', 'article');
+  node.setAttribute('aria-label', 'Claude');
+  const body = el('div', 'md');
+  const bar = el('div', 'msg-bar');
+  const copy = el('button', 'msg-copy', 'Kopírovat');
+  copy.type = 'button';
+  copy.title = 'Zkopírovat odpověď (jako Markdown)';
+  copy.setAttribute('aria-label', 'Kopírovat odpověď');
+  copy.addEventListener('click', () => copyText(RAW.get(node) ?? body.innerText, copy, 'Odpověď je ve schránce.'));
+  bar.appendChild(copy);
+  node.append(body, bar);
+  return { node, body };
+}
+function setClaudeText(m, text, highlight) {
+  RAW.set(m.node, text || '');
+  renderMd(m.body, text, highlight);
+}
+async function copyText(text, btn, done) {
+  btn.dataset.label ??= btn.textContent;
+  try { await navigator.clipboard.writeText(text); btn.textContent = 'Zkopírováno'; announce(done || 'Zkopírováno.'); }
+  catch { btn.textContent = 'Kopírování selhalo'; }
+  clearTimeout(btn._reset);
+  btn._reset = setTimeout(() => { btn.textContent = btn.dataset.label; }, 1600);
 }
 
 /* ---------- Nástroje ---------- */
@@ -1904,10 +2088,9 @@ function textBlock(state, messageId, index) {
   const key = `${messageId}:${index ?? 0}`;
   let b = state.msgBlocks.get(key);
   if (!b) {
-    const node = append(el('div', 'msg msg--claude md'));
-    node.setAttribute('role', 'article');
-    node.setAttribute('aria-label', 'Claude');
-    b = { node, raw: '', messageId, pending: false };
+    const m = claudeBubble();
+    append(m.node);
+    b = { node: m.node, body: m.body, raw: '', messageId, pending: false };
     state.msgBlocks.set(key, b);
   }
   return b;
@@ -1915,7 +2098,7 @@ function textBlock(state, messageId, index) {
 function scheduleRender(b) {
   if (b.pending) return;
   b.pending = true;
-  requestAnimationFrame(() => { b.pending = false; renderMd(b.node, b.raw, false); scrollDown(); });
+  requestAnimationFrame(() => { b.pending = false; setClaudeText(b, b.raw, false); scrollDown(); });
 }
 
 function handleEvent(ev, run, state) {
@@ -1930,10 +2113,11 @@ function handleEvent(ev, run, state) {
       S.queue.bindSession(run, ev.sessionId);
       run.cwd = ev.cwd;
       rememberCommands(ev);
+      rememberMcp(ev, run);
       markCurrentSession();
       $('#foot-model').textContent = `${ev.model || ''} • ${ev.permissionMode || ''}`
         + (run.effort ? ` • effort ${run.effort} (požadováno)` : '') + ` • v${ev.version || ''}`
-        + (run.warm ? ' • navázáno na běžící proces' : '');
+        + (run.warm ? ' • navázáno na běžící proces' : '') + mcpFoot(ev.mcpServers);
       setStatus(run.mode === 'plan' ? 'Claude plánuje…' : 'Claude pracuje…', true);
       break;
     case 'text_delta': {
@@ -1953,14 +2137,16 @@ function handleEvent(ev, run, state) {
       }
       if (!target) {
         const key = `${ev.messageId}:final${state.msgBlocks.size}`;
-        const b = { node: append(el('div', 'msg msg--claude md')), raw: '', messageId: ev.messageId };
+        const m = claudeBubble();
+        append(m.node);
+        const b = { node: m.node, body: m.body, raw: '', messageId: ev.messageId };
         state.msgBlocks.set(key, b);
         target = [key, b];
       }
       const [key, b] = target;
       state.finalized.add(key);
       b.raw = ev.text || '';
-      renderMd(b.node, b.raw, true);
+      setClaudeText(b, b.raw, true);
       scrollDown();
       break;
     }
@@ -2012,6 +2198,7 @@ function handleEvent(ev, run, state) {
       if (ev.sessionId) { S.sessionId = ev.sessionId; S.queue.bindSession(run, ev.sessionId); markCurrentSession(); }
       if (typeof ev.costUsd === 'number') S.totalCost += ev.costUsd;
       addRunStats(ev, run);
+      if ($('#overviewdlg').open) loadOverview();
       const looksLikeLimit = ev.isError && (ev.apiErrorStatus === 429 || /limit|rate.?limit|usage/i.test(ev.result || ''));
       if (looksLikeLimit && !run.limitShown) { run.limitShown = true; showLimit(run.account, null, ev.result); }
       else if (ev.isError && !run.limitShown) showError(`Claude skončil s chybou (${ev.subtype || 'error'})`, ev.result || '');
@@ -2058,6 +2245,284 @@ async function stop() {
   } else run.controller.abort();
 }
 
+/* ---------- Hledat v konverzaci (Ctrl+F) – bez diakritiky, zvýraznění přes CSS Highlight API ---------- */
+const FD = { ranges: [], cur: -1, timer: null, obs: null, max: 2000 };
+const canHighlight = () => !!(window.CSS && CSS.highlights && window.Highlight);
+
+function openFind() {
+  const bar = $('#find');
+  bar.hidden = false;
+  const i = $('#find-input');
+  i.focus();
+  i.select();
+  if (!FD.obs) FD.obs = new MutationObserver(() => {
+    if ($('#find').hidden || !$('#find-input').value.trim()) return;
+    clearTimeout(FD.timer);
+    FD.timer = setTimeout(() => runFind(true), 300); // nový obsah během psaní odpovědi
+  });
+  FD.obs.observe(chat(), { childList: true, subtree: true, characterData: true });
+  if (i.value.trim()) runFind(false);
+}
+function closeFind() {
+  $('#find').hidden = true;
+  if (FD.obs) FD.obs.disconnect();
+  clearTimeout(FD.timer);
+  FD.ranges = [];
+  FD.cur = -1;
+  if (canHighlight()) { CSS.highlights.delete('acd-find'); CSS.highlights.delete('acd-find-cur'); }
+  $('#find-count').textContent = '';
+  $('#prompt').focus();
+}
+function runFind(keep) {
+  const q = $('#find-input').value;
+  const prev = FD.cur;
+  FD.ranges = [];
+  if (q.trim()) {
+    const skip = '#empty, .msg-bar, .diff-form, button';
+    const w = document.createTreeWalker(chat(), NodeFilter.SHOW_TEXT, {
+      acceptNode: (n) => (n.parentElement && n.parentElement.closest(skip) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT) });
+    for (let n = w.nextNode(); n && FD.ranges.length < FD.max; n = w.nextNode()) {
+      for (const [a, b] of Review.findAll(n.data, q)) {
+        const r = document.createRange();
+        r.setStart(n, a);
+        r.setEnd(n, b);
+        FD.ranges.push(r);
+      }
+    }
+  }
+  const n = FD.ranges.length;
+  FD.cur = !n ? -1 : keep ? Math.min(Math.max(prev, 0), n - 1) : 0;
+  paintFind(!keep);
+}
+function paintFind(reveal) {
+  const n = FD.ranges.length;
+  const q = $('#find-input').value.trim();
+  $('#find-count').textContent = !q ? '' : n ? `${FD.cur + 1} z ${n}${n >= FD.max ? '+' : ''}` : 'Nic nenalezeno';
+  if (canHighlight()) {
+    CSS.highlights.set('acd-find', new Highlight(...FD.ranges));
+    if (FD.cur >= 0) CSS.highlights.set('acd-find-cur', new Highlight(FD.ranges[FD.cur]));
+    else CSS.highlights.delete('acd-find-cur');
+  }
+  if (reveal && FD.cur >= 0) revealRange(FD.ranges[FD.cur]);
+}
+function revealRange(r) {
+  const c = chat();
+  // Výskyt ve sbalené kartě nástroje → kartu rozbalit.
+  for (let p = r.startContainer.parentElement; p && p !== c; p = p.parentElement) if (p.tagName === 'DETAILS' && !p.open) p.open = true;
+  const rect = r.getBoundingClientRect(), cr = c.getBoundingClientRect();
+  if (rect.top < cr.top + 40 || rect.bottom > cr.bottom - 40) c.scrollTop += rect.top - cr.top - c.clientHeight / 2;
+  if (!canHighlight()) { const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r); }
+}
+function stepFind(delta) {
+  if (!FD.ranges.length) { runFind(false); return; }
+  FD.cur = (FD.cur + delta + FD.ranges.length) % FD.ranges.length;
+  paintFind(true);
+}
+function setupFind() {
+  const i = $('#find-input');
+  i.addEventListener('input', () => { clearTimeout(FD.timer); FD.timer = setTimeout(() => runFind(false), 150); });
+  i.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); clearTimeout(FD.timer); stepFind(e.shiftKey ? -1 : 1); }
+    else if (e.key === 'Escape') { e.preventDefault(); closeFind(); }
+  });
+  $('#find-next').addEventListener('click', () => stepFind(1));
+  $('#find-prev').addEventListener('click', () => stepFind(-1));
+  $('#find-close').addEventListener('click', closeFind);
+  document.addEventListener('keydown', (e) => {
+    if (document.querySelector('dialog[open]')) return; // v dialozích hledá prohlížeč
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'f') { e.preventDefault(); openFind(); }
+    else if (e.key === 'F3' && !$('#find').hidden) { e.preventDefault(); stepFind(e.shiftKey ? -1 : 1); }
+  });
+}
+
+/* ---------- MCP servery (stav z init; nastavení účtu se nečte) ---------- */
+const MCP_LABELS = { connected: 'připojeno', failed: 'selhalo', 'needs-auth': 'vyžaduje přihlášení', pending: 'připojuje se',
+  disabled: 'vypnuto', unknown: 'neznámý stav' };
+const MCP_SOURCES = { claudeai: 'konektor claude.ai', plugin: 'plugin', user: 'váš (uživatel)', project: 'projekt (.mcp.json)',
+  local: 'váš (lokální)', dynamic: 'dynamický', enterprise: 'organizace', managed: 'organizace' };
+const MCP_ORDER = { failed: 0, pending: 1, connected: 2, unknown: 3, disabled: 4, 'needs-auth': 5 };
+/** Upozornit v konverzaci jen na selhání – nepřihlášené konektory claude.ai jsou běžné. */
+function rememberMcp(ev, run) {
+  if (!Array.isArray(ev.mcpServers)) return;
+  const key = `${run.account}|${S.project}`;
+  S.mcp[key] = { servers: ev.mcpServers, at: Date.now() };
+  const failed = ev.mcpServers.filter((s) => s.status === 'failed');
+  const sig = failed.map((s) => s.name).join(',');
+  if (sig && S.mcpWarned[key] !== sig)
+    append(el('div', 'msg msg--note', `MCP ${plural(failed.length, 'server se nepřipojil', 'servery se nepřipojily', 'serverů se nepřipojilo')}: `
+      + `${failed.map((s) => s.name).join(', ')}. Podrobnosti v Přehledu sezení.`));
+  S.mcpWarned[key] = sig;
+}
+function mcpFoot(servers) {
+  if (!Array.isArray(servers) || !servers.length) return '';
+  const ok = servers.filter((s) => s.status === 'connected').length;
+  const failed = servers.filter((s) => s.status === 'failed').length;
+  return ` • MCP ${ok} připojeno${failed ? `, ${failed} selhalo` : ''}`;
+}
+
+/* ---------- Přehled sezení: soubory, úkoly, agenti, nástroje, MCP ---------- */
+const OV = { seq: 0 };
+const TODO_MARK = { completed: ['✓', 'hotovo'], in_progress: ['▶', 'probíhá'], pending: ['○', 'čeká'] };
+const AGENT_STATUS = { done: ['dokončeno', 'ok'], background: ['běží na pozadí', 'run'], running: ['běží', 'run'], error: ['chyba', 'bad'] };
+
+function ovSection(title) {
+  const sec = el('section', 'ov-section');
+  const h = el('h3', 'eyebrow', title);
+  h.id = `ov-${Math.random().toString(36).slice(2, 8)}`;
+  sec.setAttribute('aria-labelledby', h.id);
+  sec.appendChild(h);
+  return sec;
+}
+function ovBadge(text, kind) { const b = el('span', 'ov-badge', text); if (kind) b.dataset.k = kind; return b; }
+const fmtWhen = (iso) => (iso ? fmtTime(Date.parse(iso) / 1000) : '');
+
+async function openOverview() {
+  const d = $('#overviewdlg');
+  if (!d.open) d.showModal();
+  await loadOverview();
+}
+
+async function openFileInViewer(p) {
+  $('#overviewdlg').close();
+  await openFiles();
+  $('#files-filter').value = p;
+  renderFiles();
+  const b = [...$('#files-list').querySelectorAll('.git-file')].find((x) => x.getAttribute('aria-label') === p);
+  if (b) { b.focus(); showFile(b, p); }
+  else $('#files-status').textContent = 'Soubor v projektu už není, nebo ho git ignoruje.';
+}
+
+async function loadOverview() {
+  const body = $('#overview-body'), sub = $('#overview-sub');
+  const seq = ++OV.seq;
+  let o = null, err = null;
+  if (S.sessionId) {
+    sub.textContent = 'Načítám…';
+    try {
+      o = await apiJson(`/api/sessions/${encodeURIComponent(S.sessionId)}/overview?account=${encodeURIComponent(S.account)}&project=${encodeURIComponent(S.project)}`);
+    } catch (e) { err = e.message; }
+    if (seq !== OV.seq) return;
+  }
+  body.textContent = '';
+  if (!S.sessionId) sub.textContent = 'Nové sezení – přehled se ukáže po první zprávě.';
+  else if (err) sub.textContent = /neexistuje/.test(err) ? 'Přepis sezení zatím není uložený – zkuste Obnovit za chvíli.' : err;
+  else {
+    const parts = [`${o.userMessages} ${plural(o.userMessages, 'zpráva', 'zprávy', 'zpráv')} od vás`,
+      `${o.replies} ${plural(o.replies, 'odpověď', 'odpovědi', 'odpovědí')}`];
+    if (o.started) parts.push(`od ${fmtWhen(o.started)}`);
+    if (o.updated) parts.push(`naposledy ${fmtWhen(o.updated)}`);
+    sub.textContent = parts.join(' • ');
+  }
+
+  if (o) {
+    // Úkoly (poslední TodoWrite)
+    const sec = ovSection('Úkoly');
+    if (o.todos && o.todos.length) {
+      const done = o.todos.filter((t) => t.status === 'completed').length;
+      sec.querySelector('h3').textContent = `Úkoly – ${done} z ${o.todos.length} hotovo`;
+      const ul = el('ul', 'ov-list ov-todos');
+      for (const t of o.todos) {
+        const li = el('li');
+        li.dataset.status = t.status;
+        const [mark, word] = TODO_MARK[t.status] || TODO_MARK.pending;
+        const m = el('span', 'ov-mark', mark); m.setAttribute('aria-hidden', 'true');
+        li.append(m, el('span', 'sr-only', `${word}: `), el('span', 'ov-main', t.content || '(bez textu)'));
+        ul.appendChild(li);
+      }
+      sec.appendChild(ul);
+      if (o.todosAt) sec.appendChild(el('p', 'ov-empty', `Seznam z ${fmtWhen(o.todosAt)}.`));
+    } else sec.appendChild(el('p', 'ov-empty', 'Claude v tomto sezení nevedl seznam úkolů.'));
+    body.appendChild(sec);
+
+    // Upravené soubory
+    const fsec = ovSection(`Upravené soubory (${o.files.length})`);
+    if (o.files.length) {
+      const ul = el('ul', 'ov-list');
+      for (const f of o.files) {
+        const li = el('li');
+        if (f.outside) li.appendChild(el('span', 'ov-main ov-path', f.path));
+        else {
+          const b = el('button', 'ov-file', f.path);
+          b.type = 'button';
+          b.title = 'Otevřít v náhledu souborů';
+          b.addEventListener('click', () => openFileInViewer(f.path));
+          const wrap = el('span', 'ov-main'); wrap.appendChild(b); li.appendChild(wrap);
+        }
+        const meta = [];
+        if (f.edits) meta.push(`${f.edits}× úprava`);
+        if (f.writes) meta.push(`${f.writes}× zápis`);
+        li.appendChild(el('span', 'ov-meta', meta.join(' · ')));
+        if (f.agent) li.appendChild(ovBadge(f.main ? 'i agent' : 'agent'));
+        if (f.outside) li.appendChild(ovBadge('mimo projekt'));
+        if (f.failed) li.appendChild(ovBadge(`${f.failed}× chyba`, 'bad'));
+        ul.appendChild(li);
+      }
+      fsec.appendChild(ul);
+    } else fsec.appendChild(el('p', 'ov-empty', 'Žádný soubor upravený nástroji Edit nebo Write.'));
+    body.appendChild(fsec);
+
+    // Agenti
+    const asec = ovSection(`Agenti (${o.agents.length})`);
+    if (o.agents.length) {
+      const ul = el('ul', 'ov-list');
+      for (const a of o.agents) {
+        const li = el('li');
+        li.appendChild(el('span', 'ov-main', a.description));
+        if (a.type) li.appendChild(el('span', 'ov-meta', a.type));
+        const [word, kind] = AGENT_STATUS[a.status] || AGENT_STATUS.running;
+        li.appendChild(ovBadge(word, kind));
+        ul.appendChild(li);
+      }
+      asec.appendChild(ul);
+    } else asec.appendChild(el('p', 'ov-empty', 'Claude v tomto sezení nespustil žádného agenta.'));
+    body.appendChild(asec);
+
+    // Nástroje
+    if (o.tools.length) {
+      const tsec = ovSection('Nástroje');
+      tsec.appendChild(el('p', 'ov-tools', o.tools.map((t) => `${t.name} ${t.count}×`).join(' · ')));
+      body.appendChild(tsec);
+    }
+  }
+
+  // MCP servery: stav z posledního spuštění + použití v sezení
+  const msec = ovSection('MCP servery');
+  const st = S.mcp[`${S.account}|${S.project}`];
+  const used = new Map((o ? o.mcp : []).map((m) => [m.name, m.count]));
+  // Použité v sezení se jmenují podle nástroje (mcp__<server>__…) – u konektorů jiným tvarem než v init, proto zvlášť.
+  const servers = st ? st.servers.slice().sort((a, b) => (MCP_ORDER[a.status] ?? 9) - (MCP_ORDER[b.status] ?? 9) || a.name.localeCompare(b.name)) : [];
+  const mcpRow = (s) => {
+    const li = el('li');
+    li.appendChild(el('span', 'ov-main ov-path', s.name));
+    if (s.source) li.appendChild(el('span', 'ov-meta', MCP_SOURCES[s.source] || s.source));
+    li.appendChild(ovBadge(MCP_LABELS[s.status] || s.status, s.status === 'connected' ? 'ok' : s.status === 'failed' ? 'bad' : s.status === 'pending' ? 'run' : ''));
+    return li;
+  };
+  if (servers.length) {
+    const main = servers.filter((s) => s.status !== 'needs-auth');
+    const auth = servers.filter((s) => s.status === 'needs-auth');
+    msec.querySelector('h3').textContent = `MCP servery – ${servers.filter((s) => s.status === 'connected').length} z ${servers.length} připojeno`;
+    if (main.length) { const ul = el('ul', 'ov-list'); main.forEach((s) => ul.appendChild(mcpRow(s))); msec.appendChild(ul); }
+    if (auth.length) {
+      const det = el('details', 'ov-more');
+      det.appendChild(el('summary', null, `Nepřihlášené (${auth.length}) – připojí se až po přihlášení v Claude Code (/mcp)`));
+      const ul = el('ul', 'ov-list'); auth.forEach((s) => ul.appendChild(mcpRow(s))); det.appendChild(ul);
+      msec.appendChild(det);
+    }
+    msec.appendChild(el('p', 'ov-empty', `Stav ze spuštění v ${new Date(st.at).toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' })}.`));
+  } else msec.appendChild(el('p', 'ov-empty', st ? 'Účet v tomto projektu nemá žádný MCP server.'
+    : 'Stav se ukáže po první zprávě v tomto projektu (Claude Code ho hlásí při spuštění).'));
+  if (used.size) msec.appendChild(el('p', 'ov-tools', `Použito v sezení: ${[...used].map(([n, c]) => `${n} ${c}×`).join(' · ')}`));
+  body.appendChild(msec);
+}
+
+function setupOverview() {
+  $('#foot-overview').addEventListener('click', openOverview);
+  $('#overview-refresh').addEventListener('click', loadOverview);
+  $('#overview-close').addEventListener('click', () => $('#overviewdlg').close());
+  $('#overviewdlg').addEventListener('click', (e) => { if (e.target === e.currentTarget) e.currentTarget.close(); });
+}
+
 /* ---------- Start ---------- */
 async function main() {
   setupMarkdown();
@@ -2088,6 +2553,8 @@ async function main() {
   setupFiles();
   setupPalette();
   setupStats();
+  setupFind();
+  setupOverview();
   setupSessionSearch();
   $('#new-session').addEventListener('click', newSession);
   $('#project').addEventListener('change', (e) => switchProject(e.target.value));

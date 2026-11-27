@@ -223,6 +223,15 @@ test('hledání v sezeních: 2–100 znaků, jen ověřený účet a známý pro
   assert.equal((await s('account=a&project=p&q=abc')).status, 409); // účet v testu není ověřen
 });
 
+test('přehled sezení: jen s tokenem, ověřený účet a známý projekt', async () => {
+  const id = '11111111-1111-4111-8111-111111111111';
+  const o = (qs) => req('GET', `/api/sessions/${id}/overview?${qs}`, { 'X-ACD-Token': TOKEN });
+  assert.equal((await req('GET', `/api/sessions/${id}/overview?account=a&project=p`)).status, 401);
+  assert.equal((await o('account=nic&project=p')).status, 400);
+  assert.equal((await o('account=a&project=nic')).status, 400);
+  assert.equal((await o('account=a&project=p')).status, 409); // účet v testu není ověřen
+});
+
 test('svolení: jen s tokenem a Origin, neznámý běh 404', async () => {
   const body = Buffer.from(JSON.stringify({ requestId: 'r1', decision: 'always' }));
   const h = { 'Content-Type': 'application/json', 'Content-Length': body.length };

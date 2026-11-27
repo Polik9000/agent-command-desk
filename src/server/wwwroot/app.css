@@ -436,3 +436,66 @@ textarea::placeholder { color: var(--gray-3); }
 .perm-result { margin: 0; font: 700 var(--fs-small)/1.3 var(--font-head); letter-spacing: .04em; }
 .perm-result[data-decision="deny"], .perm-result[data-decision="timeout"] { color: var(--err); }
 .perm-result[data-decision="once"], .perm-result[data-decision="always"] { color: var(--ok); }
+
+/* ---------- Odpověď: Kopírovat ---------- */
+.msg-bar { display: flex; justify-content: flex-end; margin: .35em -.5em -.45em 0; }
+.msg-copy { background: none; border: 0; border-radius: var(--radius); padding: .25em .5em; min-height: 24px; cursor: pointer;
+  font: 700 .68rem/1.2 var(--font-head); letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); }
+.msg-copy:hover, .msg-copy:focus-visible { color: var(--fg); background: var(--gray-2); }
+
+/* ---------- Hledat v konverzaci ---------- */
+.find { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-5); border-bottom: 1px solid var(--line); background: var(--gray-1); }
+.find[hidden] { display: none; }
+.find-input { flex: 1; min-width: 0; font: 400 .95rem/1.3 var(--font-body); color: var(--fg); background: var(--bg);
+  border: 2px solid var(--line); border-radius: var(--radius); padding: .4em .6em; }
+.find-input:focus { border-color: var(--accent-ink); outline: none; }
+.find-count { font: .78rem/1.2 var(--font-mono); color: var(--text-muted); white-space: nowrap; min-width: 7em; text-align: right; }
+::highlight(acd-find) { background-color: color-mix(in srgb, var(--accent) 38%, transparent); color: inherit; }
+::highlight(acd-find-cur) { background-color: var(--accent); color: var(--on-accent); }
+
+/* ---------- Komentáře k řádkům diffu ---------- */
+.diff--review .diff-line { cursor: pointer; }
+.diff--review .diff-line:hover { box-shadow: inset 3px 0 0 var(--gray-3); }
+.diff--review .diff-line.has-comment { box-shadow: inset 3px 0 0 var(--accent-ink); }
+.diff--review .diff-line:focus-visible { outline: 2px solid var(--accent-ink); outline-offset: -2px; }
+.diff .diff-comment, .diff .diff-form { white-space: normal; font: .88rem/1.45 var(--font-body); color: var(--fg); background: var(--gray-1);
+  border-left: 3px solid var(--accent-ink); margin: .2em 0 .45em; padding: .5em var(--space-3); }
+.diff .diff-comment { display: flex; gap: var(--space-2); align-items: flex-start; }
+.diff .diff-comment p { flex: 1; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.diff .diff-form div { padding: 0; }
+.diff-form textarea { width: 100%; min-height: 4.5em; font: .92rem/1.4 var(--font-body); color: var(--fg); background: var(--bg);
+  border: 2px solid var(--line); border-radius: var(--radius); padding: .4em .6em; resize: vertical; }
+.diff-form textarea:focus { border-color: var(--accent-ink); outline: none; }
+.diff .diff-form-actions { display: flex; gap: var(--space-2); margin-top: .4em; }
+.git-comments { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; padding: 0 0 var(--space-2); }
+.git-comments[hidden] { display: none; }
+.git-comments-count { font-weight: 700; margin-right: auto; }
+.git-ccount { margin-left: auto; font: 700 .72rem/1 var(--font-head); color: var(--accent-ink); white-space: nowrap; }
+
+/* ---------- Přehled sezení ---------- */
+.foot-overview { margin-left: 0; }
+.overview { width: min(52rem, calc(100vw - 2rem)); }
+.ov-section { border-top: 1px solid var(--line); padding: var(--space-3) 0; display: grid; gap: var(--space-2); }
+.ov-section h3 { margin: 0; }
+.ov-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.ov-list li { display: flex; gap: var(--space-2); align-items: baseline; padding: .35em .6em; border-radius: var(--radius); background: var(--gray-1); font-size: .92rem; }
+.ov-main { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.ov-path { font: .85rem/1.35 var(--font-mono); }
+.ov-meta { font: .75rem/1.3 var(--font-mono); color: var(--text-muted); white-space: nowrap; }
+.ov-mark { width: 1.2em; flex-shrink: 0; text-align: center; font-weight: 700; color: var(--text-muted); }
+.ov-todos li[data-status="completed"] .ov-main { color: var(--text-muted); text-decoration: line-through; }
+.ov-todos li[data-status="completed"] .ov-mark { color: var(--ok); }
+.ov-todos li[data-status="in_progress"] .ov-mark, .ov-todos li[data-status="in_progress"] .ov-main { color: var(--accent-ink); font-weight: 700; }
+.ov-file { background: none; border: 0; padding: 0; cursor: pointer; text-align: left; color: var(--fg); font: .85rem/1.35 var(--font-mono);
+  text-decoration: underline dotted; text-underline-offset: 3px; overflow-wrap: anywhere; }
+.ov-file:hover { color: var(--accent-ink); }
+.ov-badge { font: 700 .65rem/1 var(--font-head); letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted);
+  border: 1px solid var(--line); border-radius: 999px; padding: .35em .6em; white-space: nowrap; }
+.ov-badge[data-k="ok"] { color: var(--ok); }
+.ov-badge[data-k="bad"] { color: var(--err); }
+.ov-badge[data-k="run"] { color: var(--info); }
+.ov-tools { margin: 0; font: .8rem/1.6 var(--font-mono); color: var(--text-muted); }
+.ov-empty { margin: 0; color: var(--text-muted); font-size: var(--fs-small); }
+.ov-more > summary { cursor: pointer; font-size: var(--fs-small); color: var(--text-muted); padding: .3em 0; }
+.ov-more > summary:hover { color: var(--fg); }
+.ov-more[open] > summary { margin-bottom: var(--space-1); }

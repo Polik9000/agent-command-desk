@@ -24,6 +24,14 @@ function windows(w) {
 const NAME_RX = /^[A-Za-z0-9][\w:.-]{0,99}$/;
 /** Názvy příkazů a skillů z init (pro paletu): jen rozumné řetězce, nejvýš 300. */
 const names = (v) => (Array.isArray(v) ? [...new Set(v.filter((x) => typeof x === 'string' && NAME_RX.test(x)))].slice(0, 300) : []);
+const MCP_STATUS = new Set(['connected', 'failed', 'needs-auth', 'pending', 'disabled']);
+const MCP_SOURCE = new Set(['claudeai', 'plugin', 'user', 'project', 'local', 'dynamic', 'enterprise', 'managed']);
+// Názvy MCP serverů mají i mezery a dvojtečky („claude.ai Gmail“, „plugin:x:y“) – jen bez řídicích znaků.
+const MCP_NAME_RX = /^[^\u0000-\u001f\u007f<>]{1,120}$/;
+/** Stav MCP serverů z init (název, stav, zdroj – žádná konfigurace ani přihlašovací údaje). */
+const mcpServers = (v) => (Array.isArray(v) ? v.filter((x) => x && typeof x.name === 'string' && MCP_NAME_RX.test(x.name)).slice(0, 100)
+  .map((x) => ({ name: x.name, status: MCP_STATUS.has(x.status) ? x.status : 'unknown',
+    ...(MCP_SOURCE.has(x.source) ? { source: x.source } : {}) })) : undefined);
 
 /** Odstraní undefined/null pole (menší SSE zprávy). */
 export function ev(type, fields = {}) {
@@ -69,7 +77,8 @@ export class StreamParser {
         if (e.subtype === 'init') {
           this.sessionId = str(e.session_id);
           out.push(ev('init', { sessionId: this.sessionId, model: str(e.model), permissionMode: str(e.permissionMode),
-            cwd: str(e.cwd), version: str(e.claude_code_version), slashCommands: names(e.slash_commands), skills: names(e.skills) }));
+            cwd: str(e.cwd), version: str(e.claude_code_version), slashCommands: names(e.slash_commands), skills: names(e.skills),
+            mcpServers: mcpServers(e.mcp_servers) }));
         } else if (e.subtype === 'api_retry') {
           out.push(ev('retry', { attempt: e.attempt, maxRetries: e.max_retries, error: str(e.error), errorStatus: e.error_status }));
         }

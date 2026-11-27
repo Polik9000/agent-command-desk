@@ -9,7 +9,7 @@ import { loadConfig, configPath, findAccount, findProject, EFFORTS } from './lib
 import { createSecret, setSecurityHeaders, checkRequest } from './lib/guard.mjs';
 import { AccountGuard, ClaudeRunner, allowedModes } from './lib/claude.mjs';
 import { ev } from './lib/parser.mjs';
-import { listSessions, history, transcriptPath, searchSessions } from './lib/sessions.mjs';
+import { listSessions, history, transcriptPath, searchSessions, overview } from './lib/sessions.mjs';
 import { gitStatus, gitFiles, gitDiff } from './lib/git.mjs';
 import { AttachmentStore, attachmentsPrompt, MAX_PER_RUN as MAX_ATTACHMENTS } from './lib/attachments.mjs';
 import { openWindow, createHeartbeat } from './lib/window.mjs';
@@ -232,6 +232,14 @@ async function handleApi(req, res, url) {
     if (!r) return;
     return sendJson(res, 200, searchSessions(r.status.projectsDirectory, r.project.pathFull, query)
       .map((s) => ({ ...s, busy: runner.isSessionBusy(s.id) })));
+  }
+
+  // Přehled sezení: upravené soubory, agenti, úkoly, nástroje (jen čtení z transkriptu).
+  if (req.method === 'GET' && (m = /^\/api\/sessions\/([^/]+)\/overview$/.exec(p))) {
+    const r = await resolveAccountProject(res, q.get('account'), q.get('project'));
+    if (!r) return;
+    const file = transcriptPath(r.status.projectsDirectory, r.project.pathFull, decodeURIComponent(m[1]));
+    return file ? sendJson(res, 200, overview(file, r.project.pathFull)) : problem(res, 404, 'Sezení neexistuje.');
   }
 
   if (req.method === 'GET' && (m = /^\/api\/sessions\/([^/]+)$/.exec(p))) {

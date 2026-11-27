@@ -84,6 +84,18 @@ test('init: názvy příkazů a skillů jen jako rozumné řetězce', () => {
   assert.deepEqual(init.skills, []);
 });
 
+test('init: stav MCP serverů – jen název a známý stav', () => {
+  const p = new StreamParser(path.join(os.tmpdir(), 'x', 'plans'));
+  const [init] = p.parse(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's',
+    mcp_servers: [{ name: 'github', status: 'connected', config: { token: 'x' } }, { name: 'claude.ai Gmail', status: 'needs-auth', source: 'claudeai' },
+      { name: 'plugin:np:kindora', status: 'failed', source: 'plugin' }, { name: 'old', status: 'divny', source: 'nevim' },
+      { name: 'a\nb', status: 'connected' }, { name: '<img>', status: 'connected' }, { name: '', status: 'connected' }, null, 'str'] }));
+  assert.deepEqual(init.mcpServers, [{ name: 'github', status: 'connected' }, { name: 'claude.ai Gmail', status: 'needs-auth', source: 'claudeai' },
+    { name: 'plugin:np:kindora', status: 'failed', source: 'plugin' }, { name: 'old', status: 'unknown' }]);
+  const [bare] = new StreamParser(path.join(os.tmpdir(), 'x', 'plans')).parse(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's' }));
+  assert.equal(bare.mcpServers, undefined);
+});
+
 test('statistiky: tokeny z result.usage a okna limitu', () => {
   const p = new StreamParser(path.join(os.tmpdir(), 'x', 'plans'));
   const events = sample.flatMap((l) => p.parse(l));

@@ -14,6 +14,7 @@
   <script src="vendor/highlight.min.js" defer></script>
   <script src="queue.js" defer></script>
   <script src="editor.js" defer></script>
+  <script src="review.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>
@@ -56,6 +57,15 @@
     </aside>
 
     <main class="main">
+      <div class="find" id="find" role="search" aria-label="Hledat v konverzaci" hidden>
+        <label for="find-input" class="sr-only">Hledat v konverzaci</label>
+        <input type="search" id="find-input" class="find-input" maxlength="200" autocomplete="off" spellcheck="false"
+          placeholder="Hledat v konverzaci… (Enter další, Shift+Enter předchozí)" aria-describedby="find-count">
+        <span class="find-count" id="find-count" role="status"></span>
+        <button type="button" class="btn btn-ghost btn-small" id="find-prev" title="Předchozí výskyt (Shift+Enter)" aria-label="Předchozí výskyt">↑</button>
+        <button type="button" class="btn btn-ghost btn-small" id="find-next" title="Další výskyt (Enter)" aria-label="Další výskyt">↓</button>
+        <button type="button" class="btn btn-ghost btn-small" id="find-close" title="Zavřít (Esc)">Zavřít</button>
+      </div>
       <div class="banner" id="banner" hidden></div>
 
       <section class="chat" id="chat" aria-label="Konverzace" tabindex="0">
@@ -204,10 +214,32 @@
     </div>
     <div class="git-body">
       <nav class="git-files" id="git-files" aria-label="Změněné soubory"></nav>
-      <section class="git-diff" id="git-diff" aria-label="Rozdíly vybraného souboru"></section>
+      <section class="git-diff" id="git-diff" aria-label="Rozdíly vybraného souboru" aria-describedby="git-comment-hint"></section>
       <p class="sr-only" id="git-status" role="status"></p>
     </div>
-    <p class="set-hint">Jen pro čtení – commit, push ani jiné změny v gitu se odsud nedělají.</p>
+    <div class="git-comments" id="git-comments" hidden>
+      <span class="git-comments-count" id="git-comments-count"></span>
+      <button type="button" class="btn btn-accent btn-small" id="git-comments-send">Vložit do zprávy</button>
+      <button type="button" class="btn btn-ghost btn-small" id="git-comments-clear">Zahodit komentáře</button>
+    </div>
+    <p class="set-hint"><span id="git-comment-hint">Klikněte na řádek (nebo na něm stiskněte Enter, šipky ↑↓ přecházejí mezi řádky) a napište
+      k němu komentář – komentáře pak vložíte do zprávy pro Clauda.</span> Jen pro čtení – commit, push ani jiné změny v gitu se odsud nedělají.</p>
+  </dialog>
+
+  <dialog class="dialog overview" id="overviewdlg" aria-labelledby="overview-title">
+    <div class="dialog-head">
+      <div>
+        <h2 class="dialog-title" id="overview-title">Přehled sezení</h2>
+        <p class="git-sub" id="overview-sub"></p>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" class="btn btn-ghost btn-small" id="overview-refresh">Obnovit</button>
+        <button type="button" class="btn btn-ghost btn-small" id="overview-close">Zavřít</button>
+      </div>
+    </div>
+    <div id="overview-body"></div>
+    <p class="set-hint">Podle přepisu sezení, který ukládá Claude Code (jen čtení). Soubory změněné příkazy v terminálu (Bash, PowerShell)
+      tu nejsou – všechny změny ukazuje přehled gitu. Stav MCP serverů hlásí Claude Code při každém spuštění; aplikace nečte jejich nastavení.</p>
   </dialog>
 
   <div class="sr-only" id="announce" aria-live="assertive" aria-atomic="true"></div>
@@ -237,6 +269,7 @@
 
   <footer class="foot" id="foot">
     <span id="foot-session">Nové sezení</span>
+    <button type="button" class="foot-btn foot-overview" id="foot-overview" aria-haspopup="dialog" title="Upravené soubory, úkoly, agenti a MCP servery tohoto sezení">Přehled sezení</button>
     <span id="foot-model"></span>
     <button type="button" class="foot-btn foot-stats" id="foot-cost" aria-haspopup="dialog" hidden title="Statistiky: tokeny, odhad ceny API a limit účtu"></button>
     <button type="button" class="foot-btn notify-toggle" id="notify-toggle" aria-pressed="false">Oznámení: vypnuto</button>

@@ -55,6 +55,15 @@ Runs on Windows and macOS (experimental). The UI is in Czech.
 - **Project files** (*Soubory*) – read-only file finder and viewer with syntax highlighting: search by name or path,
   insert the path into your message, copy the content. Lists what git tracks plus new files (nothing ignored by
   `.gitignore`), outside git it skips build and cache folders; key, certificate and `.env` files are never shown.
+- **Comment on the diff** – in the git view (click the branch in the header) click a changed line, or press Enter on it
+  (arrow keys move between lines), and write what Claude should change. *Vložit do zprávy* turns all comments into one
+  message (file, line number, the code, your note) that you review and send. Comments live in the window's memory only.
+- **Session overview** (*Přehled sezení* in the footer) – files Claude edited (also by subagents; click to open in the
+  file viewer), the latest to-do list, agents and their state, tools used, and **MCP servers** with their connection state
+  as Claude Code reports it at start (connected / failed / needs sign-in). Read from the session transcript only; a
+  failed MCP server is also noted in the chat.
+- **Copy and find** – *Kopírovat* under every reply copies it as Markdown; Ctrl+F finds text in the conversation
+  (diacritics and case ignored, Enter / Shift+Enter next / previous, matches in collapsed tool cards open them).
 - **Comfortable typing** – Enter after `1. item`, `- item` or `- [ ] item` continues the list, Enter on an empty item ends
   it, Shift+Enter is a plain new line.
 - **Settings** (*Nastavení* in the header) – add, rename and remove projects without editing JSON (the folder must
@@ -86,6 +95,7 @@ Runs on Windows and macOS (experimental). The UI is in Czech.
 | Keys | Action |
 |---|---|
 | Ctrl+K | Command palette |
+| Ctrl+F | Find in the conversation (Enter / Shift+Enter or F3 / Shift+F3 = next / previous, Esc closes) |
 | Ctrl+Enter | Send; while Claude works: send now into the running turn |
 | Ctrl+Shift+Enter | While Claude works: add to the queue |
 | Enter | New line; continues a numbered/bulleted list |
@@ -194,6 +204,9 @@ do fronty; přikládat jde screenshoty (Ctrl+V), PDF a textové soubory. Rozhran
 
 Kliknutím na větev a počet změn v hlavičce se otevře **přehled změn v gitu** (soubory a diff, jen pro čtení).
 Tlačítko **Soubory** otevře hledání a náhled souborů projektu (jen pro čtení; soubory s klíči a hesly se neukazují).
+V přehledu změn jde kliknout na řádek a napsat k němu **komentář**; tlačítko *Vložit do zprávy* z komentářů složí zprávu
+pro Clauda. **Přehled sezení** v patičce ukáže upravené soubory, seznam úkolů, agenty a stav MCP serverů. Pod každou
+odpovědí je *Kopírovat*, Ctrl+F hledá v konverzaci (bez ohledu na diakritiku).
 3. Vlastní název: `app.name` v configu. Vlastní vzhled: `local/theme.css` (vzor `src/server/wwwroot/theme.css`),
    ikona `local/favicon.svg`. Složka `local/` se nikdy necommituje. Světlý nebo tmavý motiv: **Nastavení → Vzhled**
    (barvy světlého motivu ve vlastním tématu: blok `:root[data-theme="light"]`).
@@ -201,5 +214,5 @@ Tlačítko **Soubory** otevře hledání a náhled souborů projektu (jen pro č
 
 Nebo dejte Claudovi prompt z části *Customize* a nechte ho nastavit všechno za vás.
 
-**Klávesy:** Ctrl+K otevře paletu příkazů (vlastní příkazy, skilly, akce, nedávné zprávy), Ctrl+Enter odešle (během práce = poslat hned), Ctrl+Shift+Enter = do fronty, Enter v seznamu doplní další
+**Klávesy:** Ctrl+K otevře paletu příkazů (vlastní příkazy, skilly, akce, nedávné zprávy), Ctrl+F hledá v konverzaci, Ctrl+Enter odešle (během práce = poslat hned), Ctrl+Shift+Enter = do fronty, Enter v seznamu doplní další
 číslo či odrážku, Shift+Enter = obyčejný nový řádek, Ctrl+V vloží screenshot jako přílohu.

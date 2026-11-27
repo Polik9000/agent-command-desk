@@ -76,3 +76,10 @@ Claude Code login and never reads, copies or stores credentials.
     (no `..`, no absolute paths), its real path (symlinks resolved) is inside the project, it is at most 512 kB and has
     no NUL bytes. Names that look like secrets (`.env*` except examples, `*.pem`, `*.key`, `id_rsa`, `.npmrc`,
     `.credentials.json`, `secrets.*` …) are never returned. Nothing is written.
+22. **Session overview is read-only.** `GET /api/sessions/:id/overview` (verified account, allowlisted project, session id
+    must be a UUID whose transcript exists) reads that transcript and, if present, the session's subagent transcripts
+    (`<id>/subagents/agent-*.jsonl`, at most 40, each ≤ 32 MB) plus their `*.meta.json` (only `toolUseId` and
+    `finished` are used). It returns file paths from Edit/Write tool calls, agent descriptions, the last TodoWrite list
+    and tool counts – no tool outputs and no message texts. **MCP state** comes only from Claude Code's `init` event
+    (name, status, source); the app never reads MCP or account configuration. Diff comments and find stay in the
+    window's memory.
