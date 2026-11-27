@@ -55,6 +55,9 @@ Runs on Windows and macOS (experimental). The UI is in Czech.
   never add an unverified (e.g. personal) account. Full-screen toggle (or F11) and notification options.
 - **Notifications** (optional, footer toggle or *Settings*) – when Claude finishes, a plan waits or a limit is hit while the window is
   in the background; the window title gets a ● marker.
+- **Statistics** (click the last run in the footer) – tokens (input, output, cache read/write), turns, time and the
+  API-price estimate for the last run and the session, kept apart from your **subscription limit** (5-hour and 7-day
+  windows with usage and reset time, as reported by Claude Code). In memory only.
 - **Usage limits** – warning when an account gets close; when it hits the limit, one click switches to another account
   and resends.
 - **Your own name and look** – one config value and one CSS file (see *Customize*).
@@ -134,7 +137,7 @@ Only create files inside local/, do not change anything else and do not commit. 
 
 ## Development
 ```
-npm test        # 76 tests: stream parser, config (incl. model allowlist), settings writes, git view, account guard, queue, list editing, attachments, 401/403/CSP
+npm test        # 77 tests: stream parser, config (incl. model allowlist), settings writes, git view, account guard, queue, list editing, attachments, 401/403/CSP
 npm run check   # syntax check
 ACD_OPEN_BROWSER=0 node src/server/server.mjs   # prints the URL with token on an interactive console
 ```
@@ -144,7 +147,7 @@ Vendor libraries and optional fonts: `scripts/fetch-vendor.ps1` (pinned versions
 How the CLI is driven (stream-json input/output, sending into a running turn): [docs/claude-code-headless.md](docs/claude-code-headless.md).
 
 ## Roadmap
-Usage statistics, session search and rename. Interactive permission prompts are being researched.
+Session search and rename. Interactive permission prompts are being researched.
 
 ## Uninstall
 Windows: `powershell -ExecutionPolicy Bypass -File scripts\uninstall.ps1` · macOS: `sh scripts/uninstall.sh`.

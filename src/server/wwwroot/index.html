@@ -143,6 +143,16 @@
     </section>
   </dialog>
 
+  <dialog class="dialog stats" id="statsdlg" aria-labelledby="stats-title">
+    <div class="dialog-head">
+      <h2 class="dialog-title" id="stats-title">Statistiky</h2>
+      <button type="button" class="btn btn-ghost btn-small" id="stats-close">Zavřít</button>
+    </div>
+    <div id="stats-body"></div>
+    <p class="set-hint"><strong>Odhad ceny API</strong> = kolik by běh stál při placení za API (hlásí ho Claude Code). S předplatným
+      (Pro, Max, Team) se za běhy neplatí zvlášť – rozhoduje <strong>limit účtu</strong> (výše). Údaje jsou jen z tohoto okna.</p>
+  </dialog>
+
   <dialog class="dialog palette" id="palette" aria-label="Paleta příkazů">
     <input type="text" id="palette-input" class="palette-input" role="combobox" aria-expanded="true" aria-controls="palette-list"
       aria-autocomplete="list" autocomplete="off" spellcheck="false" placeholder="Hledat příkaz, skill, akci nebo nedávnou zprávu…">
@@ -172,7 +182,7 @@
   <footer class="foot" id="foot">
     <span id="foot-session">Nové sezení</span>
     <span id="foot-model"></span>
-    <span id="foot-cost"></span>
+    <button type="button" class="foot-btn foot-stats" id="foot-cost" aria-haspopup="dialog" hidden title="Statistiky: tokeny, odhad ceny API a limit účtu"></button>
     <button type="button" class="foot-btn notify-toggle" id="notify-toggle" aria-pressed="false">Oznámení: vypnuto</button>
   </footer>
 </body>

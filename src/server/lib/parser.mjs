@@ -7,6 +7,20 @@ import { isUnder } from './config.mjs';
 
 const MAX_TOOL_OUTPUT = 20_000;
 const str = (v) => (typeof v === 'string' ? v : undefined);
+const num = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : undefined);
+/** Tokeny z result.usage (vstup, výstup, čtení a zápis cache). */
+function usage(u) {
+  if (!u || typeof u !== 'object') return undefined;
+  const r = { input: num(u.input_tokens) ?? 0, output: num(u.output_tokens) ?? 0,
+    cacheRead: num(u.cache_read_input_tokens) ?? 0, cacheWrite: num(u.cache_creation_input_tokens) ?? 0 };
+  return r.input + r.output + r.cacheRead + r.cacheWrite > 0 ? r : undefined;
+}
+/** Okna limitu předplatného (five_hour, seven_day…) s využitím 0–1. */
+function windows(w) {
+  if (!w || typeof w !== 'object') return [];
+  return Object.entries(w).slice(0, 10).filter(([, v]) => v && typeof v === 'object')
+    .map(([type, v]) => ({ type, utilization: num(v.utilization), resetsAt: num(v.resetsAt), status: str(v.status) }));
+}
 const NAME_RX = /^[A-Za-z0-9][\w:.-]{0,99}$/;
 /** Názvy příkazů a skillů z init (pro paletu): jen rozumné řetězce, nejvýš 300. */
 const names = (v) => (Array.isArray(v) ? [...new Set(v.filter((x) => typeof x === 'string' && NAME_RX.test(x)))].slice(0, 300) : []);
@@ -114,7 +128,7 @@ export class StreamParser {
         const lt = str(info.rateLimitType);
         const util = lt ? info.unifiedWindows?.[lt]?.utilization : undefined;
         out.push(ev('rate_limit', { status: str(info.status), limitType: lt, resetsAt: info.resetsAt,
-          utilization: typeof util === 'number' ? util : undefined }));
+          utilization: typeof util === 'number' ? util : undefined, windows: windows(info.unifiedWindows) }));
         break;
       }
 
@@ -125,7 +139,7 @@ export class StreamParser {
         out.push(ev('result', {
           subtype: str(e.subtype), isError: e.is_error === true, result: str(e.result), costUsd: e.total_cost_usd,
           numTurns: e.num_turns, durationMs: e.duration_ms, sessionId: str(e.session_id),
-          terminalReason: str(e.terminal_reason), apiErrorStatus: e.api_error_status, denials,
+          terminalReason: str(e.terminal_reason), apiErrorStatus: e.api_error_status, denials, usage: usage(e.usage),
         }));
         break;
       }

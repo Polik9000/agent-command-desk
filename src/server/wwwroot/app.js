@@ -23,6 +23,8 @@ const S = {
   run: null,          // { runId, controller, mode, account, prompt, sawPlan, resultText, resultError }
   lastPrompt: null,
   totalCost: 0,
+  stats: { last: null, session: null },  // statistiky běhů v tomto okně (poslední běh, otevřené sezení)
+  limits: {},                            // poslední stav limitu podle účtu
   queue: new MessageQueue(),
   queueEdit: null,       // id položky fronty, která se právě upravuje
   queueWaitingEdit: false,
@@ -413,6 +415,98 @@ async function switchProject(id) {
   await Promise.all([loadSessions(), loadGit()]);
 }
 
+/* ---------- Statistiky (jen v paměti okna) ---------- */
+const fmtNum = (n) => Number(n || 0).toLocaleString('cs-CZ');
+const fmtTok = (n) => (n >= 1e6 ? `${(n / 1e6).toLocaleString('cs-CZ', { maximumFractionDigits: 1 })} M`
+  : n >= 1000 ? `${(n / 1000).toLocaleString('cs-CZ', { maximumFractionDigits: 1 })} k` : fmtNum(n));
+const tokTotal = (u) => (u ? u.input + u.output + u.cacheRead + u.cacheWrite : 0);
+const emptyStats = () => ({ runs: 0, turns: 0, ms: 0, cost: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+
+function addRunStats(ev, run) {
+  const u = ev.usage || { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  const last = { runs: 1, turns: ev.numTurns || 0, ms: ev.durationMs || 0, cost: typeof ev.costUsd === 'number' ? ev.costUsd : 0, ...u,
+    model: run.model, effort: run.effort };
+  S.stats.last = last;
+  const sid = ev.sessionId || run.sessionId || S.sessionId;
+  if (!S.stats.session || S.stats.session.id !== sid) S.stats.session = { id: sid, ...emptyStats() };
+  const s = S.stats.session;
+  for (const k of ['runs', 'turns', 'ms', 'cost', 'input', 'output', 'cacheRead', 'cacheWrite']) s[k] += last[k];
+  renderFootStats();
+  if ($('#statsdlg').open) renderStats();
+}
+
+function renderFootStats() {
+  const b = $('#foot-cost');
+  const l = S.stats.last;
+  if (!l) { b.hidden = true; return; }
+  b.hidden = false;
+  b.textContent = `poslední běh ${fmtTok(tokTotal(l))} tokenů • odhad API $${l.cost.toFixed(3)} • ${l.turns} ${plural(l.turns, 'tah', 'tahy', 'tahů')} • ${(l.ms / 1000).toFixed(1)} s`;
+}
+
+function renderStats() {
+  const box = $('#stats-body');
+  box.textContent = '';
+  const cols = [['last', 'Poslední běh'], ['session', 'Sezení (toto okno)']].filter(([k]) => S.stats[k]);
+  if (!cols.length) box.appendChild(el('p', 'stats-empty', 'Zatím žádný běh v tomto okně.'));
+  else {
+    const t = el('table', 'stats-table');
+    t.appendChild(el('caption', null, 'Tokeny a odhad ceny'));
+    const head = el('thead'); const hr = el('tr');
+    hr.appendChild(el('th', null, '')); for (const [, label] of cols) { const th = el('th', null, label); th.scope = 'col'; hr.appendChild(th); }
+    head.appendChild(hr); t.appendChild(head);
+    const body = el('tbody');
+    const rows = [
+      ['Vstup', (s) => fmtNum(s.input)], ['Výstup', (s) => fmtNum(s.output)],
+      ['Cache – čtení', (s) => fmtNum(s.cacheRead)], ['Cache – zápis', (s) => fmtNum(s.cacheWrite)],
+      ['Tokeny celkem', (s) => fmtNum(tokTotal(s))], ['Běhy / tahy', (s) => `${s.runs} / ${s.turns}`],
+      ['Doba', (s) => `${(s.ms / 1000).toLocaleString('cs-CZ', { maximumFractionDigits: 1 })} s`],
+      ['Odhad ceny API', (s) => `$${s.cost.toFixed(3)}`],
+    ];
+    for (const [label, f] of rows) {
+      const tr = el('tr'); const th = el('th', null, label); th.scope = 'row'; tr.appendChild(th);
+      for (const [k] of cols) tr.appendChild(el('td', null, f(S.stats[k])));
+      body.appendChild(tr);
+    }
+    t.appendChild(body);
+    box.appendChild(t);
+  }
+  const acc = accountById(S.account);
+  box.appendChild(el('h3', 'eyebrow', `Limit účtu ${acc ? acc.label : ''}`));
+  const lim = S.limits[S.account];
+  if (!lim || !(lim.windows || []).length) {
+    box.appendChild(el('p', 'stats-empty', 'Zatím bez údajů – Claude Code je pošle během prvního běhu.'));
+    return;
+  }
+  const names = { five_hour: '5 hodin', seven_day: '7 dní', seven_day_opus: '7 dní (Opus)', seven_day_sonnet: '7 dní (Sonnet)' };
+  for (const w of lim.windows) {
+    const pct = w.utilization != null ? Math.round(w.utilization * 100) : null;
+    const m = el('div', 'meter');
+    m.dataset.level = pct != null && pct >= 80 ? 'warn' : 'ok';
+    m.appendChild(el('span', null, names[w.type] || w.type));
+    const bar = el('span', 'meter-bar');
+    bar.setAttribute('role', 'meter'); bar.setAttribute('aria-valuemin', '0'); bar.setAttribute('aria-valuemax', '100');
+    if (pct != null) bar.setAttribute('aria-valuenow', String(pct));
+    bar.setAttribute('aria-label', `Využití limitu ${names[w.type] || w.type}`);
+    const fill = el('i'); fill.style.width = `${Math.min(100, pct ?? 0)}%`; bar.appendChild(fill);
+    m.appendChild(bar);
+    m.appendChild(el('span', 'meter-text', `${pct != null ? `${pct} %` : '?'}${w.resetsAt ? ` • obnova ${fmtTime(w.resetsAt)}` : ''}`));
+    box.appendChild(m);
+  }
+  box.appendChild(el('p', 'stats-empty', `Stav z ${new Date(lim.at).toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' })}.`));
+}
+
+function openStats() {
+  renderStats();
+  const d = $('#statsdlg');
+  if (!d.open) d.showModal();
+}
+
+function setupStats() {
+  $('#foot-cost').addEventListener('click', openStats);
+  $('#stats-close').addEventListener('click', () => $('#statsdlg').close());
+  $('#statsdlg').addEventListener('click', (e) => { if (e.target === e.currentTarget) e.currentTarget.close(); });
+}
+
 /* ---------- Paleta příkazů (Ctrl+K) ---------- */
 // Příkazy a skilly z posledního init daného účtu a projektu (localStorage – jen názvy, ne obsah zpráv).
 // Nedávné zprávy jen v paměti okna (odeslané v tomto okně + zprávy otevřeného sezení); na disk se neukládají.
@@ -446,6 +540,7 @@ function paletteActions() {
     { label: 'Přiložit soubory', run: () => $('#file-input').click() },
     { label: 'Změny v gitu', run: () => openGit() },
     { label: 'Nastavení', run: () => openSettings() },
+    { label: 'Statistiky a limit účtu', run: () => openStats() },
     { label: document.fullscreenElement ? 'Ukončit celou obrazovku' : 'Celá obrazovka', run: () => toggleFullscreen() },
   ];
 }
@@ -1493,6 +1588,7 @@ function handleEvent(ev, run, state) {
       break;
     }
     case 'rate_limit':
+      S.limits[run.account] = { ...ev, at: Date.now() };
       if (ev.status === 'rejected') { run.limitShown = true; showLimit(run.account, ev.resetsAt); }
       else if (ev.status === 'allowed_warning') {
         const pct = ev.utilization != null ? ` (${Math.round(ev.utilization * 100)} %)` : '';
@@ -1520,10 +1616,8 @@ function handleEvent(ev, run, state) {
       run.resultText = ev.result;
       run.resultError = !!ev.isError;
       if (ev.sessionId) { S.sessionId = ev.sessionId; S.queue.bindSession(run, ev.sessionId); markCurrentSession(); }
-      if (typeof ev.costUsd === 'number') {
-        S.totalCost += ev.costUsd;
-        $('#foot-cost').textContent = `poslední běh $${ev.costUsd.toFixed(3)} • ${ev.numTurns ?? '?'} ${plural(ev.numTurns, 'tah', 'tahy', 'tahů')} • ${(ev.durationMs / 1000).toFixed(1)} s`;
-      }
+      if (typeof ev.costUsd === 'number') S.totalCost += ev.costUsd;
+      addRunStats(ev, run);
       const looksLikeLimit = ev.isError && (ev.apiErrorStatus === 429 || /limit|rate.?limit|usage/i.test(ev.result || ''));
       if (looksLikeLimit && !run.limitShown) { run.limitShown = true; showLimit(run.account, null, ev.result); }
       else if (ev.isError && !run.limitShown) showError(`Claude skončil s chybou (${ev.subtype || 'error'})`, ev.result || '');
@@ -1583,6 +1677,7 @@ async function main() {
   setupSettings();
   setupGit();
   setupPalette();
+  setupStats();
   $('#new-session').addEventListener('click', newSession);
   $('#project').addEventListener('change', (e) => switchProject(e.target.value));
   document.querySelectorAll('input[name="mode"]').forEach((i) => i.addEventListener('change', () => { S.mode = i.value; }));

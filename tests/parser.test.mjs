@@ -43,7 +43,8 @@ test('zamítnutí z tool_result_meta', () => {
 test('limit: rate_limit_event rejected', () => {
   const p = new StreamParser(path.join(os.tmpdir(), 'x', 'plans'));
   const [e] = p.parse(JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { status: 'rejected', rateLimitType: 'five_hour', resetsAt: 1795650600, unifiedWindows: { five_hour: { utilization: 1 } } } }));
-  assert.deepEqual(e, { type: 'rate_limit', status: 'rejected', limitType: 'five_hour', resetsAt: 1795650600, utilization: 1 });
+  assert.deepEqual(e, { type: 'rate_limit', status: 'rejected', limitType: 'five_hour', resetsAt: 1795650600, utilization: 1,
+    windows: [{ type: 'five_hour', utilization: 1, resetsAt: undefined, status: undefined }] });
 });
 
 test('plán: Write do <configDir>/plans se zaznamená, jinam ne', () => {
@@ -81,4 +82,16 @@ test('init: názvy příkazů a skillů jen jako rozumné řetězce', () => {
     slash_commands: ['kickoff', 'commit-commands:commit', 'kickoff', 42, '-x', 'a b', '<img>', 'x'.repeat(101)], skills: 'nic' }));
   assert.deepEqual(init.slashCommands, ['kickoff', 'commit-commands:commit']);
   assert.deepEqual(init.skills, []);
+});
+
+test('statistiky: tokeny z result.usage a okna limitu', () => {
+  const p = new StreamParser(path.join(os.tmpdir(), 'x', 'plans'));
+  const events = sample.flatMap((l) => p.parse(l));
+  const res = events.at(-1);
+  assert.deepEqual(res.usage, { input: 4, output: 196, cacheRead: 59587, cacheWrite: 23606 });
+  const rl = events.find((e) => e.type === 'rate_limit');
+  assert.deepEqual(rl.windows.map((w) => w.type), ['five_hour', 'seven_day']);
+  assert.equal(typeof rl.windows[0].utilization, 'number');
+  const [r2] = new StreamParser(path.join(os.tmpdir(), 'x')).parse(JSON.stringify({ type: 'result', usage: { input_tokens: -5, output_tokens: 'x' } }));
+  assert.equal(r2.usage, undefined);
 });
