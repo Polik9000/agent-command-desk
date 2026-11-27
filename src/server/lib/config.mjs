@@ -12,7 +12,7 @@ export { expand, norm, samePath, isUnder } from './platform.mjs';
 /** @typedef {{id:string,label:string,configDir:string,expectedEmail:string,accent:string,configDirFull:string}} Account */
 /** @typedef {{id:string,label:string,path:string,pathFull:string}} Project */
 /**
- * @typedef {{app:{id:string,name:string}, port:number, openBrowser:boolean, startFullscreen?:boolean,
+ * @typedef {{app:{id:string,name:string}, port:number, openBrowser:boolean, startFullscreen?:boolean, interactivePermissions?:boolean,
  *   claudeExeFull:string, gitExeFull:string, browserExeFull:string, stateDirFull:string,
  *   disallowedTools:string[], appendSystemPrompt:string, defaultAccount:string, accounts:Account[],
  *   defaultProject:string, projects:Project[]}} Config
@@ -107,6 +107,8 @@ export function parseConfig(raw, name, { checkExe = true } = {}) {
       fail('models: každá položka potřebuje id (písmena, číslice, . - _) a label');
   }
   if (!cfg.models.some((m) => m.id === '')) cfg.models = [{ id: '', label: 'Výchozí účtu' }, ...cfg.models];
+  cfg.interactivePermissions ??= false;
+  if (typeof cfg.interactivePermissions !== 'boolean') fail('interactivePermissions musí být true nebo false');
   cfg.disallowedTools ??= [];
   cfg.appendSystemPrompt = String(cfg.appendSystemPrompt ?? '').replaceAll('{appName}', cfg.app.name);
   return cfg;

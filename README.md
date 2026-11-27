@@ -60,6 +60,11 @@ Runs on Windows and macOS (experimental). The UI is in Czech.
 - **Statistics** (click the last run in the footer) – tokens (input, output, cache read/write), turns, time and the
   API-price estimate for the last run and the session, kept apart from your **subscription limit** (5-hour and 7-day
   windows with usage and reset time, as reported by Claude Code). In memory only.
+- **Permission requests** (optional, `"interactivePermissions": true`) – when Claude Code would ask for permission,
+  a card in the chat offers *Povolit jednou* (allow once), *Povolit vždy* (allow always: saves the rule Claude Code
+  suggests, e.g. `Bash(npm test *)`, to the project's `.claude/settings.local.json`, like the terminal does) and
+  *Zamítnout* (deny). No answer in 10 minutes = deny. Off by default: then anything that would ask is denied
+  automatically. In Auto mode Claude Code asks only rarely.
 - **Usage limits** – warning when an account gets close; when it hits the limit, one click switches to another account
   and resends.
 - **Your own name and look** – one config value and one CSS file (see *Customize*).
@@ -106,7 +111,8 @@ Runs on Windows and macOS (experimental). The UI is in Czech.
    "models": [{ "id": "opus", "label": "Opus" }, { "id": "sonnet", "label": "Sonnet" }, { "id": "fable", "label": "Fable" }]
    ```
    The server accepts only these ids and the effort levels `low`, `medium`, `high`, `xhigh`, `max`.
-   `"startFullscreen": true` opens the window in full screen. Projects can also be managed later in the app (*Nastavení*).
+   `"startFullscreen": true` opens the window in full screen. `"interactivePermissions": true` turns on permission
+   requests in the window (see *Features*). Projects can also be managed later in the app (*Nastavení*).
 4. **Install the launcher:**
    - Windows: `powershell -ExecutionPolicy Bypass -File scripts\install.ps1` → creates `%USERPROFILE%\bin\<app id>.cmd`
      (make sure `%USERPROFILE%\bin` is on `PATH`).
@@ -149,8 +155,7 @@ Vendor libraries and optional fonts: `scripts/fetch-vendor.ps1` (pinned versions
 How the CLI is driven (stream-json input/output, sending into a running turn): [docs/claude-code-headless.md](docs/claude-code-headless.md).
 
 ## Roadmap
-Interactive permission prompts (answer Claude Code's permission requests in the window) are researched and waiting for
-a decision.
+Light theme, one long-lived Claude Code process per session (faster replies), keyboard and screen-reader review.
 
 ## Uninstall
 Windows: `powershell -ExecutionPolicy Bypass -File scripts\uninstall.ps1` · macOS: `sh scripts/uninstall.sh`.

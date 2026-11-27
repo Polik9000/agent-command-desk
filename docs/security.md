@@ -51,3 +51,12 @@ Claude Code login and never reads, copies or stores credentials.
 18. **Session search** reads only transcripts of the selected (verified) account and allowlisted project – the 50 most
     recent, each up to 32 MB – and only user/assistant text (no tool input, meta or sub-agent messages); the query is
     2–100 characters. Custom session names live in the browser profile of the app window; transcripts are never written.
+19. **Permission requests (optional).** Off by default (`--permission-prompts none`: anything that would ask is
+    denied). With `"interactivePermissions": true` the app passes `--permission-prompts host --permission-prompt-tool
+    stdio`; Claude Code then sends `control_request can_use_tool` on stdout and waits. The window shows the tool and
+    command/path; the client sends only the request id and *once*, *always* or *deny*
+    (`POST /api/runs/:id/permission`, token + Origin). The tool input sent back is always the server's copy. *Always*
+    applies only Claude Code's own `addRules` suggestions with `behavior: allow` and `destination: localSettings`
+    (the project's `.claude/settings.local.json`, same as the terminal); `setMode` (e.g. acceptEdits),
+    `addDirectories` and any other destination are never applied, so the permission mode stays `auto`/`plan`.
+    No answer within 10 minutes, Stop or closing the window = deny. Other control requests get an error reply.

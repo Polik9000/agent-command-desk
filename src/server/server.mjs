@@ -14,6 +14,7 @@ import { gitStatus, gitFiles, gitDiff } from './lib/git.mjs';
 import { AttachmentStore, attachmentsPrompt, MAX_PER_RUN as MAX_ATTACHMENTS } from './lib/attachments.mjs';
 import { openWindow, createHeartbeat } from './lib/window.mjs';
 import { changeProjects, settingsView } from './lib/settings.mjs';
+import { DECISIONS } from './lib/permissions.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..', '..');
@@ -172,6 +173,7 @@ async function handleApi(req, res, url) {
       defaultProject: findProject(cfg, cfg.defaultProject)?.id ?? cfg.projects[0].id,
       modes: MODES,
       models: cfg.models.map((x) => ({ id: x.id, label: x.label })),
+      interactivePermissions: cfg.interactivePermissions === true,
       efforts: EFFORTS,
     });
   }
@@ -281,6 +283,18 @@ async function handleApi(req, res, url) {
     }
     if (!run.inject(body.prompt + attachmentsPrompt(files))) return problem(res, 409, 'Běh už končí – zpráva půjde do fronty.');
     return sendJson(res, 200, { accepted: true });
+  }
+
+  // Odpověď na žádost o svolení (jen při interactivePermissions). Klient posílá jen id žádosti a rozhodnutí.
+  if (req.method === 'POST' && (m = /^\/api\/runs\/([0-9a-f]+)\/permission$/.exec(p))) {
+    let body;
+    try { body = await readJson(req); } catch (e) { return problem(res, e.status ?? 400, e.message); }
+    const run = runner.find(m[1]);
+    if (!run) return problem(res, 404, 'Běh neexistuje.');
+    if (!body || typeof body.requestId !== 'string' || !DECISIONS.includes(body.decision)) return problem(res, 400, 'Neplatná odpověď.');
+    if (!run.answerPermission(body.requestId, body.decision)) return problem(res, 409, 'Žádost už není aktivní.');
+    log(`Běh ${run.id}: svolení ${body.decision}`);
+    return sendJson(res, 200, { ok: true });
   }
 
   if (req.method === 'POST' && (m = /^\/api\/runs\/([0-9a-f]+)\/stop$/.exec(p))) {

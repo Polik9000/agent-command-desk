@@ -134,6 +134,7 @@ async function loadState() {
   if (st.app && st.app.name) { S.appName = st.app.name; $('#brand-name').textContent = st.app.name; }
   if (Array.isArray(st.models)) S.models = st.models;
   if (Array.isArray(st.efforts)) S.efforts = st.efforts;
+  S.interactivePermissions = st.interactivePermissions === true;
   S.accounts = st.accounts;
   S.projects = st.projects;
   if (!S.account) S.account = st.defaultAccount;
@@ -825,6 +826,9 @@ async function openSettings() {
   const d = $('#settings');
   setMsg('');
   renderSettingsAccounts();
+  $('#set-perm').textContent = S.interactivePermissions
+    ? 'Žádosti o svolení: zapnuto. Když se Claude Code zeptá, objeví se v chatu karta Povolit jednou / Povolit vždy / Zamítnout. V režimu Auto se ptá jen výjimečně – většinu rozhodne sám.'
+    : 'Žádosti o svolení: vypnuto – na co by se Claude Code zeptal, to se samo zamítne. Zapnout jde volbou "interactivePermissions": true v local/config.json.';
   renderFullscreenButton();
   renderNotifyToggle();
   if (!d.open) d.showModal();
@@ -1125,6 +1129,68 @@ function showPlanCard(markdown, title) {
   actions.append(approve, el('span', 'hint', 'Spustí se v režimu Auto ve stejném sezení. Úpravy plánu napište jako další zprávu.'));
   box.appendChild(actions);
   append(box, true);
+}
+
+/* ---------- Žádost o svolení (jen s interactivePermissions v configu) ---------- */
+const PERM_RESULT = {
+  once: 'Povoleno jednou.', always: 'Povoleno vždy – pravidlo uloženo do .claude/settings.local.json projektu.',
+  deny: 'Zamítnuto.', timeout: 'Bez odpovědi v časovém limitu – zamítnuto.',
+};
+
+function showPermissionCard(ev, run) {
+  const box = el('section', 'perm');
+  box.dataset.requestId = ev.requestId;
+  box.setAttribute('aria-label', 'Claude žádá o svolení');
+  box.appendChild(el('div', 'eyebrow', 'Claude žádá o svolení'));
+  box.appendChild(el('h3', 'perm-title', ev.displayName || ev.toolName));
+  if (ev.description) box.appendChild(el('p', 'perm-desc', ev.description));
+  const pv = ev.preview || {};
+  const detail = pv.command || pv.path || pv.url || pv.json;
+  if (detail) box.appendChild(el('pre', null, detail));
+  if (ev.blockedPath && ev.blockedPath !== pv.path) box.appendChild(el('p', 'perm-desc', `Cesta: ${ev.blockedPath}`));
+  const actions = el('div', 'perm-actions');
+  const answer = async (decision, btn) => {
+    for (const b of actions.querySelectorAll('button')) b.disabled = true;
+    try {
+      await apiJson(`/api/runs/${encodeURIComponent(run.runId)}/permission`, { method: 'POST', body: { requestId: ev.requestId, decision } });
+    } catch (e) {
+      resolvePermissionCard(box, null, e.message);
+    }
+  };
+  const once = button('Povolit jednou', 'btn-accent btn-small', () => answer('once'));
+  actions.appendChild(once);
+  if (ev.alwaysRules && ev.alwaysRules.length) {
+    const always = button('Povolit vždy', 'btn-ghost btn-small', () => answer('always'));
+    always.title = 'Uloží pravidlo do .claude/settings.local.json projektu (jako v Claude Code) – příště se už nezeptá.';
+    actions.appendChild(always);
+  }
+  actions.appendChild(button('Zamítnout', 'btn-danger btn-small', () => answer('deny')));
+  box.appendChild(actions);
+  if (ev.alwaysRules && ev.alwaysRules.length) box.appendChild(el('p', 'perm-rule', `„Vždy“ uloží: ${ev.alwaysRules.join(', ')}`));
+  const mins = Math.round((ev.timeoutMs || 600000) / 60000);
+  box.appendChild(el('p', 'perm-rule perm-wait', `Claude čeká. Bez odpovědi do ${mins} min se akce zamítne.`));
+  append(box, true);
+  once.focus({ preventScroll: true });
+  run.pendingPermissions = (run.pendingPermissions || 0) + 1;
+  setStatus('Claude čeká na vaše svolení…', true);
+  notify('Claude žádá o svolení', `${ev.displayName || ev.toolName}: ${detail || ''}`, 'plan');
+}
+
+function resolvePermissionCard(box, decision, errorText) {
+  if (!box) return;
+  if (errorText) {
+    for (const b of box.querySelectorAll('.perm-actions button')) b.disabled = false;
+    let p = box.querySelector('.perm-result');
+    if (!p) { p = el('p', 'perm-result'); box.appendChild(p); }
+    p.dataset.decision = 'deny';
+    p.textContent = errorText;
+    return;
+  }
+  box.dataset.state = 'resolved';
+  box.querySelector('.perm-result')?.remove();
+  const p = el('p', 'perm-result', PERM_RESULT[decision] || decision);
+  p.dataset.decision = decision;
+  box.appendChild(p);
 }
 
 function approvePlan(btn) {
@@ -1703,7 +1769,18 @@ function handleEvent(ev, run, state) {
       }
       break;
     }
+    case 'permission_request':
+      showPermissionCard(ev, run);
+      break;
+    case 'permission_resolved': {
+      const box = [...document.querySelectorAll('.perm')].find((b) => b.dataset.requestId === ev.requestId);
+      resolvePermissionCard(box, ev.decision);
+      run.pendingPermissions = Math.max(0, (run.pendingPermissions || 0) - 1);
+      if (!run.pendingPermissions) setStatus(run.mode === 'plan' ? 'Claude plánuje…' : 'Claude pracuje…', true);
+      break;
+    }
     case 'exit':
+      for (const b of document.querySelectorAll('.perm:not([data-state="resolved"])')) resolvePermissionCard(b, ev.stopped ? 'deny' : 'timeout');
       for (const st of run.injectedBubbles.splice(0)) st.textContent = 'Claude zprávu nestihl převzít – pošlete ji prosím znovu.';
       run.outcome = ev.stopped ? 'stopped' : run.limitShown ? 'limit'
         : (ev.code !== 0 || run.resultError || run.hadError) ? 'error' : run.mode === 'plan' ? 'plan' : 'ok';

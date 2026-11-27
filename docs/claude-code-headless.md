@@ -45,3 +45,14 @@ Transcripts live in `<projectsDirectory>/<cwd with every non-alphanumeric charac
   `--resume <id> --permission-mode auto` with an approval message.
 - Claude asks questions as plain text; you answer with the next message.
 - Custom commands and skills work by including `/name` in the prompt.
+
+## Optional permission requests (`interactivePermissions`)
+Verified on 2.1.332: with `--permission-prompts host --permission-prompt-tool stdio` (no `initialize` request needed)
+Claude Code writes `{"type":"control_request","request_id":…,"request":{"subtype":"can_use_tool","tool_name",
+"display_name","input","description","permission_suggestions":[…],"blocked_path","tool_use_id"}}` and waits for
+`{"type":"control_response","response":{"subtype":"success","request_id":…,"response":{"behavior":"allow",
+"updatedInput":…,"updatedPermissions":[…]}}}` or `{"behavior":"deny","message":…}` on stdin. Suggestions seen:
+`addRules` (`destination: localSettings` → written to `<project>/.claude/settings.local.json`), `addDirectories` and
+`setMode acceptEdits` (session); the app applies only `addRules`. Without `--permission-prompt-tool stdio` nothing is
+asked and everything is denied as with `none`. In `auto` mode the classifier decides almost everything itself; in
+`plan` mode Claude refuses edits on its own, so requests are rare in this app.

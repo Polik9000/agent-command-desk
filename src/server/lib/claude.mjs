@@ -9,6 +9,7 @@ import path from 'node:path';
 import { isUnder, samePath, norm } from './config.mjs';
 import { checkClaudeExe, childSpawnOptions, killTree } from './platform.mjs';
 import { StreamParser, ev } from './parser.mjs';
+import { alwaysUpdates, ruleLabel, inputPreview, controlResponse, controlError, PERMISSION_TIMEOUT_MS } from './permissions.mjs';
 
 export { killTree };
 export const MODES = ['auto', 'plan'];
@@ -152,7 +153,10 @@ export class ClaudeRunner {
     // Vstup jako stream-json: stdin zůstane otevřený, dokud tah neskončí, takže lze poslat další zprávu
     // do běžícího tahu (Claude ji převezme na nejbližším předělu; --replay-user-messages to potvrdí).
     const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
-      '--include-partial-messages', '--replay-user-messages', '--permission-mode', mode, '--permission-prompts', 'none'];
+      '--include-partial-messages', '--replay-user-messages', '--permission-mode', mode];
+    // Výchozí: na co by se Claude Code zeptal, to se samo zamítne. Volitelně se ptá uživatele v okně (docs/security.md).
+    if (this.cfg.interactivePermissions === true) args.push('--permission-prompts', 'host', '--permission-prompt-tool', 'stdio');
+    else args.push('--permission-prompts', 'none');
     if (resume) args.push('--resume', resume);
     if (this.cfg.appendSystemPrompt) args.push('--append-system-prompt', this.cfg.appendSystemPrompt);
     if (this.cfg.disallowedTools.length) args.push('--disallowedTools', ...this.cfg.disallowedTools);
@@ -194,6 +198,22 @@ export class ClaudeRunner {
         try { child.stdin.end(); } catch { /* už zavřeno */ }
       },
       closeTimer: /** @type {any} */ (null),
+      /** Nevyřízené žádosti o svolení: requestId → {input, suggestions, timer} */
+      permissions: new Map(),
+      /**
+       * Odpověď uživatele na žádost o svolení. @param {string} requestId @param {'once'|'always'|'deny'|'timeout'} decision
+       * @returns {boolean} false = žádost neexistuje (už vyřízená, nebo cizí)
+       */
+      answerPermission(requestId, decision) {
+        const p = run.permissions.get(requestId);
+        if (!p || run.ended) return false;
+        run.permissions.delete(requestId);
+        clearTimeout(p.timer);
+        try { child.stdin.write(controlResponse(requestId, decision, p.input, p.suggestions), 'utf8'); } catch { /* proces skončil */ }
+        const always = decision === 'always' ? alwaysUpdates(p.suggestions).flatMap((u) => u.rules.map(ruleLabel)) : [];
+        run.emit('event', ev('permission_resolved', { requestId, decision: decision === 'always' && !always.length ? 'once' : decision, rules: always }));
+        return true;
+      },
     });
     if (resume) this.busySessions.add(resume);
     this.runs.set(run.id, run);
@@ -201,6 +221,19 @@ export class ClaudeRunner {
       + `, model ${model || 'výchozí'}, effort ${effort || 'výchozí'}`);
     this.#pump(run, child, account, prompt);
     return run;
+  }
+
+  /** Žádost o svolení → UI (bez surových návrhů); bez odpovědi do limitu se zamítne. */
+  #askPermission(run, e) {
+    if (run.stopped || run.ended) return;
+    const timer = setTimeout(() => run.answerPermission(e.requestId, 'timeout'), PERMISSION_TIMEOUT_MS);
+    timer.unref?.();
+    run.permissions.set(e.requestId, { input: e.input, suggestions: e.suggestions, timer });
+    const always = alwaysUpdates(e.suggestions).flatMap((u) => u.rules.map(ruleLabel));
+    this.log(`Běh ${run.id}: žádost o svolení (${e.toolName})`);
+    run.emit('event', ev('permission_request', { requestId: e.requestId, toolName: e.toolName, displayName: e.displayName,
+      description: e.description, blockedPath: e.blockedPath, toolUseId: e.toolUseId, preview: inputPreview(e.toolName, e.input),
+      alwaysRules: always, timeoutMs: PERMISSION_TIMEOUT_MS }));
   }
 
   #pump(run, child, account, prompt) {
@@ -220,6 +253,8 @@ export class ClaudeRunner {
           run.sessionId = parser.sessionId;
           this.busySessions.add(parser.sessionId);
         }
+        if (e.type === 'control_permission') { this.#askPermission(run, e); continue; }
+        if (e.type === 'control_other') { try { child.stdin.write(controlError(e.requestId), 'utf8'); } catch { } continue; }
         if (e.type === 'user_replay') {
           run.replayed++;
           clearTimeout(run.closeTimer);
@@ -250,6 +285,8 @@ export class ClaudeRunner {
       this.log(`Běh ${run.id} skončil kódem ${exitCode}${run.stopped ? ' (zastaven)' : ''}`);
     }).finally(() => {
       clearTimeout(run.closeTimer);
+      for (const p of run.permissions.values()) clearTimeout(p.timer);
+      run.permissions.clear();
       run.acceptingInput = false;
       run.ended = true;
       this.runs.delete(run.id);

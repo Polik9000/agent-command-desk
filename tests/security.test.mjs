@@ -218,3 +218,12 @@ test('hledání v sezeních: 2–100 znaků, jen ověřený účet a známý pro
   assert.equal((await s('account=nic&project=p&q=abc')).status, 400);
   assert.equal((await s('account=a&project=p&q=abc')).status, 409); // účet v testu není ověřen
 });
+
+test('svolení: jen s tokenem a Origin, neznámý běh 404', async () => {
+  const body = Buffer.from(JSON.stringify({ requestId: 'r1', decision: 'always' }));
+  const h = { 'Content-Type': 'application/json', 'Content-Length': body.length };
+  assert.equal((await req('POST', '/api/runs/abc123/permission', { 'X-ACD-Token': TOKEN, ...h }, body)).status, 403);
+  assert.equal((await req('POST', '/api/runs/abc123/permission', { ...origin(), ...h }, body)).status, 404);
+  const st = JSON.parse((await req('GET', '/api/state', { 'X-ACD-Token': TOKEN })).body);
+  assert.equal(st.interactivePermissions, false);
+});

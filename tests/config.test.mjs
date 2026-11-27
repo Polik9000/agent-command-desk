@@ -91,3 +91,9 @@ test('models: výchozí seznam, vlastní seznam vždy s „Výchozí účtu“, 
   assert.throws(() => loadConfig(writeCfg('m3.json', { ...base(), models: [{ id: '--dangerously-skip-permissions', label: 'x' }] })), /models/);
   assert.throws(() => loadConfig(writeCfg('m4.json', { ...base(), models: [{ id: 'a b', label: 'x' }] })), /models/);
 });
+
+test('interactivePermissions: výchozí false, jen boolean', () => {
+  assert.equal(loadConfig(writeCfg('ip1.json', base())).interactivePermissions, false);
+  assert.equal(loadConfig(writeCfg('ip2.json', { ...base(), interactivePermissions: true })).interactivePermissions, true);
+  assert.throws(() => loadConfig(writeCfg('ip3.json', { ...base(), interactivePermissions: 'ano' })), /interactivePermissions/);
+});

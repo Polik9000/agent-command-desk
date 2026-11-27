@@ -123,6 +123,19 @@ export class StreamParser {
         break;
       }
 
+      // Žádost o rozhodnutí od Claude Code (jen s --permission-prompt-tool stdio). Odpovídá runner, ne UI přímo.
+      case 'control_request': {
+        const r = e.request ?? {};
+        const requestId = str(e.request_id);
+        if (!requestId) break;
+        if (r.subtype === 'can_use_tool') {
+          out.push(ev('control_permission', { requestId, toolName: str(r.tool_name) ?? '?', displayName: str(r.display_name),
+            description: str(r.description), blockedPath: str(r.blocked_path), toolUseId: str(r.tool_use_id),
+            input: r.input, suggestions: r.permission_suggestions }));
+        } else out.push(ev('control_other', { requestId, subtype: str(r.subtype) }));
+        break;
+      }
+
       case 'rate_limit_event': {
         const info = e.rate_limit_info ?? {};
         const lt = str(info.rateLimitType);
