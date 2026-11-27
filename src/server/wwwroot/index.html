@@ -57,7 +57,7 @@
     <main class="main">
       <div class="banner" id="banner" hidden></div>
 
-      <section class="chat" id="chat" aria-label="Konverzace">
+      <section class="chat" id="chat" aria-label="Konverzace" tabindex="0">
         <div class="empty" id="empty">
           <div class="motif motif--fill" aria-hidden="true"></div>
           <h2 class="empty-title">Co dnes uděláme</h2>
@@ -70,7 +70,12 @@
         <section class="queue" id="queue" aria-label="Fronta zpráv" hidden></section>
         <div class="attach-list" id="attach-list" aria-label="Přílohy" hidden></div>
         <label for="prompt" class="sr-only">Zpráva pro Claude</label>
-        <textarea id="prompt" rows="3" placeholder="Napište zprávu… (Ctrl+Enter odešle)" autocomplete="off"></textarea>
+        <div class="prompt-wrap">
+          <textarea id="prompt" rows="3" placeholder="Napište zprávu… (Ctrl+Enter odešle, / nabídne příkazy)" autocomplete="off"
+            aria-autocomplete="list" aria-controls="slash-list"></textarea>
+          <ul class="slash-list" id="slash-list" role="listbox" aria-label="Příkazy a skilly" hidden></ul>
+          <p class="sr-only" id="slash-status" aria-live="polite"></p>
+        </div>
         <div class="composer-bar">
           <fieldset class="seg seg-mode" id="modes">
             <legend class="sr-only">Režim</legend>

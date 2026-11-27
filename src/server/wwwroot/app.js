@@ -102,6 +102,7 @@ function append(node, force) {
 }
 function clearChat() {
   chat().querySelectorAll(':scope > :not(#empty)').forEach((n) => n.remove());
+  tools.clear(); // karty nástrojů odstraněné z chatu
   $('#empty').hidden = false;
 }
 /** Důležité hlášení pro čtečku obrazovky (přeruší čtení). Stav běhu hlásí #status zdvořile. */
@@ -603,14 +604,20 @@ const CMDS_KEY = (acc, proj) => `acd.cmds.${acc}.${proj}`;
 const P = { items: [], sel: 0, recent: [], sessionPrompts: [] };
 
 function rememberCommands(ev) {
-  const list = [...new Set([...(ev.slashCommands || []), ...(ev.skills || [])])];
-  if (!list.length) return;
-  try { localStorage.setItem(CMDS_KEY(S.account, S.project), JSON.stringify(list.slice(0, 300))); } catch { }
+  const skills = (ev.skills || []).slice(0, 300);
+  const commands = (ev.slashCommands || []).filter((x) => !skills.includes(x)).slice(0, 300);
+  if (!commands.length && !skills.length) return;
+  try { localStorage.setItem(CMDS_KEY(S.account, S.project), JSON.stringify({ commands, skills })); } catch { }
 }
-function knownCommands() {
-  try { const a = JSON.parse(localStorage.getItem(CMDS_KEY(S.account, S.project)) || '[]'); return Array.isArray(a) ? a.filter((x) => typeof x === 'string') : []; }
-  catch { return []; }
+/** Příkazy a skilly z posledního init účtu a projektu: [{name, kind: 'cmd'|'skill'}]. */
+function commandEntries() {
+  let v;
+  try { v = JSON.parse(localStorage.getItem(CMDS_KEY(S.account, S.project)) || '[]'); } catch { return []; }
+  const str = (a) => (Array.isArray(a) ? a.filter((x) => typeof x === 'string') : []);
+  if (Array.isArray(v)) return str(v).map((name) => ({ name, kind: 'cmd' })); // starší formát
+  return [...str(v && v.commands).map((name) => ({ name, kind: 'cmd' })), ...str(v && v.skills).map((name) => ({ name, kind: 'skill' }))];
 }
+const knownCommands = () => commandEntries().map((c) => c.name);
 function rememberPrompt(text) {
   const t = String(text || '').trim();
   if (!t) return;
@@ -659,7 +666,7 @@ function buildPalette(q) {
   const match = (label) => !f || fold(label).includes(f);
   const score = (label) => (f && fold(label).startsWith(f) ? 0 : 1);
   const groups = [];
-  const cmds = knownCommands().map((c) => ({ kind: 'cmd', label: `/${c}`, run: () => insertIntoPrompt(`/${c} `) }))
+  const cmds = commandEntries().map((c) => ({ kind: 'cmd', label: `/${c.name}`, meta: c.kind === 'skill' ? 'skill' : '', run: () => insertIntoPrompt(`/${c.name} `) }))
     .filter((x) => match(x.label) || match(x.label.slice(1)));
   const acts = paletteActions().map((a) => ({ kind: 'act', ...a })).filter((x) => match(x.label));
   const seen = new Set();
@@ -1553,6 +1560,83 @@ function setupAttachments() {
 }
 
 /** Enter v seznamu doplní další číslo / odrážku; Shift+Enter = obyčejný nový řádek (výchozí chování). */
+/* ---------- Našeptávání příkazů při psaní „/“ na začátku zprávy ---------- */
+const SL = { items: [], sel: 0 };
+const slashOpen = () => !$('#slash-list').hidden;
+/** Rozpracovaný příkaz: „/abc“ od začátku zprávy až po kurzor (Claude Code bere příkazy jen na začátku). */
+function slashQuery() {
+  const ta = $('#prompt');
+  if (ta.selectionStart !== ta.selectionEnd) return null;
+  const m = /^\/([\w:.-]*)$/.exec(ta.value.slice(0, ta.selectionStart));
+  return m ? m[1] : null;
+}
+function closeSlash() {
+  const ul = $('#slash-list');
+  if (ul.hidden) return;
+  ul.hidden = true;
+  ul.textContent = '';
+  SL.items = [];
+  $('#prompt').removeAttribute('aria-activedescendant');
+}
+function updateSlash() {
+  const q = slashQuery();
+  if (q === null) { closeSlash(); return; }
+  const f = fold(q);
+  const items = commandEntries().filter((c) => fold(c.name).includes(f))
+    .sort((x, y) => (fold(x.name).startsWith(f) ? 0 : 1) - (fold(y.name).startsWith(f) ? 0 : 1)).slice(0, 50);
+  if (!items.length) { closeSlash(); return; }
+  const ul = $('#slash-list');
+  const wasOpen = slashOpen();
+  ul.textContent = '';
+  SL.items = items.map((c, i) => {
+    const li = el('li', 'palette-item');
+    li.id = `slash-${i}`;
+    li.setAttribute('role', 'option');
+    li.appendChild(el('span', 'palette-label', `/${c.name}`));
+    if (c.kind === 'skill') li.appendChild(el('span', 'palette-meta', 'skill'));
+    li.addEventListener('mousedown', (e) => e.preventDefault()); // fokus zůstane v poli
+    li.addEventListener('click', () => { SL.sel = i; acceptSlash(); });
+    ul.appendChild(li);
+    return { ...c, node: li };
+  });
+  SL.sel = 0;
+  ul.hidden = false;
+  markSlash();
+  if (!wasOpen) $('#slash-status').textContent = `${items.length} ${plural(items.length, 'příkaz', 'příkazy', 'příkazů')} – šipky vyberou, Enter nebo Tab vloží, Esc zavře.`;
+}
+function markSlash() {
+  SL.items.forEach((it, i) => it.node.setAttribute('aria-selected', i === SL.sel ? 'true' : 'false'));
+  const cur = SL.items[SL.sel];
+  if (cur) { $('#prompt').setAttribute('aria-activedescendant', cur.node.id); cur.node.scrollIntoView({ block: 'nearest' }); }
+}
+function acceptSlash() {
+  const it = SL.items[SL.sel];
+  const ta = $('#prompt');
+  if (!it) return;
+  const end = ta.selectionStart + /^[\w:.-]*/.exec(ta.value.slice(ta.selectionStart))[0].length; // i zbytek slova za kurzorem
+  const after = ta.value.slice(end);
+  const text = `/${it.name}` + (after.startsWith(' ') ? '' : ' ');
+  ta.setSelectionRange(0, end);
+  if (!document.execCommand('insertText', false, text)) ta.setRangeText(text, 0, end, 'end');
+  const caret = text.length + (after.startsWith(' ') ? 1 : 0);
+  ta.setSelectionRange(caret, caret);
+  closeSlash();
+}
+/** @returns {boolean} true = klávesu zpracovalo našeptávání */
+function slashKeydown(e) {
+  if (!slashOpen() || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return false;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    const n = SL.items.length;
+    SL.sel = (SL.sel + (e.key === 'ArrowDown' ? 1 : n - 1)) % n;
+    markSlash();
+  } else if ((e.key === 'Enter' && !e.shiftKey) || (e.key === 'Tab' && !e.shiftKey)) acceptSlash();
+  else if (e.key === 'Escape') closeSlash();
+  else return false;
+  e.preventDefault();
+  e.stopPropagation();
+  return true;
+}
+
 function listKeydown(e) {
   if (e.key !== 'Enter' || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey || e.isComposing || e.defaultPrevented) return;
   const ta = e.target;
@@ -1780,7 +1864,7 @@ function handleEvent(ev, run, state) {
     }
     case 'tool_result': {
       const t = tools.get(ev.id);
-      if (t) fillToolResult(t, ev);
+      if (t) { fillToolResult(t, ev); tools.delete(ev.id); } // výsledek přijde jen jednou
       setStatus('Claude pracuje…', true);
       break;
     }
@@ -1872,9 +1956,13 @@ async function main() {
 
   $('#composer').addEventListener('submit', (e) => { e.preventDefault(); send(); });
   $('#prompt').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(e.shiftKey ? 'queue' : 'now'); return; }
+    if (slashKeydown(e)) return;
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); closeSlash(); send(e.shiftKey ? 'queue' : 'now'); return; }
     listKeydown(e);
   });
+  $('#prompt').addEventListener('input', updateSlash);
+  $('#prompt').addEventListener('click', updateSlash);
+  $('#prompt').addEventListener('blur', closeSlash);
   $('#notify-toggle').addEventListener('click', toggleNotify);
   renderNotifyToggle();
   window.addEventListener('focus', () => { if (S.attention) { S.attention = false; applyAccent(); } });
