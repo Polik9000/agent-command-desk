@@ -8,7 +8,11 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const src = readFileSync(path.join(root, 'src', 'server', 'wwwroot', 'queue.js'), 'utf8');
-const sandbox = { window: {} };
+// Překlady rozhraní (čeština): _t a LOC jako v prohlížeči.
+const i18n = { window: {}, document: { documentElement: {}, addEventListener() {} }, localStorage: { getItem: () => null, setItem() {} } };
+i18n.window.window = i18n.window;
+vm.runInNewContext(readFileSync(path.join(root, 'src', 'server', 'wwwroot', 'i18n.js'), 'utf8'), i18n);
+const sandbox = { window: {}, _t: i18n.window._t, LOC: i18n.window.LOC };
 vm.runInNewContext(src, sandbox);
 const { MessageQueue } = sandbox.window;
 

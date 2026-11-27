@@ -7,7 +7,11 @@ import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const sandbox = { window: {} };
+// Překlady rozhraní (čeština): _t a LOC jako v prohlížeči.
+const i18n = { window: {}, document: { documentElement: {}, addEventListener() {} }, localStorage: { getItem: () => null, setItem() {} } };
+i18n.window.window = i18n.window;
+vm.runInNewContext(readFileSync(path.join(root, 'src', 'server', 'wwwroot', 'i18n.js'), 'utf8'), i18n);
+const sandbox = { window: {}, _t: i18n.window._t, LOC: i18n.window.LOC };
 vm.runInNewContext(readFileSync(path.join(root, 'src', 'server', 'wwwroot', 'review.js'), 'utf8'), sandbox);
 const { findAll, diffLines, commentsMessage, inlineCode, progressMarks, taskProgress, fmtEta, atQuery, rankFiles } = sandbox.window.Review;
 const plain = (v) => JSON.parse(JSON.stringify(v)); // pole z jiného kontextu vm

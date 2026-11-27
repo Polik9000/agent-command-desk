@@ -12,6 +12,8 @@
   <script src="vendor/marked.umd.js" defer></script>
   <script src="vendor/purify.min.js" defer></script>
   <script src="vendor/highlight.min.js" defer></script>
+  <script src="i18n.en.js" defer></script>
+  <script src="i18n.js" defer></script>
   <script src="queue.js" defer></script>
   <script src="editor.js" defer></script>
   <script src="review.js" defer></script>
@@ -199,6 +201,18 @@
           <label class="seg-item"><input type="radio" name="theme" value="system"><span>Podle systému</span></label>
         </fieldset>
         <span class="set-hint">Platí jen pro toto okno a počítač.</span>
+      </div>
+    </section>
+
+    <section class="set-section" aria-labelledby="set-lang-title">
+      <h3 class="eyebrow" id="set-lang-title">Jazyk</h3>
+      <div class="set-row">
+        <fieldset class="seg" id="set-lang">
+          <legend class="sr-only">Jazyk rozhraní</legend>
+          <label class="seg-item"><input type="radio" name="lang" value="cs"><span>Čeština</span></label>
+          <label class="seg-item"><input type="radio" name="lang" value="en"><span>English</span></label>
+        </fieldset>
+        <span class="set-hint">Okno se po změně znovu načte. Rozepsané zprávy se zachovají.</span>
       </div>
     </section>
 

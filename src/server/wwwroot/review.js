@@ -65,8 +65,8 @@
     return `${fence}${pad}${t}${pad}${fence}`;
   }
 
-  const KIND_LABEL = { add: 'přidaný řádek', del: 'odebraný řádek', ctx: 'řádek' };
-  const AREA_LABEL = { staged: 'připraveno ke commitu', worktree: 'neuložené změny', untracked: 'nový soubor' };
+  const KIND_LABEL = { add: _t('přidaný řádek'), del: _t('odebraný řádek'), ctx: _t('řádek') };
+  const AREA_LABEL = { staged: _t('připraveno ke commitu'), worktree: _t('neuložené změny'), untracked: _t('nový soubor') };
 
   /**
    * Zpráva pro Clauda z komentářů k diffu.
@@ -74,10 +74,10 @@
    */
   function commentsMessage(comments) {
     const items = comments.slice().sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
-    const lines = ['Moje komentáře ke změnám v projektu (git diff). Projdi je a uprav kód podle nich:', ''];
+    const lines = [_t('Moje komentáře ke změnám v projektu (git diff). Projdi je a uprav kód podle nich:'), ''];
     items.forEach((c, i) => {
       const code = c.text.replace(/^[+\- ]/, '').trim().slice(0, 200);
-      const where = `${inlineCode(c.file)}, ${KIND_LABEL[c.kind] || 'řádek'} ${c.line}${c.side === 'old' ? ' (číslováno podle původní verze)' : ''}`
+      const where = `${inlineCode(c.file)}, ${KIND_LABEL[c.kind] || _t('řádek')} ${c.line}${c.side === 'old' ? _t(' (číslováno podle původní verze)') : ''}`
         + (AREA_LABEL[c.area] ? `, ${AREA_LABEL[c.area]}` : '');
       lines.push(`${i + 1}. ${where}${code ? `: ${inlineCode(code)}` : ''}`);
       for (const l of c.note.trim().split('\n')) lines.push(`   ${l}`);
@@ -134,10 +134,10 @@
   /** „asi 3 min“ / „asi 40 s“ / „už brzy“. */
   function fmtEta(ms) {
     if (ms == null) return '';
-    if (ms < 15_000) return 'už brzy';
-    if (ms < 90_000) return `asi ${Math.round(ms / 10_000) * 10} s`;
-    if (ms < 3_600_000) return `asi ${Math.round(ms / 60_000)} min`;
-    return `asi ${(ms / 3_600_000).toLocaleString('cs-CZ', { maximumFractionDigits: 1 })} h`;
+    if (ms < 15_000) return _t('už brzy');
+    if (ms < 90_000) return _t('asi {0} s', Math.round(ms / 10_000) * 10);
+    if (ms < 3_600_000) return _t('asi {0} min', Math.round(ms / 60_000));
+    return _t('asi {0} h', (ms / 3_600_000).toLocaleString(LOC, { maximumFractionDigits: 1 }));
   }
 
   /* ---------- @ soubor v poli pro psaní ---------- */

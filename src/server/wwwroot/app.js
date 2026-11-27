@@ -9,7 +9,7 @@ const el = (tag, cls, text) => {
   return e;
 };
 
-const APPROVE_PROMPT = 'Plán schvaluji, proveď ho.';
+const APPROVE_PROMPT = _t('Plán schvaluji, proveď ho.');
 
 const S = {
   token: null,
@@ -30,7 +30,7 @@ const S = {
   queueEdit: null,       // id položky fronty, která se právě upravuje
   queueWaitingEdit: false,
   queueNotice: null,
-  models: [{ id: '', label: 'Výchozí účtu' }],
+  models: [{ id: '', label: _t('Výchozí účtu') }],
   efforts: [''],
   model: '',             // pro další zprávy (pamatuje se pro každý účet)
   effort: '',
@@ -40,10 +40,10 @@ const S = {
   mcpWarned: {},
 };
 
-const DEFAULT_ATTACH_TEXT = 'Podívej se na přílohy.';
+const DEFAULT_ATTACH_TEXT = _t('Podívej se na přílohy.');
 const ATTACH_RX = /\.(png|jpe?g|gif|webp|pdf|txt|md|csv|json|log)$/i;
 const ATTACH_MAX = 10;
-const ATTACH_MARK = '\n\nPřílohy od uživatele (soubory jen ke čtení, přečti je nástrojem Read):\n';
+const ATTACH_MARK = '\n\nPřílohy od uživatele (soubory jen ke čtení, přečti je nástrojem Read):\n'; // protokol, nepřekládat
 
 /* ---------- Token ---------- */
 (function takeToken() {
@@ -65,7 +65,7 @@ async function apiJson(path, opts) {
   const res = await api(path, opts);
   let data = null;
   try { data = await res.json(); } catch { /* prázdné tělo */ }
-  if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+  if (!res.ok) throw new Error(_tr((data && data.error) || `HTTP ${res.status}`));
   return data;
 }
 
@@ -138,18 +138,18 @@ function fmtTime(epochSec) {
   if (!epochSec) return null;
   const d = new Date(epochSec * 1000);
   const today = new Date();
-  const time = d.toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' });
-  return d.toDateString() === today.toDateString() ? time : `${d.toLocaleDateString('cs-CZ', { day: 'numeric', month: 'numeric' })} ${time}`;
+  const time = d.toLocaleTimeString(LOC, { hour: '2-digit', minute: '2-digit' });
+  return d.toDateString() === today.toDateString() ? time : `${d.toLocaleDateString(LOC, { day: 'numeric', month: 'numeric' })} ${time}`;
 }
 function fmtRelative(iso) {
   const d = new Date(iso), diff = (Date.now() - d.getTime()) / 1000;
-  if (diff < 60) return 'teď';
-  if (diff < 3600) return `před ${Math.floor(diff / 60)} min`;
-  if (diff < 86400) return `před ${Math.floor(diff / 3600)} h`;
-  return d.toLocaleDateString('cs-CZ', { day: 'numeric', month: 'numeric', year: 'numeric' });
+  if (diff < 60) return _t('teď');
+  if (diff < 3600) return _t('před {0} min', Math.floor(diff / 60));
+  if (diff < 86400) return _t('před {0} h', Math.floor(diff / 3600));
+  return d.toLocaleDateString(LOC, { day: 'numeric', month: 'numeric', year: 'numeric' });
 }
 const fmtSize = (b) => (b < 1024 ? `${b} B` : b < 1024 * 1024 ? `${Math.round(b / 1024)} kB` : `${(b / 1024 / 1024).toFixed(1)} MB`);
-const plural = (n, one, few, many) => (n === 1 ? one : n >= 2 && n <= 4 ? few : many);
+const plural = (n, one, few, many) => (ACD_LANG === 'en' ? _t(n === 1 ? one : many) : (n === 1 ? one : n >= 2 && n <= 4 ? few : many));
 const accountById = (id) => S.accounts.find((a) => a.id === id);
 const otherAccount = (id) => S.accounts.find((a) => a.id !== id && a.ok);
 
@@ -157,7 +157,7 @@ const otherAccount = (id) => S.accounts.find((a) => a.id !== id && a.ok);
 async function loadState() {
   const st = await apiJson('/api/state');
   if (st.app && st.app.name) { S.appName = st.app.name; $('#brand-name').textContent = st.app.name; }
-  if (Array.isArray(st.models)) S.models = st.models;
+  if (Array.isArray(st.models)) S.models = st.models.map((m) => ({ ...m, label: _tr(m.label) }));
   if (Array.isArray(st.efforts)) S.efforts = st.efforts;
   S.interactivePermissions = st.interactivePermissions === true;
   S.modes = Array.isArray(st.modes) ? st.modes : ['auto', 'plan'];
@@ -190,7 +190,7 @@ function renderAccounts() {
     const span = el('span');
     span.appendChild(el('i', 'swatch'));
     span.appendChild(document.createTextNode(a.label));
-    label.title = a.ok ? a.email : (a.error || '');
+    label.title = a.ok ? a.email : _tr(a.error || '');
     input.addEventListener('change', () => switchAccount(a.id));
     label.append(input, span);
     fs.appendChild(label);
@@ -202,7 +202,7 @@ function renderProjects() {
   const cur = S.project;
   sel.textContent = '';
   for (const p of S.projects) {
-    const o = el('option', null, p.exists ? p.label : `${p.label} (chybí)`);
+    const o = el('option', null, p.exists ? p.label : _t('{0} (chybí)', p.label));
     o.value = p.id; o.disabled = !p.exists; o.selected = p.id === cur;
     sel.appendChild(o);
   }
@@ -218,11 +218,11 @@ function applyAccent() {
 /* ---------- Model a effort ---------- */
 const RUNOPTS_KEY = (acc) => `acd.runopts.${acc}`;
 const PRESETS = [
-  { label: 'Rychlé', model: 'sonnet', effort: 'low' },
-  { label: 'Běžná práce', model: '', effort: '' },
-  { label: 'Důkladné', model: 'opus', effort: 'high' },
+  { label: _t('Rychlé'), model: 'sonnet', effort: 'low' },
+  { label: _t('Běžná práce'), model: '', effort: '' },
+  { label: _t('Důkladné'), model: 'opus', effort: 'high' },
 ];
-const modelLabel = (id) => (S.models.find((m) => m.id === id) || { label: id || 'Výchozí účtu' }).label;
+const modelLabel = (id) => (S.models.find((m) => m.id === id) || { label: id || _t('Výchozí účtu') }).label;
 
 function loadRunOpts() {
   let o = {};
@@ -243,12 +243,12 @@ function setRunOpts(model, effort) {
 async function liveModel() {
   const run = S.run;
   if (!run || !run.runId || run.side || S.model === run.model) return;
-  if (!S.model) { setStatus('Výchozí model platí od další zprávy.'); return; }
+  if (!S.model) { setStatus(_t('Výchozí model platí od další zprávy.')); return; }
   try {
     await apiJson(`/api/runs/${run.runId}/model`, { method: 'POST', body: { model: S.model } });
     run.model = S.model;
-    announce(`Model přepnut na ${modelLabel(S.model)} – platí od dalšího kroku.`);
-  } catch (e) { setStatus(`Model platí od další zprávy (${e.message}).`); }
+    announce(_t('Model přepnut na {0} – platí od dalšího kroku.', modelLabel(S.model)));
+  } catch (e) { setStatus(_t('Model platí od další zprávy ({0}).', e.message)); }
 }
 /** Za běhu: režim se přepne hned (jako Shift+Tab v terminálu). */
 async function liveMode(m) {
@@ -257,30 +257,30 @@ async function liveMode(m) {
   try {
     await apiJson(`/api/runs/${run.runId}/mode`, { method: 'POST', body: { mode: m } });
     run.mode = m;
-    announce(`Režim přepnut na ${MODE_LABELS[m] || m}.`);
-  } catch (e) { showError('Režim nejde přepnout za běhu', e.message); }
+    announce(_t('Režim přepnut na {0}.', MODE_LABELS[m] || m));
+  } catch (e) { showError(_t('Režim nejde přepnout za běhu'), e.message); }
 }
 function setChrome(on) {
   store(CHROME_KEY, on ? '1' : '0');
   $('#chrome-toggle').checked = on;
   renderRunOpts();
-  announce(on ? 'Claude in Chrome zapnuto – od další zprávy, každá akce v prohlížeči se schvaluje.' : 'Claude in Chrome vypnuto.');
+  announce(on ? _t('Claude in Chrome zapnuto – od další zprávy, každá akce v prohlížeči se schvaluje.') : _t('Claude in Chrome vypnuto.'));
 }
 
 function renderRunOpts() {
   const sum = $('#runopts-summary');
   if (!sum) return;
   const custom = S.model || S.effort;
-  sum.textContent = (custom ? `${modelLabel(S.model)} · ${S.effort || 'výchozí'}` : 'Model: výchozí') + (chromeOn() ? ' · Chrome' : '');
+  sum.textContent = (custom ? `${modelLabel(S.model)} · ${S.effort || _t('výchozí')}` : _t('Model: výchozí')) + (chromeOn() ? ' · Chrome' : '');
   sum.classList.toggle('is-custom', !!custom);
   const ms = $('#model'), es = $('#effort'), box = $('#runopts-presets');
   // Volby a předvolby se staví jen jednou: přestavění by zrušilo fokus a klik by vypadal jako klik mimo panel.
   if (!box.childElementCount) {
     for (const m of S.models) { const o = el('option', null, m.label); o.value = m.id; ms.appendChild(o); }
-    for (const e of S.efforts) { const o = el('option', null, e || 'Výchozí'); o.value = e; es.appendChild(o); }
+    for (const e of S.efforts) { const o = el('option', null, e || _t('Výchozí')); o.value = e; es.appendChild(o); }
     for (const p of PRESETS.filter((x) => !x.model || S.models.some((m) => m.id === x.model))) {
       const b = button(p.label, 'btn-ghost btn-small', () => setRunOpts(p.model, p.effort));
-      b.title = `${modelLabel(p.model)} · effort ${p.effort || 'výchozí'}`;
+      b.title = `${modelLabel(p.model)} · effort ${p.effort || _t('výchozí')}`;
       b.dataset.model = p.model; b.dataset.effort = p.effort;
       box.appendChild(b);
     }
@@ -316,11 +316,11 @@ function renderNotifyToggle() {
   const denied = supported && Notification.permission === 'denied';
   const on = notifyEnabled();
   for (const b of document.querySelectorAll('.notify-toggle')) {
-    b.textContent = on ? 'Oznámení: zapnuto' : 'Oznámení: vypnuto';
+    b.textContent = on ? _t('Oznámení: zapnuto') : _t('Oznámení: vypnuto');
     b.setAttribute('aria-pressed', on ? 'true' : 'false');
-    b.title = !supported ? 'Prohlížeč oznámení nepodporuje.'
-      : denied ? 'Oznámení jsou v prohlížeči zakázaná (ikona zámku vedle adresy → Oznámení).'
-        : 'Upozornit, když Claude doběhne nebo čeká (jen když okno není aktivní).';
+    b.title = !supported ? _t('Prohlížeč oznámení nepodporuje.')
+      : denied ? _t('Oznámení jsou v prohlížeči zakázaná (ikona zámku vedle adresy → Oznámení).')
+        : _t('Upozornit, když Claude doběhne nebo čeká (jen když okno není aktivní).');
     b.disabled = !supported;
   }
   const kinds = notifyKinds();
@@ -358,7 +358,7 @@ async function loadGit() {
     const info = await apiJson(`/api/projects/${encodeURIComponent(S.project)}/git`);
     g.textContent = '';
     if (!info.branch) return;
-    g.appendChild(document.createTextNode(`větev ${info.branch}`));
+    g.appendChild(document.createTextNode(_t('větev {0}', info.branch)));
     if (info.changed) g.appendChild(el('span', 'changed', ` • ${info.changed} ${plural(info.changed, 'změna', 'změny', 'změn')}`));
   } catch { g.textContent = ''; }
 }
@@ -393,7 +393,7 @@ async function loadSessions() {
   }
   if (seq !== SS.seq) return; // mezitím přišlo novější hledání
   ul.textContent = '';
-  if (!list.length) { ul.appendChild(el('li', 's-empty', q ? 'Nic nenalezeno.' : 'Zatím žádná sezení.')); return; }
+  if (!list.length) { ul.appendChild(el('li', 's-empty', q ? _t('Nic nenalezeno.') : _t('Zatím žádná sezení.'))); return; }
   const titles = customTitles();
   for (const s of list) {
     const li = el('li');
@@ -404,20 +404,20 @@ async function loadSessions() {
     const title = titles[s.id] || s.title;
     b.appendChild(el('span', 's-title', title));
     if (s.snippet) b.appendChild(snippetNode(s.snippet, q, s.role));
-    b.appendChild(el('span', 's-meta', fmtRelative(s.updated) + (s.busy ? ' • běží' : '') + (titles[s.id] ? ' • přejmenováno' : '')
+    b.appendChild(el('span', 's-meta', fmtRelative(s.updated) + (s.busy ? _t(' • běží') : '') + (titles[s.id] ? _t(' • přejmenováno') : '')
       + (hasDraft(s.id) ? ' • koncept' : '')));
     b.addEventListener('click', () => openSession(s.id));
     li.appendChild(b);
     const r = el('button', 's-rename', '✎');
     r.type = 'button';
-    r.title = 'Přejmenovat (název uvidíte i v Claude Code v terminálu)';
-    r.setAttribute('aria-label', `Přejmenovat sezení ${title}`);
+    r.title = _t('Přejmenovat (název uvidíte i v Claude Code v terminálu)');
+    r.setAttribute('aria-label', _t('Přejmenovat sezení {0}', title));
     r.addEventListener('click', () => renameSession(li, s, title));
     li.appendChild(r);
     const f = el('button', 's-rename s-fork', '⑂');
     f.type = 'button';
-    f.title = 'Pokračovat v kopii (původní sezení zůstane beze změny)';
-    f.setAttribute('aria-label', `Pokračovat v kopii sezení ${title}`);
+    f.title = _t('Pokračovat v kopii (původní sezení zůstane beze změny)');
+    f.setAttribute('aria-label', _t('Pokračovat v kopii sezení {0}', title));
     f.addEventListener('click', () => forkSession(s.id));
     li.appendChild(f);
     ul.appendChild(li);
@@ -441,7 +441,7 @@ function snippetNode(text, q, role) {
 function renameSession(li, s, current) {
   const input = el('input', 's-edit');
   input.type = 'text'; input.value = current; input.maxLength = 80;
-  input.setAttribute('aria-label', 'Nový název sezení (prázdný = původní)');
+  input.setAttribute('aria-label', _t('Nový název sezení (prázdný = původní)'));
   li.textContent = '';
   li.appendChild(input);
   input.focus(); input.select();
@@ -454,8 +454,8 @@ function renameSession(li, s, current) {
     if (!v) { setCustomTitle(s.id, ''); loadSessions(); return; } // prázdný = zpět na název z Claude Code
     apiJson(`/api/sessions/${encodeURIComponent(s.id)}/title?account=${encodeURIComponent(S.account)}&project=${encodeURIComponent(S.project)}`,
       { method: 'POST', body: { title: v } })
-      .then(() => { setCustomTitle(s.id, ''); announce('Sezení přejmenováno.'); })
-      .catch((e) => { setCustomTitle(s.id, v); setStatus(`Název uložen jen v aplikaci: ${e.message}`); })
+      .then(() => { setCustomTitle(s.id, ''); announce(_t('Sezení přejmenováno.')); })
+      .catch((e) => { setCustomTitle(s.id, v); setStatus(_t('Název uložen jen v aplikaci: {0}', e.message)); })
       .finally(loadSessions);
   };
   input.addEventListener('keydown', (e) => {
@@ -482,15 +482,15 @@ function markCurrentSession() {
   document.querySelectorAll('#sessions button').forEach((b) => {
     if (b.dataset.id === S.sessionId) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current');
   });
-  $('#foot-session').textContent = S.sessionId ? `sezení ${S.sessionId.slice(0, 8)}` : 'Nové sezení';
+  $('#foot-session').textContent = S.sessionId ? _t('sezení {0}', S.sessionId.slice(0, 8)) : _t('Nové sezení');
 }
 
 /** Přepnutí účtu/projektu/sezení: fronta patří k aktuálnímu sezení → po potvrzení se zahodí. */
 function leaveContext() {
   if (!S.queue.length) return true;
   const n = S.queue.length;
-  const what = plural(n, 'čeká 1 zpráva', `čekají ${n} zprávy`, `čeká ${n} zpráv`);
-  if (!confirm(`Ve frontě ${what} pro toto sezení. Při přepnutí se fronta zahodí. Pokračovat?`)) return false;
+  const what = ACD_LANG === 'en' ? `${n} ${n === 1 ? 'message' : 'messages'}` : plural(n, 'čeká 1 zpráva', `čekají ${n} zprávy`, `čeká ${n} zpráv`);
+  if (!confirm(_t('Ve frontě {0} pro toto sezení. Při přepnutí se fronta zahodí. Pokračovat?', what))) return false;
   S.queue.clear();
   S.queueEdit = null;
   S.queueWaitingEdit = false;
@@ -522,12 +522,12 @@ async function openSession(id) {
   restoreDraft();
   resetSessionUi();
   $('#foot-context').hidden = false;
-  $('#foot-context').textContent = 'Kontext';
+  $('#foot-context').textContent = _t('Kontext');
   resetProgress();
   markCurrentSession();
   clearChat();
   hideBanner();
-  setStatus('Načítám sezení…', true);
+  setStatus(_t('Načítám sezení…'), true);
   try {
     const items = await apiJson(`/api/sessions/${encodeURIComponent(id)}?account=${encodeURIComponent(S.account)}&project=${encodeURIComponent(S.project)}`);
     P.sessionPrompts = items.filter((it) => it.role === 'user').map((it) => it.text).slice(-30);
@@ -536,7 +536,7 @@ async function openSession(id) {
       if (it.role === 'tool') {
         if (!tools) { tools = append(el('div', 'msg msg--note')); tools.dataset.names = ''; }
         tools.dataset.names += (tools.dataset.names ? ', ' : '') + it.name;
-        tools.textContent = `Nástroje: ${tools.dataset.names}`;
+        tools.textContent = _t('Nástroje: {0}', tools.dataset.names);
         continue;
       }
       tools = null;
@@ -547,12 +547,12 @@ async function openSession(id) {
         setClaudeText(m, it.text, true);
       }
     }
-    append(el('div', 'msg msg--note', 'Pokračujte další zprávou.'), true);
+    append(el('div', 'msg msg--note', _t('Pokračujte další zprávou.')), true);
     restoreProgress(id);
     setStatus('');
   } catch (e) {
     setStatus('');
-    showError('Sezení nelze načíst', e.message);
+    showError(_t('Sezení nelze načíst'), e.message);
   }
 }
 
@@ -587,9 +587,9 @@ async function switchProject(id) {
 }
 
 /* ---------- Statistiky (jen v paměti okna) ---------- */
-const fmtNum = (n) => Number(n || 0).toLocaleString('cs-CZ');
-const fmtTok = (n) => (n >= 1e6 ? `${(n / 1e6).toLocaleString('cs-CZ', { maximumFractionDigits: 1 })} M`
-  : n >= 1000 ? `${(n / 1000).toLocaleString('cs-CZ', { maximumFractionDigits: 1 })} k` : fmtNum(n));
+const fmtNum = (n) => Number(n || 0).toLocaleString(LOC);
+const fmtTok = (n) => (n >= 1e6 ? `${(n / 1e6).toLocaleString(LOC, { maximumFractionDigits: 1 })} M`
+  : n >= 1000 ? `${(n / 1000).toLocaleString(LOC, { maximumFractionDigits: 1 })} k` : fmtNum(n));
 const tokTotal = (u) => (u ? u.input + u.output + u.cacheRead + u.cacheWrite : 0);
 const emptyStats = () => ({ runs: 0, turns: 0, ms: 0, cost: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
 
@@ -610,28 +610,28 @@ function renderFootStats() {
   const b = $('#foot-cost');
   const l = S.stats.last;
   b.hidden = false;
-  if (!l) { b.textContent = 'Statistiky'; return; }
-  b.textContent = `poslední běh ${fmtTok(tokTotal(l))} tokenů • odhad API $${l.cost.toFixed(3)} • ${l.turns} ${plural(l.turns, 'tah', 'tahy', 'tahů')} • ${(l.ms / 1000).toFixed(1)} s`;
+  if (!l) { b.textContent = _t('Statistiky'); return; }
+  b.textContent = _t('poslední běh {0} tokenů • odhad API ${1} • {2} {3} • {4} s', fmtTok(tokTotal(l)), l.cost.toFixed(3), l.turns, plural(l.turns, 'tah', 'tahy', 'tahů'), (l.ms / 1000).toFixed(1));
 }
 
 function renderStats() {
   const box = $('#stats-body');
   box.textContent = '';
-  const cols = [['last', 'Poslední běh'], ['session', 'Sezení (toto okno)']].filter(([k]) => S.stats[k]);
-  if (!cols.length) box.appendChild(el('p', 'stats-empty', 'Zatím žádný běh v tomto okně.'));
+  const cols = [['last', _t('Poslední běh')], ['session', _t('Sezení (toto okno)')]].filter(([k]) => S.stats[k]);
+  if (!cols.length) box.appendChild(el('p', 'stats-empty', _t('Zatím žádný běh v tomto okně.')));
   else {
     const t = el('table', 'stats-table');
-    t.appendChild(el('caption', null, 'Tokeny a odhad ceny'));
+    t.appendChild(el('caption', null, _t('Tokeny a odhad ceny')));
     const head = el('thead'); const hr = el('tr');
     hr.appendChild(el('th', null, '')); for (const [, label] of cols) { const th = el('th', null, label); th.scope = 'col'; hr.appendChild(th); }
     head.appendChild(hr); t.appendChild(head);
     const body = el('tbody');
     const rows = [
-      ['Vstup', (s) => fmtNum(s.input)], ['Výstup', (s) => fmtNum(s.output)],
-      ['Cache – čtení', (s) => fmtNum(s.cacheRead)], ['Cache – zápis', (s) => fmtNum(s.cacheWrite)],
-      ['Tokeny celkem', (s) => fmtNum(tokTotal(s))], ['Běhy / tahy', (s) => `${s.runs} / ${s.turns}`],
-      ['Doba', (s) => `${(s.ms / 1000).toLocaleString('cs-CZ', { maximumFractionDigits: 1 })} s`],
-      ['Odhad ceny API', (s) => `$${s.cost.toFixed(3)}`],
+      [_t('Vstup'), (s) => fmtNum(s.input)], [_t('Výstup'), (s) => fmtNum(s.output)],
+      [_t('Cache – čtení'), (s) => fmtNum(s.cacheRead)], [_t('Cache – zápis'), (s) => fmtNum(s.cacheWrite)],
+      [_t('Tokeny celkem'), (s) => fmtNum(tokTotal(s))], [_t('Běhy / tahy'), (s) => `${s.runs} / ${s.turns}`],
+      [_t('Doba'), (s) => `${(s.ms / 1000).toLocaleString(LOC, { maximumFractionDigits: 1 })} s`],
+      [_t('Odhad ceny API'), (s) => `$${s.cost.toFixed(3)}`],
     ];
     for (const [label, f] of rows) {
       const tr = el('tr'); const th = el('th', null, label); th.scope = 'row'; tr.appendChild(th);
@@ -642,13 +642,13 @@ function renderStats() {
     box.appendChild(t);
   }
   const acc = accountById(S.account);
-  box.appendChild(el('h3', 'eyebrow', `Limit účtu ${acc ? acc.label : ''}`));
+  box.appendChild(el('h3', 'eyebrow', _t('Limit účtu {0}', acc ? acc.label : '')));
   const lim = S.limits[S.account];
   if (!lim || !(lim.windows || []).length) {
-    box.appendChild(el('p', 'stats-empty', 'Zatím bez údajů – Claude Code je pošle během prvního běhu.'));
+    box.appendChild(el('p', 'stats-empty', _t('Zatím bez údajů – Claude Code je pošle během prvního běhu.')));
     return;
   }
-  const names = { five_hour: '5 hodin', seven_day: '7 dní', seven_day_opus: '7 dní (Opus)', seven_day_sonnet: '7 dní (Sonnet)' };
+  const names = { five_hour: _t('5 hodin'), seven_day: _t('7 dní'), seven_day_opus: _t('7 dní (Opus)'), seven_day_sonnet: _t('7 dní (Sonnet)') };
   for (const w of lim.windows) {
     const pct = w.utilization != null ? Math.round(w.utilization * 100) : null;
     const m = el('div', 'meter');
@@ -657,13 +657,13 @@ function renderStats() {
     const bar = el('span', 'meter-bar');
     bar.setAttribute('role', 'meter'); bar.setAttribute('aria-valuemin', '0'); bar.setAttribute('aria-valuemax', '100');
     if (pct != null) bar.setAttribute('aria-valuenow', String(pct));
-    bar.setAttribute('aria-label', `Využití limitu ${names[w.type] || w.type}`);
+    bar.setAttribute('aria-label', _t('Využití limitu {0}', names[w.type] || w.type));
     const fill = el('i'); fill.style.width = `${Math.min(100, pct ?? 0)}%`; bar.appendChild(fill);
     m.appendChild(bar);
-    m.appendChild(el('span', 'meter-text', `${pct != null ? `${pct} %` : '?'}${w.resetsAt ? ` • obnova ${fmtTime(w.resetsAt)}` : ''}`));
+    m.appendChild(el('span', 'meter-text', `${pct != null ? `${pct} %` : '?'}${w.resetsAt ? _t(' • obnova {0}', fmtTime(w.resetsAt)) : ''}`));
     box.appendChild(m);
   }
-  box.appendChild(el('p', 'stats-empty', `Stav z ${new Date(lim.at).toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' })}.`));
+  box.appendChild(el('p', 'stats-empty', _t('Stav z {0}.', new Date(lim.at).toLocaleTimeString(LOC, { hour: '2-digit', minute: '2-digit' }))));
 }
 
 function openStats() {
@@ -689,15 +689,15 @@ const svgEl = (tag, attrs = {}) => { const e = document.createElementNS(SVGNS, t
 const dayKey = (t) => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const dayLabel = (key) => { const [, m, d] = key.split('-'); return `${Number(d)}. ${Number(m)}.`; };
 const METRICS = {
-  cost: { label: 'Odhad ceny API', get: (r) => r.cost || 0, fmt: (v) => `$${v.toLocaleString('cs-CZ', { minimumFractionDigits: v < 10 ? 2 : 0, maximumFractionDigits: v < 10 ? 2 : 0 })}` },
-  tokens: { label: 'Tokeny', get: (r) => (r.input || 0) + (r.output || 0) + (r.cacheRead || 0) + (r.cacheWrite || 0), fmt: (v) => fmtTok(v) },
-  runs: { label: 'Běhy', get: () => 1, fmt: (v) => fmtNum(v) },
-  minutes: { label: 'Čas práce', get: (r) => (r.ms || 0) / 60_000, fmt: (v) => (v < 60 ? `${Math.round(v)} min` : `${(v / 60).toLocaleString('cs-CZ', { maximumFractionDigits: 1 })} h`) },
+  cost: { label: _t('Odhad ceny API'), get: (r) => r.cost || 0, fmt: (v) => `$${v.toLocaleString(LOC, { minimumFractionDigits: v < 10 ? 2 : 0, maximumFractionDigits: v < 10 ? 2 : 0 })}` },
+  tokens: { label: _t('Tokeny'), get: (r) => (r.input || 0) + (r.output || 0) + (r.cacheRead || 0) + (r.cacheWrite || 0), fmt: (v) => fmtTok(v) },
+  runs: { label: _t('Běhy'), get: () => 1, fmt: (v) => fmtNum(v) },
+  minutes: { label: _t('Čas práce'), get: (r) => (r.ms || 0) / 60_000, fmt: (v) => (v < 60 ? _t('{0} min', Math.round(v)) : `${(v / 60).toLocaleString(LOC, { maximumFractionDigits: 1 })} h`) },
 };
 function groupLabel(kind, id) {
   if (kind === 'project') { const p = S.projects.find((x) => x.id === id); return p ? p.label : id || '?'; }
   if (kind === 'account') { const a = accountById(id); return a ? a.label : id || '?'; }
-  return (id || 'výchozí').replace(/^claude-/, '');
+  return (id || _t('výchozí')).replace(/^claude-/, '');
 }
 /** Nice horní mez osy (1, 2, 2.5, 5 × 10^k). */
 function niceMax(v) {
@@ -711,7 +711,7 @@ async function loadHistory() {
   const body = $('#hist-body');
   const seq = ++H.seq;
   body.textContent = '';
-  body.appendChild(el('p', 'stats-empty', 'Načítám…'));
+  body.appendChild(el('p', 'stats-empty', _t('Načítám…')));
   try { H.data = await apiJson(`/api/stats/history?days=${H.days}`); }
   catch (e) { if (seq === H.seq) { body.textContent = ''; body.appendChild(el('p', 'stats-empty', e.message)); } return; }
   if (seq === H.seq) renderHistory();
@@ -732,16 +732,16 @@ function renderHistory() {
   // Souhrn.
   const tiles = el('div', 'tiles');
   const sum = (f) => runs.reduce((a, r) => a + f(r), 0);
-  for (const [label, value] of [['Běhy', fmtNum(runs.length)], ['Tokeny', fmtTok(sum(METRICS.tokens.get))],
-    ['Odhad ceny API', METRICS.cost.fmt(sum(METRICS.cost.get))], ['Čas práce', METRICS.minutes.fmt(sum(METRICS.minutes.get))],
-    ['Chyby', fmtNum(runs.filter((r) => r.error).length)]]) {
+  for (const [label, value] of [[_t('Běhy'), fmtNum(runs.length)], [_t('Tokeny'), fmtTok(sum(METRICS.tokens.get))],
+    [_t('Odhad ceny API'), METRICS.cost.fmt(sum(METRICS.cost.get))], [_t('Čas práce'), METRICS.minutes.fmt(sum(METRICS.minutes.get))],
+    [_t('Chyby'), fmtNum(runs.filter((r) => r.error).length)]]) {
     const t = el('div', 'tile');
     t.append(el('span', 'tile-label', label), el('span', 'tile-value', value));
     tiles.appendChild(t);
   }
   body.appendChild(tiles);
   if (!runs.length) {
-    body.appendChild(el('p', 'stats-empty', `Za posledních ${data.days} dní zatím žádný běh. Historie se začala ukládat s touto verzí aplikace.`));
+    body.appendChild(el('p', 'stats-empty', _t('Za posledních {0} dní zatím žádný běh. Historie se začala ukládat s touto verzí aplikace.', data.days)));
   } else {
     // Série: nejvýš 5 největších skupin podle ukazatele, zbytek „Ostatní“. Barva patří skupině (pořadí podle velikosti v období).
     const totals = new Map();
@@ -749,7 +749,7 @@ function renderHistory() {
     const order = [...totals.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => id);
     const top = order.slice(0, order.length > SERIES_MAX ? SERIES_MAX - 1 : SERIES_MAX);
     const series = top.map((id, i) => ({ id, label: groupLabel(kind, id), color: `var(--s${i + 1})` }));
-    if (order.length > top.length) series.push({ id: '\u0000other', label: 'Ostatní', color: 'var(--s-other)' });
+    if (order.length > top.length) series.push({ id: '\u0000other', label: _t('Ostatní'), color: 'var(--s-other)' });
     const idx = new Map(series.map((s, i) => [s.id, i]));
     const values = days.map(() => series.map(() => 0));
     const dayIdx = new Map(days.map((d, i) => [d, i]));
@@ -759,14 +759,14 @@ function renderHistory() {
       const si = idx.has(r[kind]) ? idx.get(r[kind]) : idx.get('\u0000other');
       values[di][si] += metric.get(r);
     }
-    body.appendChild(el('h3', 'eyebrow chart-title', `${metric.label} po dnech – podle ${$('#hist-group').selectedOptions[0].textContent}`));
+    body.appendChild(el('h3', 'eyebrow chart-title', _t('{0} po dnech – podle {1}', metric.label, $('#hist-group').selectedOptions[0].textContent)));
     body.appendChild(columnChart(days, series, values, metric.fmt));
 
     // Tabulka (přístupná podoba grafu) – skupiny za celé období.
     const t = el('table', 'stats-table');
-    t.appendChild(el('caption', null, `Za ${data.days} dní podle ${$('#hist-group').selectedOptions[0].textContent}`));
+    t.appendChild(el('caption', null, _t('Za {0} dní podle {1}', data.days, $('#hist-group').selectedOptions[0].textContent)));
     const hr = el('tr');
-    for (const h of [{ project: 'Projekt', model: 'Model', account: 'Účet' }[kind], 'Běhy', 'Tokeny', 'Odhad ceny API', 'Čas práce', 'Chyby']) { const th = el('th', null, h); th.scope = 'col'; hr.appendChild(th); }
+    for (const h of [{ project: _t('Projekt'), model: 'Model', account: _t('Účet') }[kind], _t('Běhy'), _t('Tokeny'), _t('Odhad ceny API'), _t('Čas práce'), _t('Chyby')]) { const th = el('th', null, h); th.scope = 'col'; hr.appendChild(th); }
     const thead = el('thead'); thead.appendChild(hr); t.appendChild(thead);
     const tb = el('tbody');
     for (const id of order) {
@@ -785,10 +785,10 @@ function renderHistory() {
   // Limit účtu v čase (aktuální účet).
   const acc = accountById(S.account);
   const lims = data.limits.filter((l) => l.account === S.account);
-  body.appendChild(el('h3', 'eyebrow chart-title', `Využití limitu – účet ${acc ? acc.label : S.account}`));
-  if (!lims.length) body.appendChild(el('p', 'stats-empty', 'Zatím bez údajů – Claude Code je posílá během běhů.'));
+  body.appendChild(el('h3', 'eyebrow chart-title', _t('Využití limitu – účet {0}', acc ? acc.label : S.account)));
+  if (!lims.length) body.appendChild(el('p', 'stats-empty', _t('Zatím bez údajů – Claude Code je posílá během běhů.')));
   else {
-    const names = { five_hour: '5 hodin', seven_day: '7 dní', seven_day_opus: '7 dní (Opus)', seven_day_sonnet: '7 dní (Sonnet)' };
+    const names = { five_hour: _t('5 hodin'), seven_day: _t('7 dní'), seven_day_opus: _t('7 dní (Opus)'), seven_day_sonnet: _t('7 dní (Sonnet)') };
     const wins = [...new Set(lims.map((l) => l.window))].slice(0, 3);
     const series = wins.map((w, i) => ({ label: names[w] || w, color: `var(--s${i + 1})`,
       points: lims.filter((l) => l.window === w).map((l) => ({ t: l.t, v: Math.min(100, l.utilization * 100) })) }));
@@ -799,7 +799,7 @@ function renderHistory() {
 /** Legenda (pro ≥ 2 série) – barva jen u značky, text v barvě textu. */
 function legend(series) {
   const ul = el('ul', 'legend');
-  ul.setAttribute('aria-label', 'Legenda');
+  ul.setAttribute('aria-label', _t('Legenda'));
   for (const s of series) {
     const li = el('li');
     const sw = el('span', 'legend-swatch'); sw.style.background = s.color; sw.setAttribute('aria-hidden', 'true');
@@ -838,7 +838,7 @@ function columnChart(days, series, values, fmt) {
   const totals = values.map((v) => v.reduce((a, b) => a + b, 0));
   const max = niceMax(Math.max(...totals));
   const svg = svgEl('svg', { viewBox: `0 0 ${W} ${Hh}`, class: 'chart-svg', role: 'img',
-    'aria-label': `Sloupcový graf, ${days.length} dní, nejvíc ${fmt(Math.max(...totals))} za den. Hodnoty jsou v tabulce pod grafem.` });
+    'aria-label': _t('Sloupcový graf, {0} dní, nejvíc {1} za den. Hodnoty jsou v tabulce pod grafem.', days.length, fmt(Math.max(...totals))) });
   const y = (v) => T + (Hh - T - B) * (1 - v / max);
   for (let i = 0; i <= 4; i++) {
     const v = (max / 4) * i;
@@ -871,7 +871,7 @@ function columnChart(days, series, values, fmt) {
     const hit = svgEl('rect', { x: L + band * i, y: T, width: band, height: Hh - T - B, class: 'chart-hit' });
     hit.addEventListener('mouseenter', () => {
       const rect = svg.getBoundingClientRect(), scale = rect.width / W;
-      tip([[null, `${dayLabel(d)} – celkem ${fmt(totals[i])}`, true],
+      tip([[null, _t('{0} – celkem {1}', dayLabel(d), fmt(totals[i])), true],
         ...series.map((s, si) => [s.color, `${s.label}: ${fmt(values[i][si])}`]).filter((_, si) => values[i][si] > 0)],
       cx * scale, y(totals[i]) * scale + (series.length >= 2 ? wrap.querySelector('.legend').offsetHeight : 0));
     });
@@ -891,7 +891,7 @@ function lineChart(series, from, to) {
   const x = (t) => L + (W - L - R) * Math.min(1, Math.max(0, (t - from) / Math.max(1, to - from)));
   const y = (v) => T + (Hh - T - B) * (1 - v / 100);
   const svg = svgEl('svg', { viewBox: `0 0 ${W} ${Hh}`, class: 'chart-svg', role: 'img',
-    'aria-label': `Využití limitu v čase: ${series.map((s) => `${s.label} naposledy ${Math.round(s.points.at(-1).v)} %`).join(', ')}.` });
+    'aria-label': _t('Využití limitu v čase: {0}.', series.map((s) => _t('{0} naposledy {1} %', s.label, Math.round(s.points.at(-1).v))).join(', ')) });
   for (const v of [0, 25, 50, 75, 100]) {
     svg.appendChild(svgEl('line', { x1: L, x2: W - R, y1: y(v), y2: y(v), class: v === 0 ? 'chart-base' : 'chart-grid' }));
     const tx = svgEl('text', { x: L - 6, y: y(v) + 4, class: 'chart-axis', 'text-anchor': 'end' }); tx.textContent = `${v} %`; svg.appendChild(tx);
@@ -930,7 +930,7 @@ function lineChart(series, from, to) {
     const rect = svg.getBoundingClientRect(), scale = rect.width / W;
     const t = from + ((e.clientX - rect.left) / scale - L) / (W - L - R) * (to - from);
     cross.setAttribute('x1', x(t)); cross.setAttribute('x2', x(t)); cross.setAttribute('visibility', 'visible');
-    const rows = [[null, new Date(t).toLocaleString('cs-CZ', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }), true]];
+    const rows = [[null, new Date(t).toLocaleString(LOC, { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }), true]];
     for (const s of series) {
       const before = s.points.filter((p) => p.t <= t).at(-1);
       if (before) rows.push([s.color, `${s.label}: ${Math.round(before.v)} %`]);
@@ -945,24 +945,24 @@ function lineChart(series, from, to) {
 
 function downloadCsv() {
   const runs = (H.data && H.data.runs) || [];
-  const head = ['datum', 'cas', 'ucet', 'projekt', 'model', 'effort', 'vstup', 'vystup', 'cache_cteni', 'cache_zapis', 'odhad_ceny_usd', 'doba_s', 'tahy', 'chyba'];
+  const head = [_t('datum'), _t('cas'), _t('ucet'), _t('projekt'), 'model', 'effort', _t('vstup'), _t('vystup'), _t('cache_cteni'), _t('cache_zapis'), _t('odhad_ceny_usd'), _t('doba_s'), _t('tahy'), _t('chyba')];
   const q = (v) => { const s = String(v ?? ''); return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
   const lines = [head.join(',')];
   for (const r of runs) {
     const d = new Date(r.t);
-    lines.push([dayKey(r.t), d.toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' }), groupLabel('account', r.account),
+    lines.push([dayKey(r.t), d.toLocaleTimeString(LOC, { hour: '2-digit', minute: '2-digit' }), groupLabel('account', r.account),
       groupLabel('project', r.project), r.model, r.effort, r.input, r.output, r.cacheRead, r.cacheWrite, (r.cost || 0).toFixed(4),
       ((r.ms || 0) / 1000).toFixed(1), r.turns, r.error ? 1 : 0].map(q).join(','));
   }
   const url = URL.createObjectURL(new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' }));
   const a = el('a');
   a.href = url;
-  a.download = `statistiky-${dayKey(Date.now())}-${H.days}dni.csv`;
+  a.download = _t('statistiky-{0}-{1}dni.csv', dayKey(Date.now()), H.days);
   document.body.appendChild(a);
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 5000);
-  announce(`Staženo ${runs.length} ${plural(runs.length, 'záznam', 'záznamy', 'záznamů')}.`);
+  announce(_t('Staženo {0} {1}.', runs.length, plural(runs.length, 'záznam', 'záznamy', 'záznamů')));
 }
 
 function selectStatsTab(hist) {
@@ -1019,42 +1019,42 @@ function rememberPrompt(text) {
   P.recent = [t, ...P.recent.filter((x) => x !== t)].slice(0, 20);
 }
 
-const MODE_LABELS = { auto: 'Auto', plan: 'Plán', acceptEdits: 'Úpravy', default: 'Ručně' };
+const MODE_LABELS = { auto: 'Auto', plan: _t('Plán'), acceptEdits: _t('Úpravy'), default: _t('Ručně') };
 const fold = (s) => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase(); // bez diakritiky a velikosti písmen
 
 function paletteActions() {
   return [
     ...(document.querySelector('.perm:not([data-state="resolved"]) .perm-actions button:not(:disabled)')
-      ? [{ label: 'Žádost o svolení', meta: 'přejít na kartu', run: () => {
+      ? [{ label: _t('Žádost o svolení'), meta: _t('přejít na kartu'), run: () => {
         const b = document.querySelector('.perm:not([data-state="resolved"]) .perm-actions button:not(:disabled)');
         if (b) { b.scrollIntoView({ block: 'center' }); b.focus(); }
       } }] : []),
-    { label: 'Nové sezení', run: () => newSession() },
-    { label: 'Režim Auto', run: () => setMode('auto') },
-    { label: 'Režim Plán', run: () => setMode('plan') },
-    ...(S.modes.includes('default') ? [{ label: 'Režim Ručně', meta: 'ptá se na každý zápis a příkaz', run: () => setMode('default') }] : []),
+    { label: _t('Nové sezení'), run: () => newSession() },
+    { label: _t('Režim Auto'), run: () => setMode('auto') },
+    { label: _t('Režim Plán'), run: () => setMode('plan') },
+    ...(S.modes.includes('default') ? [{ label: _t('Režim Ručně'), meta: _t('ptá se na každý zápis a příkaz'), run: () => setMode('default') }] : []),
     ...PRESETS.filter((x) => !x.model || S.models.some((m) => m.id === x.model))
-      .map((p) => ({ label: `Model: ${p.label}`, meta: `${modelLabel(p.model)} · ${p.effort || 'výchozí'}`, run: () => setRunOpts(p.model, p.effort) })),
-    { label: 'Přiložit soubory', run: () => $('#file-input').click() },
-    { label: 'Změny v gitu', meta: 'komentáře k řádkům', run: () => openGit() },
-    { label: 'Přehled sezení', meta: 'soubory, úkoly, agenti, MCP', run: () => openOverview() },
-    { label: 'Režim Úpravy', meta: 'úpravy souborů bez ptaní, příkazy se ptají', run: () => setMode('acceptEdits') },
-    { label: 'Otázka bokem', meta: 'nezapíše se do sezení', run: () => openSide() },
-    ...(S.sessionId && !S.run ? [{ label: 'Pokračovat v kopii sezení', meta: 'původní zůstane beze změny', run: () => forkSession(S.sessionId) },
-      { label: 'Kontext sezení', meta: 'co zabírá místo', run: () => { renderContext(); $('#contextdlg').showModal(); loadContext(); } },
-      { label: 'Zhustit konverzaci', meta: '/compact – uvolní kontext', run: () => startRun('/compact', S.mode) },
-      { label: 'Exportovat konverzaci', meta: 'Markdown', run: () => exportSession() }] : []),
-    ...(S.interactivePermissions ? [{ label: chromeOn() ? 'Vypnout Claude in Chrome' : 'Zapnout Claude in Chrome', meta: 'ovládání prohlížeče, každá akce se schvaluje',
+      .map((p) => ({ label: _t('Model: {0}', p.label), meta: `${modelLabel(p.model)} · ${p.effort || _t('výchozí')}`, run: () => setRunOpts(p.model, p.effort) })),
+    { label: _t('Přiložit soubory'), run: () => $('#file-input').click() },
+    { label: _t('Změny v gitu'), meta: _t('komentáře k řádkům'), run: () => openGit() },
+    { label: _t('Přehled sezení'), meta: _t('soubory, úkoly, agenti, MCP'), run: () => openOverview() },
+    { label: _t('Režim Úpravy'), meta: _t('úpravy souborů bez ptaní, příkazy se ptají'), run: () => setMode('acceptEdits') },
+    { label: _t('Otázka bokem'), meta: _t('nezapíše se do sezení'), run: () => openSide() },
+    ...(S.sessionId && !S.run ? [{ label: _t('Pokračovat v kopii sezení'), meta: _t('původní zůstane beze změny'), run: () => forkSession(S.sessionId) },
+      { label: _t('Kontext sezení'), meta: _t('co zabírá místo'), run: () => { renderContext(); $('#contextdlg').showModal(); loadContext(); } },
+      { label: _t('Zhustit konverzaci'), meta: _t('/compact – uvolní kontext'), run: () => startRun('/compact', S.mode) },
+      { label: _t('Exportovat konverzaci'), meta: 'Markdown', run: () => exportSession() }] : []),
+    ...(S.interactivePermissions ? [{ label: chromeOn() ? _t('Vypnout Claude in Chrome') : _t('Zapnout Claude in Chrome'), meta: _t('ovládání prohlížeče, každá akce se schvaluje'),
       run: () => setChrome(!chromeOn()) }] : []),
-    ...(PR.tasks.length || BG.tasks.size ? [{ label: PR.hidden ? 'Ukázat průběh' : 'Skrýt průběh', run: () => { PR.hidden = !PR.hidden; renderProgress(); } }] : []),
-    { label: 'Hledat v konverzaci', meta: 'Ctrl+F', run: () => openFind() },
-    { label: 'Soubory projektu', meta: 'hledání a náhled', run: () => openFiles() },
-    { label: 'Nastavení', run: () => openSettings() },
-    { label: 'Statistiky a limit účtu', run: () => openStats() },
-    { label: 'Statistiky v čase', meta: 'grafy, CSV', run: () => { openStats(); selectStatsTab(true); } },
-    { label: document.fullscreenElement ? 'Ukončit celou obrazovku' : 'Celá obrazovka', run: () => toggleFullscreen() },
-    ...[['dark', 'Tmavý'], ['light', 'Světlý'], ['system', 'Podle systému']].map(([v, l]) =>
-      ({ label: `Motiv: ${l}`, run: () => window.acdTheme && window.acdTheme.set(v) })),
+    ...(PR.tasks.length || BG.tasks.size ? [{ label: PR.hidden ? _t('Ukázat průběh') : _t('Skrýt průběh'), run: () => { PR.hidden = !PR.hidden; renderProgress(); } }] : []),
+    { label: _t('Hledat v konverzaci'), meta: 'Ctrl+F', run: () => openFind() },
+    { label: _t('Soubory projektu'), meta: _t('hledání a náhled'), run: () => openFiles() },
+    { label: _t('Nastavení'), run: () => openSettings() },
+    { label: _t('Statistiky a limit účtu'), run: () => openStats() },
+    { label: _t('Statistiky v čase'), meta: _t('grafy, CSV'), run: () => { openStats(); selectStatsTab(true); } },
+    { label: document.fullscreenElement ? _t('Ukončit celou obrazovku') : _t('Celá obrazovka'), run: () => toggleFullscreen() },
+    ...[['dark', _t('Tmavý')], ['light', _t('Světlý')], ['system', _t('Podle systému')]].map(([v, l]) =>
+      ({ label: _t('Motiv: {0}', l), run: () => window.acdTheme && window.acdTheme.set(v) })),
   ];
 }
 
@@ -1082,17 +1082,17 @@ function buildPalette(q) {
     const [desc, hint] = ci.info[c.name] || ['', ''];
     return { kind: 'cmd', label: `/${c.name}${hint ? ` ${hint}` : ''}`, meta: desc ? desc.slice(0, 70) : c.kind === 'skill' ? 'skill' : '', run: () => insertIntoPrompt(`/${c.name} `) };
   }).filter((x) => match(x.label) || match(x.label.slice(1)) || match(x.meta));
-  const agents = ci.agents.map((a) => ({ kind: 'cmd', label: `Agent ${a.name}`, meta: (a.description || '').slice(0, 70),
-    run: () => insertIntoPrompt(`Použij agenta ${a.name}: `) })).filter((x) => match(x.label) || match(x.meta));
+  const agents = ci.agents.map((a) => ({ kind: 'cmd', label: _t('Agent {0}', a.name), meta: (a.description || '').slice(0, 70),
+    run: () => insertIntoPrompt(_t('Použij agenta {0}: ', a.name)) })).filter((x) => match(x.label) || match(x.meta));
   const acts = paletteActions().map((a) => ({ kind: 'act', ...a })).filter((x) => match(x.label));
   const seen = new Set();
   const recent = [...P.recent, ...P.sessionPrompts.slice().reverse()].filter((t) => !seen.has(t) && seen.add(t)).slice(0, 30)
-    .map((t) => ({ kind: 'msg', label: t.replace(/\s+/g, ' '), meta: t.length > 90 ? `${t.length} znaků` : '', run: () => insertIntoPrompt(t) }))
+    .map((t) => ({ kind: 'msg', label: t.replace(/\s+/g, ' '), meta: t.length > 90 ? _t('{0} znaků', t.length) : '', run: () => insertIntoPrompt(t) }))
     .filter((x) => match(x.label));
   const sort = (a) => a.sort((x, y) => score(x.label) - score(y.label));
   // Lomítko na začátku = hledám příkaz.
-  if (q.trim().startsWith('/')) groups.push(['Příkazy a skilly', sort(cmds)]);
-  else groups.push(['Akce', sort(acts)], ['Příkazy a skilly', sort(cmds)], ['Agenti', sort(agents)], ['Nedávné zprávy', recent]);
+  if (q.trim().startsWith('/')) groups.push([_t('Příkazy a skilly'), sort(cmds)]);
+  else groups.push([_t('Akce'), sort(acts)], [_t('Příkazy a skilly'), sort(cmds)], [_t('Agenti'), sort(agents)], [_t('Nedávné zprávy'), recent]);
   return groups.filter(([, items]) => items.length);
 }
 
@@ -1120,7 +1120,7 @@ function renderPalette() {
     }
   }
   if (!P.items.length) {
-    const e = el('li', 'palette-empty', knownCommands().length || $('#palette-input').value ? 'Nic nenalezeno.' : 'Nic nenalezeno. Příkazy se objeví po prvním běhu v tomto projektu.');
+    const e = el('li', 'palette-empty', knownCommands().length || $('#palette-input').value ? _t('Nic nenalezeno.') : _t('Nic nenalezeno. Příkazy se objeví po prvním běhu v tomto projektu.'));
     e.setAttribute('role', 'presentation');
     ul.appendChild(e);
   }
@@ -1169,7 +1169,7 @@ function setupPalette() {
 }
 
 /* ---------- Git přehled (jen pro čtení) ---------- */
-const GIT_CODES = { M: 'změněno', A: 'přidáno', D: 'smazáno', R: 'přejmenováno', C: 'zkopírováno', T: 'změna typu', U: 'konflikt', '?': 'nový' };
+const GIT_CODES = { M: _t('změněno'), A: _t('přidáno'), D: _t('smazáno'), R: _t('přejmenováno'), C: _t('zkopírováno'), T: _t('změna typu'), U: 'konflikt', '?': _t('nový') };
 const G = { files: null, sel: null, seq: 0 };
 
 async function openGit() {
@@ -1181,18 +1181,18 @@ async function openGit() {
 async function loadGitFiles() {
   const nav = $('#git-files');
   nav.textContent = '';
-  $('#git-sub').textContent = 'Načítám…';
+  $('#git-sub').textContent = _t('Načítám…');
   let r;
   try { r = await apiJson(`/api/projects/${encodeURIComponent(S.project)}/git/files`); }
   catch (e) { $('#git-sub').textContent = e.message; return; }
-  if (!r.repo) { $('#git-sub').textContent = 'Projekt není git repozitář.'; showDiff(null); return; }
-  const ab = r.upstream ? ` • ${r.upstream}` + (r.ahead ? ` • ${r.ahead} napřed` : '') + (r.behind ? ` • ${r.behind} pozadu` : '') : '';
-  $('#git-sub').textContent = `větev ${r.branch || '(odpojená HEAD)'}${ab} • ${r.files.length} ${plural(r.files.length, 'soubor', 'soubory', 'souborů')}`;
+  if (!r.repo) { $('#git-sub').textContent = _t('Projekt není git repozitář.'); showDiff(null); return; }
+  const ab = r.upstream ? ` • ${r.upstream}` + (r.ahead ? _t(' • {0} napřed', r.ahead) : '') + (r.behind ? _t(' • {0} pozadu', r.behind) : '') : '';
+  $('#git-sub').textContent = _t('větev {0}{1} • {2} {3}', r.branch || _t('(odpojená HEAD)'), ab, r.files.length, plural(r.files.length, 'soubor', 'soubory', 'souborů'));
   const groups = [
-    ['Konflikty', r.files.filter((f) => f.kind === 'conflict').map((f) => [f, 'worktree', 'U'])],
-    ['Připravené ke commitu', r.files.filter((f) => f.kind !== 'conflict' && f.kind !== 'untracked' && f.x !== '.').map((f) => [f, 'staged', f.x])],
-    ['Změněné', r.files.filter((f) => f.kind !== 'conflict' && f.kind !== 'untracked' && f.y !== '.').map((f) => [f, 'worktree', f.y])],
-    ['Nové (nesledované)', r.files.filter((f) => f.kind === 'untracked').map((f) => [f, 'untracked', '?'])],
+    [_t('Konflikty'), r.files.filter((f) => f.kind === 'conflict').map((f) => [f, 'worktree', 'U'])],
+    [_t('Připravené ke commitu'), r.files.filter((f) => f.kind !== 'conflict' && f.kind !== 'untracked' && f.x !== '.').map((f) => [f, 'staged', f.x])],
+    [_t('Změněné'), r.files.filter((f) => f.kind !== 'conflict' && f.kind !== 'untracked' && f.y !== '.').map((f) => [f, 'worktree', f.y])],
+    [_t('Nové (nesledované)'), r.files.filter((f) => f.kind === 'untracked').map((f) => [f, 'untracked', '?'])],
   ];
   const all = [];
   for (const [title, items] of groups) {
@@ -1205,7 +1205,7 @@ async function loadGitFiles() {
       const c = el('span', 'git-code', code); c.dataset.k = code; c.title = GIT_CODES[code] || code;
       b.appendChild(c);
       const p = el('span', 'git-path', f.path);
-      if (f.orig && area === 'staged') p.appendChild(el('small', null, `dříve ${f.orig}`));
+      if (f.orig && area === 'staged') p.appendChild(el('small', null, _t('dříve {0}', f.orig)));
       b.appendChild(p);
       b.setAttribute('aria-label', `${f.path} – ${GIT_CODES[code] || code}`);
       b.addEventListener('click', () => selectGitFile(b, f.path, area));
@@ -1216,7 +1216,7 @@ async function loadGitFiles() {
     nav.appendChild(g);
   }
   renderCommentBar();
-  if (!all.length) { showDiff(null, 'Žádné změny – pracovní strom je čistý.'); return; }
+  if (!all.length) { showDiff(null, _t('Žádné změny – pracovní strom je čistý.')); return; }
   const keep = G.sel && all.find((b) => b.dataset.key === G.sel);
   const first = keep || all[0];
   const [area, path] = first.dataset.key.split('\n');
@@ -1228,7 +1228,7 @@ async function selectGitFile(btn, path, area) {
   G.sel = `${area}\n${path}`;
   G.cur = { path, area };
   const seq = ++G.seq;
-  showDiff(null, 'Načítám…');
+  showDiff(null, _t('Načítám…'));
   try {
     const r = await apiJson(`/api/projects/${encodeURIComponent(S.project)}/git/diff?path=${encodeURIComponent(path)}&area=${area}`);
     if (seq === G.seq) {
@@ -1262,7 +1262,7 @@ function showDiff(r, message) {
         first = false;
         row.dataset.line = String(l.line);
         row.dataset.side = l.side;
-        row.setAttribute('aria-label', `${LINE_WORD[l.kind]} ${l.line}: ${l.text.slice(1).trim() || '(prázdný)'}`);
+        row.setAttribute('aria-label', `${LINE_WORD[l.kind]} ${l.line}: ${l.text.slice(1).trim() || _t('(prázdný)')}`);
         LINE_INFO.set(row, { file: cur.path, area: cur.area, kind: l.kind, line: l.line, side: l.side, text: l.text });
       }
       d.appendChild(row);
@@ -1270,13 +1270,13 @@ function showDiff(r, message) {
     box.appendChild(d);
     renderLineComments(d);
   }
-  if (r.truncated) box.appendChild(el('p', 'git-note', 'Diff je příliš dlouhý – zobrazen jen začátek.'));
+  if (r.truncated) box.appendChild(el('p', 'git-note', _t('Diff je příliš dlouhý – zobrazen jen začátek.')));
 }
 
 /* ---------- Komentáře k řádkům diffu → zpráva pro Clauda (jen v paměti okna) ---------- */
 const GC = { items: [], seq: 0 };
 const LINE_INFO = new WeakMap(); // řádek diffu → {file, area, kind, line, side, text}
-const LINE_WORD = { add: 'přidaný řádek', del: 'odebraný řádek', ctx: 'řádek' };
+const LINE_WORD = { add: _t('přidaný řádek'), del: _t('odebraný řádek'), ctx: _t('řádek') };
 const sameLine = (c, i) => c.file === i.file && c.area === i.area && c.line === i.line && c.side === i.side;
 
 function diffRows() { return [...$('#git-diff').querySelectorAll('.diff-line')]; }
@@ -1292,14 +1292,14 @@ function renderLineComments(d = $('#git-diff .diff')) {
     for (const c of mine) {
       const box = el('div', 'diff-comment');
       box.appendChild(el('p', null, c.note));
-      const del = button('Smazat', 'btn-ghost btn-small', () => {
+      const del = button(_t('Smazat'), 'btn-ghost btn-small', () => {
         GC.items = GC.items.filter((x) => x !== c);
         renderLineComments();
         renderCommentBar();
-        announce('Komentář smazán.');
+        announce(_t('Komentář smazán.'));
         row.focus();
       });
-      del.setAttribute('aria-label', `Smazat komentář k řádku ${c.line}`);
+      del.setAttribute('aria-label', _t('Smazat komentář k řádku {0}', c.line));
       box.appendChild(del);
       after.after(box);
       after = box;
@@ -1330,8 +1330,8 @@ function openCommentForm(row) {
   const ta = el('textarea');
   ta.rows = 3;
   ta.maxLength = 2000;
-  ta.setAttribute('aria-label', `Komentář k řádku ${info.line} souboru ${info.file}`);
-  ta.placeholder = 'Co má Claude na tomto řádku změnit? (Ctrl+Enter přidá, Esc zruší)';
+  ta.setAttribute('aria-label', _t('Komentář k řádku {0} souboru {1}', info.line, info.file));
+  ta.placeholder = _t('Co má Claude na tomto řádku změnit? (Ctrl+Enter přidá, Esc zruší)');
   const actions = el('div', 'diff-form-actions');
   const add = () => {
     const note = ta.value.trim();
@@ -1340,11 +1340,11 @@ function openCommentForm(row) {
     closeCommentForm();
     renderLineComments();
     renderCommentBar();
-    announce(`Komentář přidán. Celkem ${GC.items.length}.`);
+    announce(_t('Komentář přidán. Celkem {0}.', GC.items.length));
     row.focus();
   };
-  actions.append(button('Přidat komentář', 'btn-accent btn-small', add),
-    button('Zrušit', 'btn-ghost btn-small', () => { closeCommentForm(); row.focus(); }));
+  actions.append(button(_t('Přidat komentář'), 'btn-accent btn-small', add),
+    button(_t('Zrušit'), 'btn-ghost btn-small', () => { closeCommentForm(); row.focus(); }));
   ta.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); add(); }
     else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeCommentForm(); row.focus(); }
@@ -1366,7 +1366,7 @@ function sendComments() {
   else insertIntoPrompt(text);
   GC.items = [];
   renderCommentBar();
-  announce('Komentáře jsou ve zprávě – zkontrolujte ji a odešlete.');
+  announce(_t('Komentáře jsou ve zprávě – zkontrolujte ji a odešlete.'));
 }
 
 function setupGitComments() {
@@ -1400,7 +1400,7 @@ function setupGitComments() {
   $('#git-comments-send').addEventListener('click', sendComments);
   $('#git-comments-clear').addEventListener('click', () => {
     const n = GC.items.length;
-    if (!n || !confirm(`Zahodit ${n} ${plural(n, 'komentář', 'komentáře', 'komentářů')}?`)) return;
+    if (!n || !confirm(_t('Zahodit {0} {1}?', n, plural(n, 'komentář', 'komentáře', 'komentářů')))) return;
     GC.items = [];
     renderLineComments();
     renderCommentBar();
@@ -1432,12 +1432,12 @@ async function openFiles() {
 }
 
 async function loadFiles(fresh) {
-  $('#files-sub').textContent = 'Načítám…';
+  $('#files-sub').textContent = _t('Načítám…');
   try {
     const r = await apiJson(`/api/projects/${encodeURIComponent(S.project)}/files${fresh ? '?fresh=1' : ''}`);
     F.files = r.files;
     $('#files-sub').textContent = `${r.files.length} ${plural(r.files.length, 'soubor', 'soubory', 'souborů')}`
-      + (r.truncated ? ' (zkráceno)' : '') + (r.source === 'git' ? ' • podle gitu, bez ignorovaných' : ' • bez build a cache složek');
+      + (r.truncated ? _t(' (zkráceno)') : '') + (r.source === 'git' ? _t(' • podle gitu, bez ignorovaných') : _t(' • bez build a cache složek'));
   } catch (e) { F.files = []; $('#files-sub').textContent = e.message; }
   renderFiles();
 }
@@ -1449,7 +1449,7 @@ function renderFiles() {
   const hits = terms.length ? F.files.filter((p) => { const f = fold(p); return terms.every((t) => f.includes(t)); }) : F.files;
   if (filesTree()) {
     nav.textContent = '';
-    if (!hits.length) nav.appendChild(el('p', 'git-note', terms.length ? 'Nic nenalezeno.' : 'Žádné soubory.'));
+    if (!hits.length) nav.appendChild(el('p', 'git-note', terms.length ? _t('Nic nenalezeno.') : _t('Žádné soubory.')));
     else renderTree(nav, hits, terms.length > 0);
     $('#files-status').textContent = terms.length ? `${hits.length} ${plural(hits.length, 'soubor', 'soubory', 'souborů')}` : '';
     return;
@@ -1470,8 +1470,8 @@ function renderFiles() {
     b.addEventListener('click', () => showFile(b, p));
     nav.appendChild(b);
   }
-  if (!sorted.length) nav.appendChild(el('p', 'git-note', terms.length ? 'Nic nenalezeno.' : 'Žádné soubory.'));
-  else if (sorted.length > FILES_SHOWN) nav.appendChild(el('p', 'git-note', `Zobrazeno ${FILES_SHOWN} z ${sorted.length} – zpřesněte hledání.`));
+  if (!sorted.length) nav.appendChild(el('p', 'git-note', terms.length ? _t('Nic nenalezeno.') : _t('Žádné soubory.')));
+  else if (sorted.length > FILES_SHOWN) nav.appendChild(el('p', 'git-note', _t('Zobrazeno {0} z {1} – zpřesněte hledání.', FILES_SHOWN, sorted.length)));
   $('#files-status').textContent = terms.length ? `${sorted.length} ${plural(sorted.length, 'soubor', 'soubory', 'souborů')}` : '';
 }
 
@@ -1481,7 +1481,7 @@ async function showFile(btn, p) {
   const seq = ++F.seq;
   const view = $('#files-view');
   view.textContent = '';
-  view.appendChild(el('p', 'git-note', 'Načítám…'));
+  view.appendChild(el('p', 'git-note', _t('Načítám…')));
   let r;
   try { r = await apiJson(`/api/projects/${encodeURIComponent(S.project)}/file?path=${encodeURIComponent(p)}`); }
   catch (e) { if (seq === F.seq) { view.textContent = ''; view.appendChild(el('p', 'git-note', e.message)); $('#files-status').textContent = e.message; } return; }
@@ -1489,18 +1489,18 @@ async function showFile(btn, p) {
   view.textContent = '';
   const head = el('div', 'files-head');
   head.appendChild(el('h3', null, p));
-  head.appendChild(button('Vložit cestu do zprávy', 'btn-ghost btn-small', () => {
+  head.appendChild(button(_t('Vložit cestu do zprávy'), 'btn-ghost btn-small', () => {
     $('#filesdlg').close();
     insertIntoPrompt(p.includes(' ') ? `"${p}" ` : `${p} `, { replaceEmpty: false });
   }));
-  if (r.content != null) head.appendChild(button('Kopírovat obsah', 'btn-ghost btn-small', async (e) => {
-    try { await navigator.clipboard.writeText(r.content); e.target.textContent = 'Zkopírováno'; } catch { e.target.textContent = 'Kopírování selhalo'; }
+  if (r.content != null) head.appendChild(button(_t('Kopírovat obsah'), 'btn-ghost btn-small', async (e) => {
+    try { await navigator.clipboard.writeText(r.content); e.target.textContent = _t('Zkopírováno'); } catch { e.target.textContent = _t('Kopírování selhalo'); }
   }));
   view.appendChild(head);
   if (r.note) { view.appendChild(el('p', 'git-note', r.note)); $('#files-status').textContent = `${p}: ${r.note}`; return; }
   const pre = el('pre', 'files-code');
   pre.tabIndex = 0; // posouvání klávesnicí
-  pre.setAttribute('aria-label', `Obsah ${p}`);
+  pre.setAttribute('aria-label', _t('Obsah {0}', p));
   const code = el('code', null, r.content);
   const lang = HL_EXT[(p.split('.').pop() || '').toLowerCase()];
   if (lang && window.hljs && hljs.getLanguage(lang) && r.content.length <= 200_000) {
@@ -1550,8 +1550,8 @@ async function openSettings() {
   setMsg('');
   renderSettingsAccounts();
   $('#set-perm').textContent = S.interactivePermissions
-    ? 'Žádosti o svolení: zapnuto. Když se Claude Code zeptá, objeví se v chatu karta Povolit jednou / Povolit vždy / Zamítnout. V režimu Auto se ptá jen výjimečně – většinu rozhodne sám; na každý zápis a příkaz se ptá v režimu Ručně.'
-    : 'Žádosti o svolení: vypnuto – na co by se Claude Code zeptal, to se samo zamítne. Zapnout jde volbou "interactivePermissions": true v local/config.json.';
+    ? _t('Žádosti o svolení: zapnuto. Když se Claude Code zeptá, objeví se v chatu karta Povolit jednou / Povolit vždy / Zamítnout. V režimu Auto se ptá jen výjimečně – většinu rozhodne sám; na každý zápis a příkaz se ptá v režimu Ručně.')
+    : _t('Žádosti o svolení: vypnuto – na co by se Claude Code zeptal, to se samo zamítne. Zapnout jde volbou "interactivePermissions": true v local/config.json.');
   renderFullscreenButton();
   renderThemeChoice();
   renderNotifyToggle();
@@ -1569,9 +1569,9 @@ function renderSettingsAccounts() {
     const sw = el('i', 'swatch'); sw.style.background = a.accent; li.appendChild(sw);
     const main = el('div', 'set-item-main');
     main.appendChild(el('span', 'set-item-label', a.label));
-    main.appendChild(el('span', 'set-item-path', a.ok ? a.email : (a.error || '')));
+    main.appendChild(el('span', 'set-item-path', a.ok ? a.email : _tr(a.error || '')));
     li.appendChild(main);
-    li.appendChild(el('span', a.ok ? 'set-badge' : 'set-badge set-badge--bad', a.ok ? 'ověřen' : 'nedostupný'));
+    li.appendChild(el('span', a.ok ? 'set-badge' : 'set-badge set-badge--bad', a.ok ? _t('ověřen') : _t('nedostupný')));
     ul.appendChild(li);
   }
 }
@@ -1585,17 +1585,17 @@ function renderSettingsProjects(view) {
     main.appendChild(el('span', 'set-item-label', p.label));
     main.appendChild(el('span', 'set-item-path', p.path));
     li.appendChild(main);
-    if (p.id === S.project) li.appendChild(el('span', 'set-badge', 'otevřený'));
-    if (p.id === view.defaultProject) li.appendChild(el('span', 'set-badge', 'výchozí'));
+    if (p.id === S.project) li.appendChild(el('span', 'set-badge', _t('otevřený')));
+    if (p.id === view.defaultProject) li.appendChild(el('span', 'set-badge', _t('výchozí')));
     else {
-      const d = button('Nastavit jako výchozí', 'btn-ghost btn-small', () => setDefaultProject(p));
-      d.title = 'Tento projekt se otevře při spuštění aplikace';
+      const d = button(_t('Nastavit jako výchozí'), 'btn-ghost btn-small', () => setDefaultProject(p));
+      d.title = _t('Tento projekt se otevře při spuštění aplikace');
       li.appendChild(d);
     }
-    li.appendChild(button('Přejmenovat', 'btn-ghost btn-small', () => startRename(li, p)));
-    const rm = button('Odebrat', 'btn-danger btn-small', () => removeProject(p));
+    li.appendChild(button(_t('Přejmenovat'), 'btn-ghost btn-small', () => startRename(li, p)));
+    const rm = button(_t('Odebrat'), 'btn-danger btn-small', () => removeProject(p));
     rm.disabled = view.projects.length <= 1 || (!!S.run && p.id === S.project);
-    if (rm.disabled) rm.title = view.projects.length <= 1 ? 'Poslední projekt nelze odebrat.' : 'V projektu právě běží Claude.';
+    if (rm.disabled) rm.title = view.projects.length <= 1 ? _t('Poslední projekt nelze odebrat.') : _t('V projektu právě běží Claude.');
     li.appendChild(rm);
     ul.appendChild(li);
   }
@@ -1606,7 +1606,7 @@ function startRename(li, p) {
   const label = main.querySelector('.set-item-label');
   const input = el('input');
   input.type = 'text'; input.value = p.label; input.maxLength = 60;
-  input.setAttribute('aria-label', `Nový název projektu ${p.label}`);
+  input.setAttribute('aria-label', _t('Nový název projektu {0}', p.label));
   main.replaceChild(input, label);
   input.focus(); input.select();
   let done = false;
@@ -1615,7 +1615,7 @@ function startRename(li, p) {
     done = true;
     const v = input.value.trim();
     if (!save || !v || v === p.label) { main.replaceChild(label, input); return; }
-    await changeProject('PATCH', p.id, { label: v }, `Projekt přejmenován na „${v}“.`);
+    await changeProject('PATCH', p.id, { label: v }, _t('Projekt přejmenován na „{0}“.', v));
   };
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); finish(true); }
@@ -1626,9 +1626,9 @@ function startRename(li, p) {
 
 async function removeProject(p) {
   const current = p.id === S.project;
-  if (!confirm(`Odebrat projekt „${p.label}“ ze seznamu?\n\nSložka ani sezení se nesmažou, jen zmizí z aplikace.`)) return;
+  if (!confirm(_t('Odebrat projekt „{0}“ ze seznamu?\n\nSložka ani sezení se nesmažou, jen zmizí z aplikace.', p.label))) return;
   if (current && !leaveContext()) return;
-  await changeProject('DELETE', p.id, undefined, `Projekt „${p.label}“ odebrán.`);
+  await changeProject('DELETE', p.id, undefined, _t('Projekt „{0}“ odebrán.', p.label));
 }
 
 /** Zápis projektů → obnovit seznam v Nastavení i v hlavičce; zmizí-li otevřený projekt, přepnout. */
@@ -1657,8 +1657,22 @@ async function addProjectSubmit(e) {
   const label = $('#set-add-label').value.trim();
   const path = $('#set-add-path').value.trim();
   if (!label || !path) return;
-  const view = await changeProject('POST', '', { label, path }, `Projekt „${label}“ přidán – najdete ho v přepínači projektů.`);
+  const view = await changeProject('POST', '', { label, path }, _t('Projekt „{0}“ přidán – najdete ho v přepínači projektů.', label));
   if (view) { $('#set-add-label').value = ''; $('#set-add-path').value = ''; }
+}
+
+/** Jazyk rozhraní: uložit a okno znovu načíst (klíč se do adresy vrátí jen na okamžik, jako při spuštění). */
+function changeLanguage(lang) {
+  const back = () => { for (const i of document.querySelectorAll('input[name="lang"]')) i.checked = i.value === ACD_LANG; };
+  if (lang === ACD_LANG) return;
+  if (S.run) { setMsg(_t('Jazyk jde změnit, až Claude doběhne.'), 'err'); back(); return; }
+  if ((S.queue.length || S.pending.length) && !confirm(_t('Fronta a nepoužité přílohy se při změně jazyka zahodí. Pokračovat?'))) { back(); return; }
+  saveDraft();
+  S.queue.clear();
+  discardPending();
+  acdI18n.setLang(lang);
+  location.replace(`${location.pathname}#t=${S.token}`);
+  location.reload();
 }
 
 function renderThemeChoice() {
@@ -1669,7 +1683,7 @@ function renderThemeChoice() {
 function renderFullscreenButton() {
   const b = $('#set-fullscreen');
   const on = !!document.fullscreenElement;
-  b.textContent = on ? 'Ukončit celou obrazovku' : 'Celá obrazovka';
+  b.textContent = on ? _t('Ukončit celou obrazovku') : _t('Celá obrazovka');
   b.setAttribute('aria-pressed', on ? 'true' : 'false');
   b.disabled = !document.fullscreenEnabled;
 }
@@ -1689,6 +1703,8 @@ function setupSettings() {
   $('#set-add-account').addEventListener('submit', addAccountSubmit);
   $('#set-fullscreen').addEventListener('click', toggleFullscreen);
   $('#set-theme').addEventListener('change', (e) => { if (window.acdTheme) window.acdTheme.set(e.target.value); });
+  for (const i of document.querySelectorAll('input[name="lang"]')) i.checked = i.value === ACD_LANG;
+  $('#set-lang').addEventListener('change', (e) => changeLanguage(e.target.value));
   document.addEventListener('fullscreenchange', renderFullscreenButton);
   $('#set-notify').addEventListener('click', toggleNotify);
   $('#set-autocontinue').addEventListener('change', (e) => { store(AUTO_KEY, e.target.checked ? '1' : '0'); if (!e.target.checked) cancelContinue(); });
@@ -1714,7 +1730,7 @@ function showBanner(kind, html, actions) {
   b.appendChild(t);
   for (const a of actions || []) b.appendChild(a);
   b.hidden = false;
-  announce(t.textContent.slice(0, 300) + (actions && actions.length ? ' Možnosti jsou nad konverzací.' : ''));
+  announce(t.textContent.slice(0, 300) + (actions && actions.length ? _t(' Možnosti jsou nad konverzací.') : ''));
 }
 function button(text, cls, onClick) {
   const b = el('button', 'btn ' + cls, text);
@@ -1727,24 +1743,24 @@ function showLimit(accountId, resetsAt, detail) {
   const acc = accountById(accountId);
   const other = otherAccount(accountId);
   const when = fmtTime(resetsAt);
-  const strong = el('strong', null, `Účet ${acc ? acc.label : accountId} narazil na limit.`);
-  const parts = [strong, document.createTextNode(when ? ` Obnoví se v ${when}.` : ' Čas obnovení není známý.')];
+  const strong = el('strong', null, _t('Účet {0} narazil na limit.', acc ? acc.label : accountId));
+  const parts = [strong, document.createTextNode(when ? _t(' Obnoví se v {0}.', when) : _t(' Čas obnovení není známý.'))];
   if (detail) parts.push(el('div', null, detail));
   const actions = [];
   if (AC.timer && AC.ctx && AC.ctx.account === accountId) {
     const left = el('span', null, fmtLeft(AC.at - Date.now()));
     left.id = 'ac-left';
-    const line = el('div', null, `Automaticky pokračuji v ${fmtTime(AC.at / 1000)} (za `);
-    line.append(left, document.createTextNode(') – pokud okno zůstane otevřené. Fronta zůstane pozastavená.'));
+    const line = el('div', null, _t('Automaticky pokračuji v {0} (za ', fmtTime(AC.at / 1000)));
+    line.append(left, document.createTextNode(_t(') – pokud okno zůstane otevřené. Fronta zůstane pozastavená.')));
     parts.push(line);
-    actions.push(button('Nepokračovat automaticky', 'btn-ghost', () => { cancelContinue(); showLimit(accountId, resetsAt, detail); announce('Automatické pokračování zrušeno.'); }));
-  } else if (!autoOn()) parts.push(el('div', null, 'Automatické pokračování po obnovení je vypnuté (Nastavení → Zprávy a práce).'));
+    actions.push(button(_t('Nepokračovat automaticky'), 'btn-ghost', () => { cancelContinue(); showLimit(accountId, resetsAt, detail); announce(_t('Automatické pokračování zrušeno.')); }));
+  } else if (!autoOn()) parts.push(el('div', null, _t('Automatické pokračování po obnovení je vypnuté (Nastavení → Zprávy a práce).')));
   if (other) {
-    actions.push(button(`Přepnout na ${other.label} a poslat znovu`, 'btn-accent', async () => {
+    actions.push(button(_t('Přepnout na {0} a poslat znovu', other.label), 'btn-accent', async () => {
       const prompt = S.lastPrompt;
       if (await switchAccount(other.id) && prompt) { $('#prompt').value = prompt; send(); }
     }));
-    actions.push(button(`Jen přepnout`, 'btn-ghost', () => switchAccount(other.id)));
+    actions.push(button(_t('Jen přepnout'), 'btn-ghost', () => switchAccount(other.id)));
   }
   showBanner('err', parts, actions);
 }
@@ -1765,11 +1781,11 @@ function claudeBubble() {
   node.setAttribute('aria-label', 'Claude');
   const body = el('div', 'md');
   const bar = el('div', 'msg-bar');
-  const copy = el('button', 'msg-copy', 'Kopírovat');
+  const copy = el('button', 'msg-copy', _t('Kopírovat'));
   copy.type = 'button';
-  copy.title = 'Zkopírovat odpověď (jako Markdown)';
-  copy.setAttribute('aria-label', 'Kopírovat odpověď');
-  copy.addEventListener('click', () => copyText(RAW.get(node) ?? body.innerText, copy, 'Odpověď je ve schránce.'));
+  copy.title = _t('Zkopírovat odpověď (jako Markdown)');
+  copy.setAttribute('aria-label', _t('Kopírovat odpověď'));
+  copy.addEventListener('click', () => copyText(RAW.get(node) ?? body.innerText, copy, _t('Odpověď je ve schránce.')));
   bar.appendChild(copy);
   node.append(body, bar);
   return { node, body };
@@ -1782,8 +1798,8 @@ function setClaudeText(m, text, highlight, partial) {
 }
 async function copyText(text, btn, done) {
   btn.dataset.label ??= btn.textContent;
-  try { await navigator.clipboard.writeText(text); btn.textContent = 'Zkopírováno'; announce(done || 'Zkopírováno.'); }
-  catch { btn.textContent = 'Kopírování selhalo'; }
+  try { await navigator.clipboard.writeText(text); btn.textContent = _t('Zkopírováno'); announce(done || _t('Zkopírováno.')); }
+  catch { btn.textContent = _t('Kopírování selhalo'); }
   clearTimeout(btn._reset);
   btn._reset = setTimeout(() => { btn.textContent = btn.dataset.label; }, 1600);
 }
@@ -1806,7 +1822,7 @@ function toolSummary(name, input, cwd) {
     case 'WebSearch': return input.query || '';
     case 'Task': case 'Agent': return input.description || '';
     case 'Skill': return input.skill || '';
-    case 'TodoWrite': return Array.isArray(input.todos) ? `${input.todos.length} úkolů` : '';
+    case 'TodoWrite': return Array.isArray(input.todos) ? _t('{0} úkolů', input.todos.length) : '';
     default: {
       const v = Object.values(input).find((x) => typeof x === 'string');
       return v ? v.split('\n')[0] : '';
@@ -1821,9 +1837,9 @@ function toolCard(id, name, parent) {
   const d = el('details', 'tool' + (parent ? ' sub' : ''));
   d.dataset.state = 'running';
   const sum = el('summary');
-  const nm = el('span', 'tool-name', name || 'nástroj');
+  const nm = el('span', 'tool-name', name || _t('nástroj'));
   const sm = el('span', 'tool-sum');
-  const badge = el('span', 'tool-badge', 'běží');
+  const badge = el('span', 'tool-badge', _t('běží'));
   sum.append(nm, sm, badge);
   const body = el('div', 'tool-body');
   d.append(sum, body);
@@ -1875,10 +1891,10 @@ function fillToolInput(t, name, input, cwd) {
   } else if (name === 'Write' && input) {
     t.body.appendChild(diffView([{ old: '', new: input.content || '' }], toolSummary(name, input, cwd)));
   } else if ((name === 'Bash' || name === 'PowerShell') && input) {
-    t.body.appendChild(el('div', 'eyebrow', 'Příkaz'));
+    t.body.appendChild(el('div', 'eyebrow', _t('Příkaz')));
     t.body.appendChild(el('pre', null, input.command || ''));
   } else if (input && Object.keys(input).length) {
-    t.body.appendChild(el('div', 'eyebrow', 'Vstup'));
+    t.body.appendChild(el('div', 'eyebrow', _t('Vstup')));
     t.body.appendChild(el('pre', null, JSON.stringify(input, null, 2)));
   }
 }
@@ -1886,21 +1902,21 @@ function fillToolInput(t, name, input, cwd) {
 function fillToolResult(t, ev) {
   const state = ev.denied ? 'denied' : ev.isError ? 'error' : 'ok';
   t.d.dataset.state = state;
-  t.badge.textContent = state === 'denied' ? 'zamítnuto' : state === 'error' ? 'chyba' : 'hotovo';
+  t.badge.textContent = state === 'denied' ? _t('zamítnuto') : state === 'error' ? _t('chyba') : _t('hotovo');
   if (ev.denied) {
     const why = [ev.decisionSource, ev.decisionReason].filter(Boolean).join(' / ');
-    t.body.appendChild(el('div', 'tool-reason', `Zamítnuto${why ? ` (${why})` : ''}.`));
+    t.body.appendChild(el('div', 'tool-reason', _t('Zamítnuto{0}.', why ? ` (${why})` : '')));
     t.d.open = true;
   }
   if (ev.content) {
-    t.body.appendChild(el('div', 'eyebrow', 'Výsledek'));
+    t.body.appendChild(el('div', 'eyebrow', _t('Výsledek')));
     t.body.appendChild(el('pre', null, ev.content));
   }
   for (const im of ev.images || []) {
     if (!/^image\/(png|jpeg|gif|webp)$/.test(im.mediaType)) continue;
     const img = el('img', 'tool-img');
     img.src = `data:${im.mediaType};base64,${im.data}`;
-    img.alt = `Obrázek z nástroje ${t.name || ''}`.trim();
+    img.alt = _t('Obrázek z nástroje {0}', t.name || '').trim();
     img.loading = 'lazy';
     t.body.appendChild(img);
     t.d.open = true;
@@ -1912,27 +1928,27 @@ function fillToolResult(t, ev) {
 function showPlanCard(markdown, title, raw) {
   const box = el('div', 'plan');
   box.setAttribute('role', 'group'); // skupina, ne orientační bod – karet může být víc
-  box.setAttribute('aria-label', title || 'Plán');
-  box.appendChild(el('div', 'eyebrow', title || 'Plán'));
+  box.setAttribute('aria-label', title || _t('Plán'));
+  box.appendChild(el('div', 'eyebrow', title || _t('Plán')));
   if (markdown) {
     const body = el('div', 'md');
     renderMd(body, markdown, true);
     box.appendChild(body);
   }
   const actions = el('div', 'plan-actions');
-  const approve = button('Schválit plán', 'btn-accent', () => approvePlan(approve));
-  const review = button('Připomínkovat', 'btn-ghost', () => planComments(box, markdown || raw));
-  review.title = 'Napsat připomínky k jednotlivým řádkům plánu';
-  actions.append(approve, review, el('span', 'hint', 'Schválení spustí plán v režimu Auto ve stejném sezení.'));
+  const approve = button(_t('Schválit plán'), 'btn-accent', () => approvePlan(approve));
+  const review = button(_t('Připomínkovat'), 'btn-ghost', () => planComments(box, markdown || raw));
+  review.title = _t('Napsat připomínky k jednotlivým řádkům plánu');
+  actions.append(approve, review, el('span', 'hint', _t('Schválení spustí plán v režimu Auto ve stejném sezení.')));
   box.appendChild(actions);
   append(box, true);
-  announce(`${title || 'Plán'} – tlačítko Schválit plán je pod ním.`);
+  announce(_t('{0} – tlačítko Schválit plán je pod ním.', title || _t('Plán')));
 }
 
 /* ---------- Žádost o svolení (jen s interactivePermissions v configu) ---------- */
 const PERM_RESULT = {
-  once: 'Povoleno jednou.', always: 'Povoleno vždy – pravidlo uloženo do .claude/settings.local.json projektu.',
-  deny: 'Zamítnuto.', timeout: 'Bez odpovědi v časovém limitu – zamítnuto.',
+  once: _t('Povoleno jednou.'), always: _t('Povoleno vždy – pravidlo uloženo do .claude/settings.local.json projektu.'),
+  deny: _t('Zamítnuto.'), timeout: _t('Bez odpovědi v časovém limitu – zamítnuto.'),
 };
 
 function showPermissionCard(ev, run) {
@@ -1940,15 +1956,15 @@ function showPermissionCard(ev, run) {
   const box = el('div', 'perm');
   box.dataset.requestId = ev.requestId;
   box.setAttribute('role', 'group');
-  box.setAttribute('aria-label', `Claude žádá o svolení: ${ev.displayName || ev.toolName}`);
-  box.appendChild(el('div', 'eyebrow', 'Claude žádá o svolení'));
+  box.setAttribute('aria-label', _t('Claude žádá o svolení: {0}', ev.displayName || ev.toolName));
+  box.appendChild(el('div', 'eyebrow', _t('Claude žádá o svolení')));
   box.appendChild(el('h3', 'perm-title', ev.displayName || ev.toolName));
   if (ev.description) box.appendChild(el('p', 'perm-desc', ev.description));
   const pv = ev.preview || {};
   const detail = pv.command || pv.path || pv.url || pv.json;
   if (ev.edit && Array.isArray(ev.edit.edits)) box.appendChild(diffView(ev.edit.edits, toolSummary('Edit', { file_path: ev.edit.file }, run.cwd)));
   else if (detail) box.appendChild(el('pre', null, detail));
-  if (ev.blockedPath && ev.blockedPath !== pv.path) box.appendChild(el('p', 'perm-desc', `Cesta: ${ev.blockedPath}`));
+  if (ev.blockedPath && ev.blockedPath !== pv.path) box.appendChild(el('p', 'perm-desc', _t('Cesta: {0}', ev.blockedPath)));
   const actions = el('div', 'perm-actions');
   const answer = async (decision, btn) => {
     const hadFocus = box.contains(document.activeElement);
@@ -1960,27 +1976,27 @@ function showPermissionCard(ev, run) {
       resolvePermissionCard(box, null, e.message);
     }
   };
-  const once = button('Povolit jednou', 'btn-accent btn-small', () => answer('once'));
+  const once = button(_t('Povolit jednou'), 'btn-accent btn-small', () => answer('once'));
   actions.appendChild(once);
   if (ev.alwaysRules && ev.alwaysRules.length) {
-    const always = button('Povolit vždy', 'btn-ghost btn-small', () => answer('always'));
-    always.title = 'Uloží pravidlo do .claude/settings.local.json projektu (jako v Claude Code) – příště se už nezeptá.';
+    const always = button(_t('Povolit vždy'), 'btn-ghost btn-small', () => answer('always'));
+    always.title = _t('Uloží pravidlo do .claude/settings.local.json projektu (jako v Claude Code) – příště se už nezeptá.');
     actions.appendChild(always);
   }
-  actions.appendChild(button('Zamítnout', 'btn-danger btn-small', () => answer('deny')));
+  actions.appendChild(button(_t('Zamítnout'), 'btn-danger btn-small', () => answer('deny')));
   box.appendChild(actions);
-  if (ev.alwaysRules && ev.alwaysRules.length) box.appendChild(el('p', 'perm-rule', `„Vždy“ uloží: ${ev.alwaysRules.join(', ')}`));
+  if (ev.alwaysRules && ev.alwaysRules.length) box.appendChild(el('p', 'perm-rule', _t('„Vždy“ uloží: {0}', ev.alwaysRules.join(', '))));
   const mins = Math.round((ev.timeoutMs || 600000) / 60000);
-  box.appendChild(el('p', 'perm-rule perm-wait', `Claude čeká. Bez odpovědi do ${mins} min se akce zamítne.`));
+  box.appendChild(el('p', 'perm-rule perm-wait', _t('Claude čeká. Bez odpovědi do {0} min se akce zamítne.', mins)));
   append(box, true);
   // Fokus jen když uživatel nepíše – jinak by mezerník nebo Enter akci omylem povolil.
   const typing = isTyping();
   if (!typing) once.focus({ preventScroll: true });
-  announce(`Claude žádá o svolení: ${ev.displayName || ev.toolName}${detail ? ' – ' + String(detail).slice(0, 160) : ''}.`
-    + (typing ? ' Karta je v konverzaci, najdete ji i v Příkazech (Ctrl+K).' : ''));
+  announce(_t('Claude žádá o svolení: {0}{1}.', ev.displayName || ev.toolName, detail ? ' – ' + String(detail).slice(0, 160) : '')
+    + (typing ? _t(' Karta je v konverzaci, najdete ji i v Příkazech (Ctrl+K).') : ''));
   run.pendingPermissions = (run.pendingPermissions || 0) + 1;
-  setStatus('Claude čeká na vaše svolení…', true);
-  notify('Claude žádá o svolení', `${ev.displayName || ev.toolName}: ${detail || ''}`, 'plan');
+  setStatus(_t('Claude čeká na vaše svolení…'), true);
+  notify(_t('Claude žádá o svolení'), `${ev.displayName || ev.toolName}: ${detail || ''}`, 'plan');
 }
 
 function resolvePermissionCard(box, decision, errorText) {
@@ -2017,13 +2033,13 @@ function setMode(m) {
 
 /* ---------- Běh ---------- */
 function setRunning(on) {
-  $('#send').textContent = on ? 'Poslat hned' : 'Odeslat';
-  $('#send').title = on ? 'Claude si zprávu přečte ještě během práce (Ctrl+Enter)' : 'Odeslat (Ctrl+Enter)';
+  $('#send').textContent = on ? _t('Poslat hned') : _t('Odeslat');
+  $('#send').title = on ? _t('Claude si zprávu přečte ještě během práce (Ctrl+Enter)') : _t('Odeslat (Ctrl+Enter)');
   $('#queue-send').hidden = !on;
   $('#stop').hidden = !on;
   $('#prompt').disabled = false;
-  $('#prompt').placeholder = on ? 'Ctrl+Enter = poslat hned do běžící práce, Ctrl+Shift+Enter = do fronty'
-    : 'Napište zprávu… (Ctrl+Enter odešle)';
+  $('#prompt').placeholder = on ? _t('Ctrl+Enter = poslat hned do běžící práce, Ctrl+Shift+Enter = do fronty')
+    : _t('Napište zprávu… (Ctrl+Enter odešle)');
   $('#new-session').disabled = on;
   renderAccounts();
   renderProjects();
@@ -2037,7 +2053,7 @@ function setRunning(on) {
 function send(target = 'now') {
   setTimeout(() => { saveDraft(); autoGrow(); }, 0); // odeslaný text už není koncept
   const ta = $('#prompt');
-  if (S.pending.some((a) => a.status === 'uploading')) { S.attachNotice = 'Počkejte, až se přílohy nahrají.'; renderAttachments(); return; }
+  if (S.pending.some((a) => a.status === 'uploading')) { S.attachNotice = _t('Počkejte, až se přílohy nahrají.'); renderAttachments(); return; }
   const files = S.pending.filter((a) => a.status === 'ok').map(({ id, name, type, size }) => ({ id, name, type, size }));
   const prompt = ta.value.trim() || (files.length ? DEFAULT_ATTACH_TEXT : '');
   if (!prompt) return;
@@ -2061,13 +2077,13 @@ async function injectNow(run, prompt, files) {
   try {
     res = await api(`/api/runs/${run.runId}/message`, { method: 'POST', body: { prompt, attachments: files.map((f) => f.id) } });
   } catch (e) {
-    showError('Zprávu se nepodařilo poslat', e.message);
+    showError(_t('Zprávu se nepodařilo poslat'), e.message);
     return;
   }
   if (res.status === 409 || res.status === 404) {
     if (S.run === run || S.run === null) {
       enqueue(prompt, files);
-      S.queueNotice = 'Claude už práci dokončoval – zpráva je ve frontě a odešle se hned po něm.';
+      S.queueNotice = _t('Claude už práci dokončoval – zpráva je ve frontě a odešle se hned po něm.');
       renderQueue();
       if (!S.run) setTimeout(dispatchNext, 0);
     }
@@ -2075,13 +2091,13 @@ async function injectNow(run, prompt, files) {
   }
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
-    try { msg = (await res.json()).error || msg; } catch { }
-    showError('Zprávu se nepodařilo poslat', msg);
+    try { msg = _tr((await res.json()).error) || msg; } catch { }
+    showError(_t('Zprávu se nepodařilo poslat'), msg);
     return;
   }
   const bubble = userBubble(prompt, files);
   bubble.classList.add('msg--injected');
-  const state = el('span', 'msg-inject-state', 'Posláno do běžící práce – čeká, až si ji Claude přečte…');
+  const state = el('span', 'msg-inject-state', _t('Posláno do běžící práce – čeká, až si ji Claude přečte…'));
   bubble.appendChild(state);
   append(bubble, true);
   run.injectedBubbles.push(state);
@@ -2098,7 +2114,7 @@ function userBubble(text, files) {
   }
   const box = el('div', 'msg msg--me', body);
   box.setAttribute('role', 'article');
-  box.setAttribute('aria-label', 'Vaše zpráva');
+  box.setAttribute('aria-label', _t('Vaše zpráva'));
   if (names.length) {
     const list = el('div', 'msg-attachments');
     for (const n of names) list.appendChild(el('span', 'msg-attachment', `📎 ${n}`));
@@ -2124,7 +2140,7 @@ async function startRun(prompt, mode, files = [], opts = { model: S.model, effor
   PR.stopped = null;
   setRunning(true);
   renderProgress();
-  setStatus('Spouštím Claude…', true);
+  setStatus(_t('Spouštím Claude…'), true);
 
   const state = { msgBlocks: new Map(), finalized: new Set() };
   try {
@@ -2135,7 +2151,7 @@ async function startRun(prompt, mode, files = [], opts = { model: S.model, effor
     });
     if (!res.ok) {
       let msg = `HTTP ${res.status}`;
-      try { msg = (await res.json()).error || msg; } catch { }
+      try { msg = _tr((await res.json()).error) || msg; } catch { }
       throw new Error(msg);
     }
     const reader = res.body.getReader();
@@ -2156,12 +2172,12 @@ async function startRun(prompt, mode, files = [], opts = { model: S.model, effor
       }
     }
   } catch (e) {
-    if (e.name !== 'AbortError') showError('Běh se nepodařilo spustit', e.message);
+    if (e.name !== 'AbortError') showError(_t('Běh se nepodařilo spustit'), e.message);
     run.outcome ??= e.name === 'AbortError' ? 'stopped' : 'error';
   } finally {
     S.run = null;
     setRunning(false);
-    if (!$('#status').textContent.startsWith('Hotovo') && !$('#status').textContent.startsWith('Zastaveno')) setStatus('');
+    if (!$('#status').textContent.startsWith(_t('Hotovo')) && !$('#status').textContent.startsWith(_t('Zastaveno'))) setStatus('');
     loadSessions();
     loadGit();
     $('#prompt').focus();
@@ -2193,12 +2209,12 @@ function afterRun(run) {
   const go = S.queue.onRunEnd(outcome);
   renderQueue();
   if (go) { setTimeout(dispatchNext, 0); return; }
-  const queued = S.queue.length ? ` Ve frontě čeká ${S.queue.length}.` : '';
+  const queued = S.queue.length ? _t(' Ve frontě čeká {0}.', S.queue.length) : '';
   const texts = {
-    ok: ['Claude doběhl', (run.resultText || 'Hotovo.') + queued],
-    plan: ['Plán čeká na schválení', 'Podívejte se na plán a schvalte ho.' + queued],
-    limit: ['Účet narazil na limit', 'Přepněte na jiný účet, nebo počkejte na obnovení.' + queued],
-    error: ['Běh skončil chybou', (run.resultText || 'Podívejte se do okna.') + queued],
+    ok: [_t('Claude doběhl'), (run.resultText || _t('Hotovo.')) + queued],
+    plan: [_t('Plán čeká na schválení'), _t('Podívejte se na plán a schvalte ho.') + queued],
+    limit: [_t('Účet narazil na limit'), _t('Přepněte na jiný účet, nebo počkejte na obnovení.') + queued],
+    error: [_t('Běh skončil chybou'), (run.resultText || _t('Podívejte se do okna.')) + queued],
   };
   const kind = { ok: 'ok', plan: 'plan', limit: 'problem', error: 'problem' }[outcome];
   if (texts[outcome]) notify(...texts[outcome], kind);
@@ -2230,13 +2246,13 @@ function discardPending() { for (const a of S.pending) deleteAttachment(a.id); c
 
 async function addFiles(fileList, fromClipboard) {
   for (const file of fileList) {
-    if (S.pending.length >= ATTACH_MAX) { S.attachNotice = `Nejvýš ${ATTACH_MAX} příloh ke zprávě.`; break; }
+    if (S.pending.length >= ATTACH_MAX) { S.attachNotice = _t('Nejvýš {0} příloh ke zprávě.', ATTACH_MAX); break; }
     let name = file.name || 'soubor';
     if (fromClipboard && file.type.startsWith('image/')) {
       const t = new Date().toTimeString().slice(0, 8).replaceAll(':', '');
-      name = `schránka-${t}.${(file.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`;
+      name = _t('schránka-{0}.{1}', t, (file.type.split('/')[1] || 'png').replace('jpeg', 'jpg'));
     }
-    if (!ATTACH_RX.test(name)) { S.attachNotice = `${name}: nepodporovaný typ (obrázky, PDF, txt, md, csv, json, log).`; continue; }
+    if (!ATTACH_RX.test(name)) { S.attachNotice = _t('{0}: nepodporovaný typ (obrázky, PDF, txt, md, csv, json, log).', name); continue; }
     const item = { key: ++attachSeq, name, size: file.size, type: file.type, status: 'uploading', id: null, thumb: null };
     S.pending.push(item);
     if (file.type.startsWith('image/') && file.size < 5 * 1024 * 1024) {
@@ -2257,7 +2273,7 @@ async function upload(item, file) {
     });
     let data = null;
     try { data = await res.json(); } catch { /* prázdné tělo */ }
-    if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+    if (!res.ok) throw new Error(_tr((data && data.error) || `HTTP ${res.status}`));
     if (!S.pending.includes(item)) { deleteAttachment(data.id); return; } // mezitím odebráno
     Object.assign(item, { id: data.id, name: data.name, type: data.type, size: data.size, status: 'ok' });
   } catch (e) {
@@ -2279,9 +2295,9 @@ function renderAttachments() {
     else chip.appendChild(el('span', 'attach-ext', (a.name.split('.').pop() || '?').toUpperCase()));
     const info = el('span', 'attach-info');
     info.append(el('span', 'attach-name', a.name),
-      el('span', 'attach-meta', a.status === 'uploading' ? 'nahrávám…' : a.status === 'error' ? a.error : `${a.type || '?'} • ${fmtSize(a.size)}`));
+      el('span', 'attach-meta', a.status === 'uploading' ? _t('nahrávám…') : a.status === 'error' ? _tr(a.error) : `${a.type || '?'} • ${fmtSize(a.size)}`));
     chip.appendChild(info);
-    chip.appendChild(iconButton('✕', `Odebrat přílohu ${a.name}`, () => {
+    chip.appendChild(iconButton('✕', _t('Odebrat přílohu {0}', a.name), () => {
       S.pending = S.pending.filter((x) => x !== a);
       deleteAttachment(a.id);
       S.attachNotice = null;
@@ -2375,7 +2391,7 @@ function updateSlash() {
   const wasOpen = slashOpen() && SL.mode === mode;
   SL.mode = mode;
   SL.at = at;
-  ul.setAttribute('aria-label', mode === 'file' ? 'Soubory projektu' : 'Příkazy a skilly');
+  ul.setAttribute('aria-label', mode === 'file' ? _t('Soubory projektu') : _t('Příkazy a skilly'));
   ul.textContent = '';
   SL.items = items.map((c, i) => {
     const li = el('li', 'palette-item');
@@ -2394,8 +2410,8 @@ function updateSlash() {
   ul.hidden = false;
   markSlash();
   if (!wasOpen) $('#slash-status').textContent = mode === 'file'
-    ? `${items.length} ${plural(items.length, 'soubor', 'soubory', 'souborů')} – šipky vyberou, Enter nebo Tab vloží, Esc zavře.`
-    : `${items.length} ${plural(items.length, 'příkaz', 'příkazy', 'příkazů')} – šipky vyberou, Enter nebo Tab vloží, Esc zavře.`;
+    ? _t('{0} {1} – šipky vyberou, Enter nebo Tab vloží, Esc zavře.', items.length, plural(items.length, 'soubor', 'soubory', 'souborů'))
+    : _t('{0} {1} – šipky vyberou, Enter nebo Tab vloží, Esc zavře.', items.length, plural(items.length, 'příkaz', 'příkazy', 'příkazů'));
 }
 function markSlash() {
   SL.items.forEach((it, i) => it.node.setAttribute('aria-selected', i === SL.sel ? 'true' : 'false'));
@@ -2474,19 +2490,19 @@ function renderQueue() {
   box.hidden = false;
 
   const head = el('div', 'queue-head');
-  head.appendChild(el('span', 'eyebrow', `Fronta (${q.length})`));
+  head.appendChild(el('span', 'eyebrow', _t('Fronta ({0})', q.length)));
   let state = '';
   if (q.length) {
-    state = q.paused ? `Pozastaveno – ${q.pauseText}` : S.queueWaitingEdit ? 'Čeká na dokončení úprav.'
-      : S.run ? 'Odešle se postupně po dokončení běhu.' : 'Čeká.';
+    state = q.paused ? _t('Pozastaveno – {0}', q.pauseText) : S.queueWaitingEdit ? _t('Čeká na dokončení úprav.')
+      : S.run ? _t('Odešle se postupně po dokončení běhu.') : _t('Čeká.');
   }
   head.appendChild(el('span', 'queue-state' + (q.paused ? ' paused' : ''), state));
   if (q.length && q.paused && !S.run && q.paused !== 'context')
-    head.appendChild(button('Pokračovat', 'btn-accent btn-small', () => { q.resume(); dispatchNext(); }));
+    head.appendChild(button(_t('Pokračovat'), 'btn-accent btn-small', () => { q.resume(); dispatchNext(); }));
   if (q.length && !q.paused && S.run)
-    head.appendChild(button('Pozastavit', 'btn-ghost btn-small', () => { q.pause('manual'); renderQueue(); }));
+    head.appendChild(button(_t('Pozastavit'), 'btn-ghost btn-small', () => { q.pause('manual'); renderQueue(); }));
   if (q.length)
-    head.appendChild(button('Vyprázdnit', 'btn-ghost btn-small', () => {
+    head.appendChild(button(_t('Vyprázdnit'), 'btn-ghost btn-small', () => {
       for (const it of q.items) for (const f of it.attachments) deleteAttachment(f.id);
       q.clear(); S.queueEdit = null; S.queueWaitingEdit = false; S.queueNotice = null; renderQueue();
     }));
@@ -2501,7 +2517,7 @@ function renderQueue() {
       const ta = el('textarea', 'queue-edit');
       ta.value = it.prompt;
       ta.rows = 3;
-      ta.setAttribute('aria-label', `Upravit zprávu ${idx + 1}`);
+      ta.setAttribute('aria-label', _t('Upravit zprávu {0}', idx + 1));
       const save = () => {
         try { q.update(it.id, ta.value); S.queueNotice = null; } catch (e) { S.queueNotice = e.message; renderQueue(); return; }
         finishQueueEdit();
@@ -2512,7 +2528,7 @@ function renderQueue() {
         listKeydown(e);
       });
       const actions = el('span', 'queue-tools');
-      actions.append(button('Uložit', 'btn-accent btn-small', save), button('Zrušit', 'btn-ghost btn-small', finishQueueEdit));
+      actions.append(button(_t('Uložit'), 'btn-accent btn-small', save), button(_t('Zrušit'), 'btn-ghost btn-small', finishQueueEdit));
       li.append(ta, actions);
       ol.appendChild(li);
       setTimeout(() => ta.focus(), 0);
@@ -2520,7 +2536,7 @@ function renderQueue() {
     }
     const handle = el('span', 'queue-handle', '⠿');
     handle.draggable = true;
-    handle.title = 'Přetáhněte pro změnu pořadí (klávesnicí šipkami)';
+    handle.title = _t('Přetáhněte pro změnu pořadí (klávesnicí šipkami)');
     handle.setAttribute('aria-hidden', 'true');
     handle.addEventListener('dragstart', (e) => {
       S.queueDrag = it.id;
@@ -2563,10 +2579,10 @@ function renderQueue() {
       return b;
     };
     tools.append(
-      tool('↑', 'up', `Posunout zprávu ${idx + 1} výš`, () => { q.move(it.id, -1); renderQueue(); }, idx === 0),
-      tool('↓', 'down', `Posunout zprávu ${idx + 1} níž`, () => { q.move(it.id, 1); renderQueue(); }, idx === q.length - 1),
-      tool('✎', 'edit', `Upravit zprávu ${idx + 1}`, () => { S.queueEdit = it.id; renderQueue(); }),
-      tool('↩', 'back', `Vrátit zprávu ${idx + 1} do pole pro psaní`, () => {
+      tool('↑', 'up', _t('Posunout zprávu {0} výš', idx + 1), () => { q.move(it.id, -1); renderQueue(); }, idx === 0),
+      tool('↓', 'down', _t('Posunout zprávu {0} níž', idx + 1), () => { q.move(it.id, 1); renderQueue(); }, idx === q.length - 1),
+      tool('✎', 'edit', _t('Upravit zprávu {0}', idx + 1), () => { S.queueEdit = it.id; renderQueue(); }),
+      tool('↩', 'back', _t('Vrátit zprávu {0} do pole pro psaní', idx + 1), () => {
         const ta = $('#prompt');
         ta.value = ta.value.trim() ? `${ta.value.replace(/\s+$/, '')}\n\n${it.prompt}` : it.prompt;
         for (const f of it.attachments) if (!S.pending.some((x) => x.id === f.id)) S.pending.push({ ...f, status: 'ok' });
@@ -2576,9 +2592,9 @@ function renderQueue() {
         renderAttachments();
         ta.focus();
         saveDraft();
-        announce('Zpráva vrácena do pole pro psaní.');
+        announce(_t('Zpráva vrácena do pole pro psaní.'));
       }),
-      tool('✕', 'remove', `Odebrat zprávu ${idx + 1}`, () => {
+      tool('✕', 'remove', _t('Odebrat zprávu {0}', idx + 1), () => {
         // Po smazání zůstat na sousední zprávě (další, jinak předchozí).
         const neighbour = q.items[idx + 1] ?? q.items[idx - 1];
         S.queueFocus = neighbour ? { id: neighbour.id, action: 'remove' } : null;
@@ -2637,16 +2653,16 @@ function handleEvent(ev, run, state) {
       rememberMcp(ev, run);
       markCurrentSession();
       $('#foot-model').textContent = `${ev.model || ''} • ${ev.permissionMode || ''}`
-        + (run.effort ? ` • effort ${run.effort} (požadováno)` : '') + ` • v${ev.version || ''}`
-        + (run.warm ? ' • navázáno na běžící proces' : '') + mcpFoot(ev.mcpServers);
-      setStatus(run.mode === 'plan' ? 'Claude plánuje…' : 'Claude pracuje…', true);
+        + (run.effort ? _t(' • effort {0} (požadováno)', run.effort) : '') + ` • v${ev.version || ''}`
+        + (run.warm ? _t(' • navázáno na běžící proces') : '') + mcpFoot(ev.mcpServers);
+      setStatus(run.mode === 'plan' ? _t('Claude plánuje…') : _t('Claude pracuje…'), true);
       break;
     case 'text_delta': {
       if (ev.parent) break;
       const b = textBlock(state, ev.messageId, ev.index);
       b.raw += ev.text || '';
       scheduleRender(b);
-      setStatus('Claude píše…', true);
+      setStatus(_t('Claude píše…'), true);
       break;
     }
     case 'commands':
@@ -2691,10 +2707,10 @@ function handleEvent(ev, run, state) {
     case 'tool_start': {
       if (ev.parent && agentEvent(ev)) break;
       if (TASK_TOOLS.has(ev.name)) break;
-      if (!ev.parent && AGENT_TOOLS.has(ev.name)) { agentCard(ev.id); setStatus('Claude spouští agenta…', true); break; }
+      if (!ev.parent && AGENT_TOOLS.has(ev.name)) { agentCard(ev.id); setStatus(_t('Claude spouští agenta…'), true); break; }
       const t = toolCard(ev.id, ev.name, ev.parent);
       t.nm.textContent = ev.name;
-      setStatus(`Nástroj ${ev.name}…`, true);
+      setStatus(_t('Nástroj {0}…', ev.name), true);
       break;
     }
     case 'tool_use': {
@@ -2703,7 +2719,7 @@ function handleEvent(ev, run, state) {
       if (!ev.parent && AGENT_TOOLS.has(ev.name)) {
         const a = agentCard(ev.id, ev.input);
         const desc = (ev.input && ev.input.description) || '';
-        a.t.nm.textContent = desc ? `Agent · ${desc}` : 'Agent';
+        a.t.nm.textContent = desc ? _t('Agent · {0}', desc) : 'Agent';
         a.t.sm.textContent = '';
         break;
       }
@@ -2716,7 +2732,7 @@ function handleEvent(ev, run, state) {
       if (progressToolResult(ev.id, ev.content, ev.isError)) break;
       const t = tools.get(ev.id);
       if (t) { fillToolResult(t, ev); tools.delete(ev.id); } // výsledek přijde jen jednou
-      setStatus('Claude pracuje…', true);
+      setStatus(_t('Claude pracuje…'), true);
       break;
     }
     case 'rate_limit':
@@ -2725,8 +2741,8 @@ function handleEvent(ev, run, state) {
       else if (ev.status === 'allowed_warning') {
         const pct = ev.utilization != null ? ` (${Math.round(ev.utilization * 100)} %)` : '';
         const acc = accountById(run.account);
-        showBanner('warn', [el('strong', null, `Účet ${acc ? acc.label : ''} se blíží limitu${pct}.`),
-          document.createTextNode(ev.resetsAt ? ` Obnova v ${fmtTime(ev.resetsAt)}.` : '')], []);
+        showBanner('warn', [el('strong', null, _t('Účet {0} se blíží limitu{1}.', acc ? acc.label : '', pct)),
+          document.createTextNode(ev.resetsAt ? _t(' Obnova v {0}.', fmtTime(ev.resetsAt)) : '')], []);
       }
       break;
     case 'user_replay':
@@ -2735,15 +2751,15 @@ function handleEvent(ev, run, state) {
       if (run.replays === 1) attachUuid(run.bubble, ev.uuid);
       if (run.replays > 1) {
         const st = run.injectedBubbles.shift();
-        if (st) { st.textContent = 'Claude si zprávu přečetl'; attachUuid(st.closest('.msg'), ev.uuid); }
+        if (st) { st.textContent = _t('Claude si zprávu přečetl'); attachUuid(st.closest('.msg'), ev.uuid); }
       }
       break;
     case 'retry':
-      setStatus(`API hlásí chybu, zkouším znovu (pokus ${ev.attempt ?? '?'})…`, true);
+      setStatus(_t('API hlásí chybu, zkouším znovu (pokus {0})…', ev.attempt ?? '?'), true);
       break;
     case 'plan':
       run.sawPlan = true;
-      showPlanCard(ev.content, 'Plán ke schválení');
+      showPlanCard(ev.content, _t('Plán ke schválení'));
       break;
     case 'result': {
       run.resultText = ev.result;
@@ -2754,10 +2770,10 @@ function handleEvent(ev, run, state) {
       if ($('#overviewdlg').open) loadOverview();
       const looksLikeLimit = ev.isError && (ev.apiErrorStatus === 429 || /limit|rate.?limit|usage/i.test(ev.result || ''));
       if (looksLikeLimit && !run.limitShown) { run.limitShown = true; showLimit(run.account, null, ev.result); }
-      else if (ev.isError && !run.limitShown && !ev.interrupted) showError(`Claude skončil s chybou (${ev.subtype || 'error'})`, ev.result || '');
+      else if (ev.isError && !run.limitShown && !ev.interrupted) showError(_t('Claude skončil s chybou ({0})', ev.subtype || 'error'), ev.result || '');
       if (ev.denials && ev.denials.length) {
         const names = [...new Set(ev.denials.map((d) => d.toolName))].join(', ');
-        append(el('div', 'msg msg--note', `Zamítnuto ${ev.denials.length}× (${names}) – ${run.mode === 'plan' ? 'režim Plán nic nemění' : 'oprávnění'}.`));
+        append(el('div', 'msg msg--note', _t('Zamítnuto {0}× ({1}) – {2}.', ev.denials.length, names, run.mode === 'plan' ? _t('režim Plán nic nemění') : _t('oprávnění'))));
       }
       break;
     }
@@ -2768,27 +2784,27 @@ function handleEvent(ev, run, state) {
       const box = [...document.querySelectorAll('.perm')].find((b) => b.dataset.requestId === ev.requestId);
       resolvePermissionCard(box, ev.decision);
       run.pendingPermissions = Math.max(0, (run.pendingPermissions || 0) - 1);
-      if (!run.pendingPermissions) setStatus(run.mode === 'plan' ? 'Claude plánuje…' : 'Claude pracuje…', true);
+      if (!run.pendingPermissions) setStatus(run.mode === 'plan' ? _t('Claude plánuje…') : _t('Claude pracuje…'), true);
       break;
     }
     case 'exit':
       for (const b of document.querySelectorAll('.perm:not([data-state="resolved"])')) resolvePermissionCard(b, ev.stopped ? 'deny' : 'timeout');
-      for (const st of run.injectedBubbles.splice(0)) st.textContent = 'Claude zprávu nestihl převzít – pošlete ji prosím znovu.';
+      for (const st of run.injectedBubbles.splice(0)) st.textContent = _t('Claude zprávu nestihl převzít – pošlete ji prosím znovu.');
       run.outcome = ev.stopped ? 'stopped' : run.limitShown ? 'limit'
         : (ev.code !== 0 || run.resultError || run.hadError) ? 'error' : run.mode === 'plan' ? 'plan' : 'ok';
-      if (ev.stopped) { append(el('div', 'msg msg--note', 'Zastaveno.')); setStatus('Zastaveno.'); }
-      else if (ev.code !== 0 && ev.stderr && !run.limitShown) showError(`claude skončil kódem ${ev.code}`, ev.stderr);
-      else setStatus('Hotovo.');
+      if (ev.stopped) { append(el('div', 'msg msg--note', _t('Zastaveno.'))); setStatus(_t('Zastaveno.')); }
+      else if (ev.code !== 0 && ev.stderr && !run.limitShown) showError(_t('claude skončil kódem {0}', ev.code), ev.stderr);
+      else setStatus(_t('Hotovo.'));
       if (PR.tasks.length && !PR.tasks.every((t) => t.status === 'completed'))
-        PR.stopped = ev.stopped ? 'Zastaveno.' : run.limitShown ? 'Přerušeno limitem účtu.' : 'Claude skončil před koncem seznamu – pokračujte další zprávou.';
+        PR.stopped = ev.stopped ? _t('Zastaveno.') : run.limitShown ? _t('Přerušeno limitem účtu.') : _t('Claude skončil před koncem seznamu – pokračujte další zprávou.');
       renderProgress();
       // Plan bez souboru plánu → plán je text odpovědi.
-      if (run.mode === 'plan' && !run.sawPlan && !ev.stopped && !run.resultError && run.resultText) showPlanCard(null, 'Plán je výše – schválit?', run.resultText);
+      if (run.mode === 'plan' && !run.sawPlan && !ev.stopped && !run.resultError && run.resultText) showPlanCard(null, _t('Plán je výše – schválit?'), run.resultText);
       if (ev.kept) setTimeout(loadContext, 300);
       break;
     case 'error':
       run.hadError = true;
-      showError('Chyba běhu', ev.message);
+      showError(_t('Chyba běhu'), _tr(ev.message));
       break;
   }
 }
@@ -2796,7 +2812,7 @@ function handleEvent(ev, run, state) {
 async function stop() {
   const run = S.run;
   if (!run) return;
-  setStatus('Zastavuji…', true);
+  setStatus(_t('Zastavuji…'), true);
   if (run.runId) {
     try { await api(`/api/runs/${run.runId}/stop`, { method: 'POST' }); } catch { }
   } else run.controller.abort();
@@ -2824,7 +2840,7 @@ function progressToolUse(name, id, input) {
   if (name === 'TaskCreate') {
     // Nový seznam, když je předchozí celý hotový.
     if (PR.tasks.length && PR.tasks.every((t) => t.status === 'completed')) { PR.tasks = []; PR.hidden = false; }
-    PR.pending.set(id, String(i.subject || i.description || 'Krok').slice(0, 200));
+    PR.pending.set(id, String(i.subject || i.description || _t('Krok')).slice(0, 200));
   } else if (name === 'TaskUpdate') {
     const t = PR.tasks.find((x) => x.id === String(i.taskId));
     if (!t) return;
@@ -2847,7 +2863,7 @@ function progressToolResult(id, content, isError) {
   if (m && !isError && !PR.tasks.some((t) => t.id === m[1])) { PR.tasks.push({ id: m[1], text, status: 'pending' }); PR.stopped = null; renderProgress(); }
   return true;
 }
-const fmtDur = (ms) => (ms < 60_000 ? `${Math.max(1, Math.round(ms / 1000))} s` : `${Math.round(ms / 60_000)} min`);
+const fmtDur = (ms) => (ms < 60_000 ? `${Math.max(1, Math.round(ms / 1000))} s` : _t('{0} min', Math.round(ms / 60_000)));
 
 function renderProgress() {
   const panel = $('#progress'), foot = $('#foot-progress');
@@ -2862,16 +2878,16 @@ function renderProgress() {
   const tick = (running && has) || bgCount > 0;
   if (tick && !PR.timer) PR.timer = setInterval(() => { renderProgress(); renderBackground(); }, 5000);
   if (!tick && PR.timer) { clearInterval(PR.timer); PR.timer = null; }
-  const label = !has ? '' : info.done ? 'hotovo' : info.current >= 0 ? `krok ${info.current + 1} z ${info.total}` : `${info.completed} z ${info.total}`;
-  foot.textContent = has ? `Průběh: ${label} · ${info.percent} %${bgCount ? ` · na pozadí ${bgCount}` : ''}` : `Na pozadí: ${bgCount}`;
+  const label = !has ? '' : info.done ? _t('hotovo') : info.current >= 0 ? _t('krok {0} z {1}', info.current + 1, info.total) : `${info.completed} z ${info.total}`;
+  foot.textContent = has ? _t('Průběh: {0} · {1} %{2}', label, info.percent, bgCount ? _t(' · na pozadí {0}', bgCount) : '') : _t('Na pozadí: {0}', bgCount);
   foot.setAttribute('aria-expanded', String(!panel.hidden));
-  foot.title = panel.hidden ? 'Ukázat průběh' : 'Skrýt průběh';
+  foot.title = panel.hidden ? _t('Ukázat průběh') : _t('Skrýt průběh');
   if (!has) return;
   $('#progress-pct').textContent = `${info.percent} %`;
   const first = PR.tasks.find((t) => t.start)?.start;
   const last = Math.max(0, ...PR.tasks.map((t) => t.end || 0));
-  $('#progress-eta').textContent = info.done ? `hotovo${first && last ? ` za ${fmtDur(last - first)}` : ''}`
-    : !running ? '' : info.etaMs != null ? `zbývá ${Review.fmtEta(info.etaMs)}` : 'odhad po prvním kroku';
+  $('#progress-eta').textContent = info.done ? _t('hotovo{0}', first && last ? _t(' za {0}', fmtDur(last - first)) : '')
+    : !running ? '' : info.etaMs != null ? _t('zbývá {0}', Review.fmtEta(info.etaMs)) : _t('odhad po prvním kroku');
   const bar = $('#progress-bar');
   bar.setAttribute('aria-valuenow', String(info.percent));
   bar.setAttribute('aria-valuetext', `${label}, ${info.percent} %`);
@@ -2886,7 +2902,7 @@ function renderProgress() {
     if (state === 'current') li.setAttribute('aria-current', 'step');
     const num = el('span', 'progress-num', state === 'done' ? '✓' : String(n));
     num.setAttribute('aria-hidden', 'true');
-    li.append(num, el('span', 'sr-only', state === 'done' ? `${n}, hotovo: ` : state === 'current' ? `${n}, právě teď: ` : `${n}: `),
+    li.append(num, el('span', 'sr-only', state === 'done' ? _t('{0}, hotovo: ', n) : state === 'current' ? _t('{0}, právě teď: ', n) : `${n}: `),
       el('span', 'progress-text', t.text));
     if (t.start && t.end) li.appendChild(el('span', 'progress-time', fmtDur(t.end - t.start)));
     else if (t.start && state === 'current' && running) li.appendChild(el('span', 'progress-time', fmtDur(Date.now() - t.start)));
@@ -2894,7 +2910,7 @@ function renderProgress() {
   });
   $('#progress-note').textContent = info.done ? '' : PR.stopped || '';
   const cur = info.current >= 0 ? PR.tasks[info.current] : null;
-  const say = info.done ? 'Průběh: hotovo.' : cur ? `Krok ${info.current + 1} z ${info.total}: ${cur.text}` : '';
+  const say = info.done ? _t('Průběh: hotovo.') : cur ? _t('Krok {0} z {1}: {2}', info.current + 1, info.total, cur.text) : '';
   if (say && say !== PR.said) { PR.said = say; $('#progress-status').textContent = say; }
 }
 
@@ -2906,7 +2922,7 @@ async function restoreProgress(id) {
     PR.tasks = o.todos.map((t, i) => ({ id: `h${i}`, text: t.content, status: t.status }));
     const done = PR.tasks.every((t) => t.status === 'completed');
     PR.hidden = done;
-    PR.stopped = done ? null : 'Rozpracovaný seznam z dřívějška.';
+    PR.stopped = done ? null : _t('Rozpracovaný seznam z dřívějška.');
     renderProgress();
   } catch { /* přehled nejde načíst – nevadí */ }
 }
@@ -2921,7 +2937,7 @@ const DRAFTS_KEY = 'acd.drafts';
 const DRAFTS_ON_KEY = 'acd.drafts.on';
 const DRAFT_MAX = 30, DRAFT_DAYS = 30, DRAFT_CHARS = 20_000;
 const draftsOn = () => load(DRAFTS_ON_KEY) !== '0';
-const draftKey = () => `${S.account}|${S.project}|${S.sessionId || 'nové'}`;
+const draftKey = () => `${S.account}|${S.project}|${S.sessionId || _t('nové')}`;
 const DR = { timer: null, skip: false };
 function readDrafts() {
   try { const o = JSON.parse(load(DRAFTS_KEY) || '{}'); return o && typeof o === 'object' && !Array.isArray(o) ? o : {}; } catch { return {}; }
@@ -2949,25 +2965,25 @@ function restoreDraft() {
   const d = draftsOn() ? readDrafts()[draftKey()] : null;
   $('#prompt').value = d ? d.text : '';
   autoGrow();
-  if (d) setStatus('Obnovena rozepsaná zpráva.');
+  if (d) setStatus(_t('Obnovena rozepsaná zpráva.'));
 }
 const hasDraft = (id) => draftsOn() && !!readDrafts()[`${S.account}|${S.project}|${id}`];
 function markDraftInList(id, on) {
   const meta = document.querySelector(`#sessions button[data-id="${CSS.escape(id)}"] .s-meta`);
   if (!meta) return;
-  meta.textContent = meta.textContent.replace(/ • koncept$/, '') + (on ? ' • koncept' : '');
+  meta.textContent = meta.textContent.replace(/ • (koncept|draft)$/, '') + (on ? _t(' • koncept') : '');
 }
 
 /* ---------- Po obnovení limitu automaticky pokračovat (jako Claude Code; vypnout jde v Nastavení) ---------- */
 const AUTO_KEY = 'acd.autocontinue';
 const autoOn = () => load(AUTO_KEY) !== '0';
-const CONTINUE_PROMPT = 'Pokračuj tam, kde jsi skončil – předtím tě zastavil limit účtu.';
+const CONTINUE_PROMPT = _t('Pokračuj tam, kde jsi skončil – předtím tě zastavil limit účtu.');
 const AC_MAX_TRIES = 3;
 const AC = { timer: null, at: 0, ctx: null, attempts: {} };
 function fmtLeft(ms) {
-  if (ms <= 60_000) return 'chvíli';
+  if (ms <= 60_000) return _t('chvíli');
   const m = Math.round(ms / 60_000);
-  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`;
+  return m < 60 ? _t('{0} min', m) : _t('{0} h {1} min', Math.floor(m / 60), m % 60);
 }
 function scheduleContinue(run) {
   cancelContinue();
@@ -2976,8 +2992,8 @@ function scheduleContinue(run) {
   const resetsAt = run.limitResetsAt || (lim && lim.resetsAt);
   if (!autoOn() || !resetsAt || !sid) return;
   const tries = AC.attempts[sid] || 0;
-  if (tries >= AC_MAX_TRIES) { showBanner('err', [el('strong', null, 'Automatické pokračování vzdávám'),
-    document.createTextNode(` – limit trvá i po ${tries} pokusech. Pokračujte ručně.`)], []); return; }
+  if (tries >= AC_MAX_TRIES) { showBanner('err', [el('strong', null, _t('Automatické pokračování vzdávám')),
+    document.createTextNode(_t(' – limit trvá i po {0} pokusech. Pokračujte ručně.', tries))], []); return; }
   AC.attempts[sid] = tries + 1;
   AC.ctx = { account: run.account, project: S.project, sessionId: sid, mode: run.mode, model: run.model, effort: run.effort };
   // Minuta rezervy po obnovení; čas v minulosti → za 5 minut.
@@ -2998,8 +3014,8 @@ function tickContinue() {
   const c = AC.ctx;
   cancelContinue();
   if (!c || c.account !== S.account || c.project !== S.project || c.sessionId !== S.sessionId) return;
-  notify('Pokračuji po obnovení limitu', CONTINUE_PROMPT, 'ok');
-  announce('Limit účtu se obnovil – pokračuji.');
+  notify(_t('Pokračuji po obnovení limitu'), CONTINUE_PROMPT, 'ok');
+  announce(_t('Limit účtu se obnovil – pokračuji.'));
   startRun(CONTINUE_PROMPT, c.mode, [], { model: c.model, effort: c.effort }, { auto: true });
 }
 
@@ -3017,11 +3033,11 @@ function runFlags(run) {
 function renderForkNote() {
   const n = $('#fork-note');
   n.hidden = !S.forkNext;
-  if (S.forkNext) $('#fork-note-text').textContent = 'Další zpráva pokračuje v kopii tohoto sezení – původní zůstane beze změny.';
+  if (S.forkNext) $('#fork-note-text').textContent = _t('Další zpráva pokračuje v kopii tohoto sezení – původní zůstane beze změny.');
 }
 function forkSession(id) {
   if (S.run) return;
-  const go = () => { S.forkNext = true; renderForkNote(); $('#prompt').focus(); announce('Další zpráva vytvoří kopii sezení.'); };
+  const go = () => { S.forkNext = true; renderForkNote(); $('#prompt').focus(); announce(_t('Další zpráva vytvoří kopii sezení.')); };
   if (id && id !== S.sessionId) openSession(id).then(go); else if (S.sessionId) go();
 }
 
@@ -3037,7 +3053,7 @@ function agentCard(id, input) {
     if (input && input.prompt && !a.t.body.querySelector('.agent-prompt')) {
       if (input.subagent_type) { a.info.type = input.subagent_type; renderAgentMeta(a); }
       const p = el('details', 'agent-prompt');
-      p.appendChild(el('summary', null, 'Zadání agenta'));
+      p.appendChild(el('summary', null, _t('Zadání agenta')));
       p.appendChild(el('pre', null, String(input.prompt).slice(0, 4000)));
       a.t.body.insertBefore(p, a.log);
     }
@@ -3048,11 +3064,11 @@ function agentCard(id, input) {
   const meta = el('span', 'agent-meta');
   t.d.querySelector('summary').insertBefore(meta, t.badge);
   const log = el('ol', 'agent-log');
-  log.setAttribute('aria-label', 'Co agent dělá');
+  log.setAttribute('aria-label', _t('Co agent dělá'));
   t.body.textContent = '';
   if (input && input.prompt) {
     const p = el('details', 'agent-prompt');
-    p.appendChild(el('summary', null, 'Zadání agenta'));
+    p.appendChild(el('summary', null, _t('Zadání agenta')));
     p.appendChild(el('pre', null, String(input.prompt).slice(0, 4000)));
     t.body.appendChild(p);
   }
@@ -3065,7 +3081,7 @@ function agentCard(id, input) {
 function renderAgentMeta(a) {
   const i = a.info;
   const parts = [i.type, i.tools ? `${i.tools} ${plural(i.tools, 'nástroj', 'nástroje', 'nástrojů')}` : '',
-    i.tokens ? `${fmtTok(i.tokens)} tokenů` : '', i.ms ? fmtDur(i.ms) : '', i.background ? 'na pozadí' : ''].filter(Boolean);
+    i.tokens ? _t('{0} tokenů', fmtTok(i.tokens)) : '', i.ms ? fmtDur(i.ms) : '', i.background ? _t('na pozadí') : ''].filter(Boolean);
   a.meta.textContent = parts.join(' · ');
 }
 /** Událost z agenta (parent = id nástroje Agent). @returns {boolean} true = zpracováno v kartě agenta */
@@ -3108,14 +3124,14 @@ function taskEvent(ev, run) {
     if (ev.lastTool && ev.phase === 'progress' && !a.lines.size) a.t.sm.textContent = ev.description || ev.lastTool;
     if (ev.phase === 'notification' || (ev.phase === 'updated' && ev.status && ev.status !== 'running')) {
       a.t.d.dataset.state = ev.status === 'completed' ? 'ok' : 'error';
-      a.t.badge.textContent = ev.status === 'completed' ? 'hotovo' : ev.status === 'stopped' || ev.status === 'killed' ? 'zastaveno' : 'chyba';
+      a.t.badge.textContent = ev.status === 'completed' ? _t('hotovo') : ev.status === 'stopped' || ev.status === 'killed' ? _t('zastaveno') : _t('chyba');
     }
     renderAgentMeta(a);
   }
   // Panel „Na pozadí“: jen to, co Claude pustil na pozadí (příkazy i agenti).
   if (ev.phase === 'started' && ev.background) {
     BG.tasks.set(ev.taskId, { description: ev.description || ev.taskId, type: ev.taskType, start: Date.now(), status: 'running', runId: run.runId });
-    if (a) { a.t.badge.textContent = 'na pozadí'; }
+    if (a) { a.t.badge.textContent = _t('na pozadí'); }
   } else if (BG.tasks.has(ev.taskId) && (ev.phase === 'notification' || (ev.phase === 'updated' && ev.status && ev.status !== 'running'))) {
     const t = BG.tasks.get(ev.taskId);
     t.status = ev.status || 'completed';
@@ -3135,16 +3151,16 @@ function renderBackground() {
     li.dataset.state = t.status;
     const main = el('span', 'bg-main');
     main.append(el('span', 'bg-desc', t.description),
-      el('span', 'bg-meta', `${t.type === 'local_agent' ? 'agent' : 'příkaz'} · ${t.status === 'running' ? `běží ${fmtDur(Date.now() - t.start)}`
-        : t.status === 'completed' ? 'hotovo' : 'zastaveno'}`));
+      el('span', 'bg-meta', `${t.type === 'local_agent' ? _t('agent') : _t('příkaz')} · ${t.status === 'running' ? _t('běží {0}', fmtDur(Date.now() - t.start))
+        : t.status === 'completed' ? _t('hotovo') : _t('zastaveno')}`));
     li.appendChild(main);
     if (t.status === 'running' && S.run && S.run.runId === t.runId) {
-      const stopBtn = button('Zastavit', 'btn-ghost btn-small', async () => {
+      const stopBtn = button(_t('Zastavit'), 'btn-ghost btn-small', async () => {
         stopBtn.disabled = true;
-        try { await apiJson(`/api/runs/${t.runId}/task-stop`, { method: 'POST', body: { taskId: id } }); announce(`Zastavuji: ${t.description}`); }
-        catch (e) { stopBtn.disabled = false; showError('Úlohu nejde zastavit', e.message); }
+        try { await apiJson(`/api/runs/${t.runId}/task-stop`, { method: 'POST', body: { taskId: id } }); announce(_t('Zastavuji: {0}', t.description)); }
+        catch (e) { stopBtn.disabled = false; showError(_t('Úlohu nejde zastavit'), e.message); }
       });
-      stopBtn.setAttribute('aria-label', `Zastavit ${t.description}`);
+      stopBtn.setAttribute('aria-label', _t('Zastavit {0}', t.description));
       li.appendChild(stopBtn);
     }
     ul.appendChild(li);
@@ -3168,8 +3184,8 @@ function showQuestionCard(ev, run) {
   const box = el('div', 'perm question');
   box.dataset.requestId = ev.requestId;
   box.setAttribute('role', 'group');
-  box.setAttribute('aria-label', 'Claude se ptá');
-  box.appendChild(el('div', 'eyebrow', 'Claude se ptá'));
+  box.setAttribute('aria-label', _t('Claude se ptá'));
+  box.appendChild(el('div', 'eyebrow', _t('Claude se ptá')));
   const groups = [];
   ev.questions.forEach((q, qi) => {
     const fs = el('fieldset', 'question-set');
@@ -3190,8 +3206,8 @@ function showQuestionCard(ev, run) {
     const other = el('input', 'question-other');
     other.type = 'text';
     other.maxLength = 2000;
-    other.placeholder = 'Jiná odpověď (napište vlastní)';
-    other.setAttribute('aria-label', `Jiná odpověď na: ${q.question}`);
+    other.placeholder = _t('Jiná odpověď (napište vlastní)');
+    other.setAttribute('aria-label', _t('Jiná odpověď na: {0}', q.question));
     fs.appendChild(other);
     box.appendChild(fs);
     groups.push({ q, inputs, other });
@@ -3206,7 +3222,7 @@ function showQuestionCard(ev, run) {
         const picked = g.inputs.filter((i) => i.checked).map((i) => i.value);
         const own = g.other.value.trim();
         const val = own || picked.join(', ');
-        if (!val) { msg.textContent = 'Vyberte odpověď u každé otázky, nebo napište vlastní.'; (g.inputs[0] || g.other).focus(); return; }
+        if (!val) { msg.textContent = _t('Vyberte odpověď u každé otázky, nebo napište vlastní.'); (g.inputs[0] || g.other).focus(); return; }
         answers[g.q.question] = val;
       }
     }
@@ -3214,19 +3230,19 @@ function showQuestionCard(ev, run) {
     try {
       await apiJson(`/api/runs/${encodeURIComponent(run.runId)}/permission`, { method: 'POST', body: { requestId: ev.requestId, decision, answers } });
       box.dataset.state = 'resolved';
-      msg.textContent = decision === 'answer' ? `Odpověď: ${Object.values(answers).join(' / ')}` : 'Bez odpovědi – Claude pokračuje sám.';
+      msg.textContent = decision === 'answer' ? _t('Odpověď: {0}', Object.values(answers).join(' / ')) : _t('Bez odpovědi – Claude pokračuje sám.');
       $('#prompt').focus({ preventScroll: true });
     } catch (e) { for (const b of actions.querySelectorAll('button')) b.disabled = false; msg.textContent = e.message; }
   };
-  const ok = button('Odpovědět', 'btn-accent btn-small', () => send('answer'));
-  actions.append(ok, button('Neodpovídat', 'btn-ghost btn-small', () => send('deny')));
+  const ok = button(_t('Odpovědět'), 'btn-accent btn-small', () => send('answer'));
+  actions.append(ok, button(_t('Neodpovídat'), 'btn-ghost btn-small', () => send('deny')));
   box.append(actions, msg);
   append(box, true);
   run.pendingPermissions = (run.pendingPermissions || 0) + 1;
-  setStatus('Claude čeká na vaši odpověď…', true);
+  setStatus(_t('Claude čeká na vaši odpověď…'), true);
   if (!isTyping()) (groups[0].inputs[0] || groups[0].other).focus({ preventScroll: true });
-  announce(`Claude se ptá: ${ev.questions.map((q) => q.question).join(' ')}`);
-  notify('Claude se ptá', ev.questions[0].question, 'plan');
+  announce(_t('Claude se ptá: {0}', ev.questions.map((q) => q.question).join(' ')));
+  notify(_t('Claude se ptá'), ev.questions[0].question, 'plan');
 }
 
 /* ---------- Návrat souborů k dřívější zprávě (jako Esc Esc / /rewind) ---------- */
@@ -3235,36 +3251,36 @@ function attachUuid(bubble, uuid) {
   bubble.dataset.uuid = uuid;
   const b = el('button', 'msg-rewind', '↶');
   b.type = 'button';
-  b.title = 'Vrátit soubory projektu do stavu před touto zprávou';
-  b.setAttribute('aria-label', 'Vrátit soubory do stavu před touto zprávou');
+  b.title = _t('Vrátit soubory projektu do stavu před touto zprávou');
+  b.setAttribute('aria-label', _t('Vrátit soubory do stavu před touto zprávou'));
   b.addEventListener('click', () => rewindTo(uuid, b));
   bubble.appendChild(b);
 }
 async function rewindTo(uuid, btn) {
-  if (S.run) { showBanner('warn', [document.createTextNode('Soubory jde vrátit, až Claude doběhne.')], []); return; }
+  if (S.run) { showBanner('warn', [document.createTextNode(_t('Soubory jde vrátit, až Claude doběhne.'))], []); return; }
   if (!S.sessionId) return;
   const url = `/api/sessions/${encodeURIComponent(S.sessionId)}/rewind?account=${encodeURIComponent(S.account)}&project=${encodeURIComponent(S.project)}`;
   btn.disabled = true;
-  setStatus('Zjišťuji, co se změní…', true);
+  setStatus(_t('Zjišťuji, co se změní…'), true);
   let r;
   try { r = await apiJson(url, { method: 'POST', body: { messageId: uuid, dryRun: true } }); }
-  catch (e) { setStatus(''); btn.disabled = false; showError('Návrat nejde zjistit', e.message); return; }
+  catch (e) { setStatus(''); btn.disabled = false; showError(_t('Návrat nejde zjistit'), e.message); return; }
   setStatus('');
   btn.disabled = false;
   if (!r.canRewind || !r.files.length) {
-    showBanner('warn', [document.createTextNode(r.error && !/checkpoint/i.test(r.error) ? r.error
-      : 'K této zprávě není co vracet – od ní se nezměnil žádný soubor (nebo změny udělal příkaz v terminálu, ty se nevracejí).')], []);
+    showBanner('warn', [document.createTextNode(r.error && !/checkpoint/i.test(r.error) ? _tr(r.error)
+      : _t('K této zprávě není co vracet – od ní se nezměnil žádný soubor (nebo změny udělal příkaz v terminálu, ty se nevracejí).'))], []);
     return;
   }
-  const list = r.files.slice(0, 20).join('\n') + (r.files.length > 20 ? `\n… a dalších ${r.files.length - 20}` : '');
-  if (!confirm(`Vrátit ${r.files.length} ${plural(r.files.length, 'soubor', 'soubory', 'souborů')} do stavu před touto zprávou?\n\n${list}\n\n`
-    + 'Změny od té doby (i vaše vlastní v těchto souborech) se ztratí. Konverzace zůstane, jak je.')) return;
+  const list = r.files.slice(0, 20).join('\n') + (r.files.length > 20 ? _t('\n… a dalších {0}', r.files.length - 20) : '');
+  if (!confirm(_t('Vrátit {0} {1} do stavu před touto zprávou?\n\n{2}\n\n', r.files.length, plural(r.files.length, 'soubor', 'soubory', 'souborů'), list)
+    + _t('Změny od té doby (i vaše vlastní v těchto souborech) se ztratí. Konverzace zůstane, jak je.'))) return;
   try {
     const d = await apiJson(url, { method: 'POST', body: { messageId: uuid, dryRun: false } });
-    append(el('div', 'msg msg--note', `Soubory vráceny do stavu před vybranou zprávou (${d.files.length || r.files.length} ${plural(r.files.length, 'soubor', 'soubory', 'souborů')}).`), true);
-    announce('Soubory vráceny.');
+    append(el('div', 'msg msg--note', _t('Soubory vráceny do stavu před vybranou zprávou ({0} {1}).', d.files.length || r.files.length, plural(r.files.length, 'soubor', 'soubory', 'souborů'))), true);
+    announce(_t('Soubory vráceny.'));
     loadGit();
-  } catch (e) { showError('Návrat se nepovedl', e.message); }
+  } catch (e) { showError(_t('Návrat se nepovedl'), e.message); }
 }
 
 /* ---------- Kontext (jako /context) a zhuštění (/compact) ---------- */
@@ -3280,7 +3296,7 @@ async function loadContext() {
     CTX.data = c;
     b.hidden = false;
     const pct = Math.round(c.percentage);
-    b.textContent = `Kontext ${pct} %`;
+    b.textContent = _t('Kontext {0} %', pct);
     b.dataset.level = c.autoCompactThreshold && c.totalTokens >= c.autoCompactThreshold * 0.85 ? 'warn' : pct >= 70 ? 'warn' : 'ok';
     if ($('#contextdlg').open) renderContext();
   } catch { if (seq === CTX.seq) b.hidden = true; }
@@ -3288,22 +3304,22 @@ async function loadContext() {
 function renderContext() {
   const c = CTX.data, body = $('#context-body');
   body.textContent = '';
-  if (!c) { body.appendChild(el('p', 'stats-empty', 'Zatím bez údajů.')); return; }
-  body.appendChild(el('p', 'context-sum', `${fmtTok(c.totalTokens)} z ${fmtTok(c.maxTokens)} tokenů (${Math.round(c.percentage)} %)`
+  if (!c) { body.appendChild(el('p', 'stats-empty', _t('Zatím bez údajů.'))); return; }
+  body.appendChild(el('p', 'context-sum', _t('{0} z {1} tokenů ({2} %)', fmtTok(c.totalTokens), fmtTok(c.maxTokens), Math.round(c.percentage))
     + (c.model ? ` · ${c.model.replace(/^claude-/, '')}` : '')));
   const bar = el('span', 'meter-bar');
   bar.setAttribute('role', 'meter'); bar.setAttribute('aria-valuemin', '0'); bar.setAttribute('aria-valuemax', '100');
-  bar.setAttribute('aria-valuenow', String(Math.round(c.percentage))); bar.setAttribute('aria-label', 'Zaplnění kontextu');
+  bar.setAttribute('aria-valuenow', String(Math.round(c.percentage))); bar.setAttribute('aria-label', _t('Zaplnění kontextu'));
   const fill = el('i'); fill.style.width = `${Math.min(100, c.percentage)}%`; bar.appendChild(fill);
   body.appendChild(bar);
   if (c.autoCompact && c.autoCompactThreshold)
-    body.appendChild(el('p', 'stats-empty', `Claude Code konverzaci automaticky zhustí kolem ${fmtTok(c.autoCompactThreshold)} tokenů.`));
+    body.appendChild(el('p', 'stats-empty', _t('Claude Code konverzaci automaticky zhustí kolem {0} tokenů.', fmtTok(c.autoCompactThreshold))));
   const t = el('table', 'stats-table');
-  t.appendChild(el('caption', null, 'Co zabírá místo'));
+  t.appendChild(el('caption', null, _t('Co zabírá místo')));
   const tb = el('tbody');
   for (const x of c.categories.filter((x) => x.tokens > 0)) {
     const tr = el('tr');
-    const th = el('th', null, x.name + (x.deferred ? ' (načte se až při použití)' : '')); th.scope = 'row';
+    const th = el('th', null, x.name + (x.deferred ? _t(' (načte se až při použití)') : '')); th.scope = 'row';
     tr.append(th, el('td', null, fmtNum(x.tokens)));
     tb.appendChild(tr);
   }
@@ -3316,7 +3332,7 @@ function setupContext() {
   $('#contextdlg').addEventListener('click', (e) => { if (e.target === e.currentTarget) e.currentTarget.close(); });
   $('#context-compact').addEventListener('click', () => {
     $('#contextdlg').close();
-    if (S.run) { showBanner('warn', [document.createTextNode('Zhustit jde, až Claude doběhne.')], []); return; }
+    if (S.run) { showBanner('warn', [document.createTextNode(_t('Zhustit jde, až Claude doběhne.'))], []); return; }
     startRun('/compact', S.mode);
   });
 }
@@ -3324,7 +3340,7 @@ function setupContext() {
 /* ---------- Otázka bokem (jako /btw): kopie sezení jen pro čtení, neukládá se ---------- */
 const SQ = { controller: null };
 function openSide() {
-  if (!S.sessionId) { showBanner('warn', [document.createTextNode('Otázka bokem potřebuje rozpracované sezení – nejdřív pošlete zprávu.')], []); return; }
+  if (!S.sessionId) { showBanner('warn', [document.createTextNode(_t('Otázka bokem potřebuje rozpracované sezení – nejdřív pošlete zprávu.'))], []); return; }
   const d = $('#sidedlg');
   if (!d.open) d.showModal();
   $('#side-input').focus();
@@ -3337,14 +3353,14 @@ async function askSide(e) {
   out.textContent = '';
   const ans = el('div', 'md');
   out.appendChild(ans);
-  $('#side-status').textContent = 'Claude odpovídá…';
+  $('#side-status').textContent = _t('Claude odpovídá…');
   $('#side-send').disabled = true;
   SQ.controller = new AbortController();
   let raw = '';
   try {
     const res = await api('/api/runs', { method: 'POST', signal: SQ.controller.signal,
       body: { account: S.account, project: S.project, mode: 'plan', prompt: q, resume: S.sessionId, model: S.model, effort: S.effort, side: true } });
-    if (!res.ok) { let m = `HTTP ${res.status}`; try { m = (await res.json()).error || m; } catch { } throw new Error(m); }
+    if (!res.ok) { let m = `HTTP ${res.status}`; try { m = _tr((await res.json()).error) || m; } catch { } throw new Error(m); }
     const reader = res.body.getReader();
     const dec = new TextDecoder();
     let buf = '';
@@ -3359,12 +3375,12 @@ async function askSide(e) {
         let ev; try { ev = JSON.parse(chunk.slice(6)); } catch { continue; }
         if (ev.type === 'text_delta' && !ev.parent) { raw += ev.text || ''; renderMd(ans, raw, false); }
         else if (ev.type === 'text' && !ev.parent) { raw = raw && !raw.endsWith(ev.text) ? raw : ev.text; renderMd(ans, raw, true); }
-        else if (ev.type === 'result' && ev.isError) throw new Error(ev.result || 'Chyba');
+        else if (ev.type === 'result' && ev.isError) throw new Error(ev.result || _t('Chyba'));
       }
     }
-    $('#side-status').textContent = 'Hotovo. Do sezení se nic nezapsalo.';
+    $('#side-status').textContent = _t('Hotovo. Do sezení se nic nezapsalo.');
   } catch (err) {
-    $('#side-status').textContent = err.name === 'AbortError' ? 'Zrušeno.' : `Chyba: ${err.message}`;
+    $('#side-status').textContent = err.name === 'AbortError' ? _t('Zrušeno.') : _t('Chyba: {0}', err.message);
   } finally { SQ.controller = null; $('#side-send').disabled = false; }
 }
 function setupSide() {
@@ -3376,16 +3392,16 @@ function setupSide() {
 
 /* ---------- Export konverzace (Markdown) ---------- */
 async function exportSession() {
-  if (!S.sessionId) { showBanner('warn', [document.createTextNode('Není co exportovat – sezení je prázdné.')], []); return; }
+  if (!S.sessionId) { showBanner('warn', [document.createTextNode(_t('Není co exportovat – sezení je prázdné.'))], []); return; }
   let items;
   try { items = await apiJson(`/api/sessions/${encodeURIComponent(S.sessionId)}?account=${encodeURIComponent(S.account)}&project=${encodeURIComponent(S.project)}`); }
-  catch (e) { showError('Export se nepovedl', e.message); return; }
+  catch (e) { showError(_t('Export se nepovedl'), e.message); return; }
   const titleEl = document.querySelector(`#sessions button[data-id="${CSS.escape(S.sessionId)}"] .s-title`);
-  const title = titleEl ? titleEl.textContent : 'Sezení';
+  const title = titleEl ? titleEl.textContent : _t('Sezení');
   const proj = S.projects.find((p) => p.id === S.project);
-  const lines = [`# ${title}`, '', `Projekt: ${proj ? proj.label : S.project} · sezení ${S.sessionId} · export ${new Date().toLocaleString('cs-CZ')}`, ''];
+  const lines = [`# ${title}`, '', _t('Projekt: {0} · sezení {1} · export {2}', proj ? proj.label : S.project, S.sessionId, new Date().toLocaleString(LOC)), ''];
   let tools = [];
-  const flush = () => { if (tools.length) { lines.push(`> Nástroje: ${tools.join(', ')}`, ''); tools = []; } };
+  const flush = () => { if (tools.length) { lines.push(_t('> Nástroje: {0}', tools.join(', ')), ''); tools = []; } };
   for (const it of items) {
     if (it.role === 'tool') { tools.push(it.name); continue; }
     flush();
@@ -3399,7 +3415,7 @@ async function exportSession() {
   a.download = `${title.replace(/[\\/:*?"<>|]+/g, ' ').slice(0, 60).trim() || 'sezeni'}.md`;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 5000);
-  announce('Konverzace exportována.');
+  announce(_t('Konverzace exportována.'));
 }
 
 /* ---------- Sezení otevřená jinde (terminál, pozadí) ---------- */
@@ -3408,11 +3424,11 @@ async function loadElsewhere() {
   try {
     const list = await apiJson(`/api/sessions/active?account=${encodeURIComponent(S.account)}&project=${encodeURIComponent(S.project)}`);
     ELSE.ids = new Set(list.map((s) => s.sessionId));
-    ELSE.kind = Object.fromEntries(list.map((s) => [s.sessionId, s.kind === 'background' ? 'běží na pozadí' : 'otevřené v terminálu']));
+    ELSE.kind = Object.fromEntries(list.map((s) => [s.sessionId, s.kind === 'background' ? _t('běží na pozadí') : _t('otevřené v terminálu')]));
     for (const b of document.querySelectorAll('#sessions button[data-id]')) {
       const meta = b.querySelector('.s-meta');
       if (!meta) continue;
-      meta.textContent = meta.textContent.replace(/ • (otevřené v terminálu|běží na pozadí)/, '')
+      meta.textContent = meta.textContent.replace(/ • (otevřené v terminálu|běží na pozadí|open in a terminal|running in the background)/, '')
         + (ELSE.ids.has(b.dataset.id) ? ` • ${ELSE.kind[b.dataset.id]}` : '');
     }
   } catch { /* bez údajů */ }
@@ -3422,7 +3438,7 @@ async function loadElsewhere() {
 function planComments(box, markdown) {
   if (box.querySelector('.plan-review')) { box.querySelector('.plan-review').remove(); return; }
   const wrap = el('div', 'plan-review');
-  wrap.appendChild(el('p', 'hint', 'Klikněte na řádek plánu (nebo Enter) a napište připomínku. „Poslat připomínky“ je pošle Claudovi – plán upraví a nic nezmění.'));
+  wrap.appendChild(el('p', 'hint', _t('Klikněte na řádek plánu (nebo Enter) a napište připomínku. „Poslat připomínky“ je pošle Claudovi – plán upraví a nic nezmění.')));
   const lines = String(markdown || '').split('\n').map((l, i) => ({ text: l, n: i + 1 })).filter((l) => l.text.trim());
   const notes = new Map();
   const d = el('div', 'diff diff--review');
@@ -3430,14 +3446,14 @@ function planComments(box, markdown) {
     const row = el('div', 'ctx diff-line', l.text);
     row.tabIndex = 0;
     row.setAttribute('role', 'button');
-    row.setAttribute('aria-label', `Řádek plánu ${l.n}: ${l.text.trim()}`);
+    row.setAttribute('aria-label', _t('Řádek plánu {0}: {1}', l.n, l.text.trim()));
     const open = () => {
       d.querySelectorAll('.diff-form').forEach((f) => f.remove());
       const form = el('div', 'diff-form');
       const ta = el('textarea');
       ta.rows = 2;
       ta.value = notes.get(l.n) || '';
-      ta.setAttribute('aria-label', `Připomínka k řádku ${l.n}`);
+      ta.setAttribute('aria-label', _t('Připomínka k řádku {0}', l.n));
       const save = () => {
         const v = ta.value.trim();
         if (v) notes.set(l.n, v); else notes.delete(l.n);
@@ -3453,7 +3469,7 @@ function planComments(box, markdown) {
         else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); form.remove(); row.focus(); }
       });
       const acts = el('div', 'diff-form-actions');
-      acts.append(button('Uložit', 'btn-accent btn-small', save), button('Zrušit', 'btn-ghost btn-small', () => { form.remove(); row.focus(); }));
+      acts.append(button(_t('Uložit'), 'btn-accent btn-small', save), button(_t('Zrušit'), 'btn-ghost btn-small', () => { form.remove(); row.focus(); }));
       form.append(ta, acts);
       row.after(form);
       ta.focus();
@@ -3464,14 +3480,14 @@ function planComments(box, markdown) {
   }
   wrap.appendChild(d);
   const bar = el('div', 'plan-actions');
-  const count = el('span', 'hint', '0 připomínek');
-  const sendBtn = button('Poslat připomínky', 'btn-accent btn-small', () => {
+  const count = el('span', 'hint', _t('0 připomínek'));
+  const sendBtn = button(_t('Poslat připomínky'), 'btn-accent btn-small', () => {
     if (S.run || !notes.size) return;
     const items = [...notes.entries()].sort((a, b) => a[0] - b[0])
-      .map(([n, note], i) => `${i + 1}. K řádku „${lines.find((l) => l.n === n).text.trim().slice(0, 160)}“:\n   ${note.replace(/\n/g, '\n   ')}`);
+      .map(([n, note], i) => _t('{0}. K řádku „{1}“:\n   {2}', i + 1, lines.find((l) => l.n === n).text.trim().slice(0, 160), note.replace(/\n/g, '\n   ')));
     wrap.remove();
     setMode('plan');
-    startRun(`Připomínky k plánu – uprav ho podle nich a znovu ho předlož ke schválení:\n\n${items.join('\n')}`, 'plan');
+    startRun(_t('Připomínky k plánu – uprav ho podle nich a znovu ho předlož ke schválení:\n\n{0}', items.join('\n')), 'plan');
   });
   sendBtn.disabled = true;
   bar.append(sendBtn, count);
@@ -3515,7 +3531,7 @@ function openSideWithDraft() {
     saveDraft();
   }
   openSide();
-  if (SIDE.moved) $('#side-status').textContent = 'Rozepsanou zprávu jsem přesunul sem. Když otázku neodešlete, vrátí se po zavření zpět.';
+  if (SIDE.moved) $('#side-status').textContent = _t('Rozepsanou zprávu jsem přesunul sem. Když otázku neodešlete, vrátí se po zavření zpět.');
 }
 function sideClosed() {
   const ta = $('#prompt'), side = $('#side-input');
@@ -3582,9 +3598,9 @@ function renderTree(nav, paths, expandAll) {
       b.type = 'button';
       b.style.paddingLeft = `${0.5 + depth * 1.1}em`;
       b.setAttribute('aria-expanded', String(open));
-      b.setAttribute('aria-label', `Složka ${d.path}`);
+      b.setAttribute('aria-label', _t('Složka {0}', d.path));
       b.append(el('span', 'files-caret', open ? '▾' : '▸'), el('span', 'git-path', `${name}/`));
-      b.addEventListener('click', () => { if (F.open.has(d.path)) F.open.delete(d.path); else F.open.add(d.path); renderFiles(); focusFileButton(`Složka ${d.path}`); });
+      b.addEventListener('click', () => { if (F.open.has(d.path)) F.open.delete(d.path); else F.open.add(d.path); renderFiles(); focusFileButton(_t('Složka {0}', d.path)); });
       parent.appendChild(b);
       shown++;
       if (open) walk(d, depth + 1, parent);
@@ -3603,7 +3619,7 @@ function renderTree(nav, paths, expandAll) {
     }
   };
   walk(tree, 0, nav);
-  if (shown > FILES_SHOWN * 2) nav.appendChild(el('p', 'git-note', 'Seznam je zkrácený – zpřesněte hledání.'));
+  if (shown > FILES_SHOWN * 2) nav.appendChild(el('p', 'git-note', _t('Seznam je zkrácený – zpřesněte hledání.')));
 }
 function focusFileButton(label) {
   const b = [...$('#files-list').querySelectorAll('.git-file')].find((x) => x.getAttribute('aria-label') === label);
@@ -3620,7 +3636,7 @@ async function setDefaultProject(p) {
   try {
     const view = await apiJson(`/api/settings/default-project/${encodeURIComponent(p.id)}`, { method: 'PUT' });
     renderSettingsProjects(view);
-    setMsg(`Výchozí projekt: „${p.label}“ – otevře se při příštím spuštění.`);
+    setMsg(_t('Výchozí projekt: „{0}“ – otevře se při příštím spuštění.', p.label));
   } catch (e) { setMsg(e.message, 'err'); }
 }
 function loginCommand(dir) {
@@ -3634,20 +3650,20 @@ function renderSettingsAccountsFull(view) {
     const li = el('li', 'set-item set-item--wrap');
     const sw = el('i', 'swatch'); sw.style.background = a.accent; li.appendChild(sw);
     const main = el('div', 'set-item-main');
-    main.appendChild(el('span', 'set-item-label', a.label + (a.id === view.defaultAccount ? ' (výchozí)' : '')));
+    main.appendChild(el('span', 'set-item-label', a.label + (a.id === view.defaultAccount ? _t(' (výchozí)') : '')));
     main.appendChild(el('span', 'set-item-path', `${a.expectedEmail} · ${a.configDir}`));
-    if (!st.ok && st.error) main.appendChild(el('span', 'set-item-path set-item-err', st.error));
+    if (!st.ok && st.error) main.appendChild(el('span', 'set-item-path set-item-err', _tr(st.error)));
     li.appendChild(main);
-    li.appendChild(el('span', st.ok ? 'set-badge' : 'set-badge set-badge--bad', st.ok ? 'ověřen' : st.error === 'Ověřuji…' ? 'ověřuji' : 'nepřihlášen'));
+    li.appendChild(el('span', st.ok ? 'set-badge' : 'set-badge set-badge--bad', st.ok ? _t('ověřen') : st.error === 'Ověřuji…' ? _t('ověřuji') : _t('nepřihlášen')));
     if (!st.ok) {
       const cmd = loginCommand(a.configDir);
-      const copy = button('Příkaz pro přihlášení', 'btn-ghost btn-small', () => copyText(cmd, copy, 'Příkaz je ve schránce – vložte ho do terminálu a napište /login.'));
+      const copy = button(_t('Příkaz pro přihlášení'), 'btn-ghost btn-small', () => copyText(cmd, copy, _t('Příkaz je ve schránce – vložte ho do terminálu a napište /login.')));
       copy.title = cmd;
       li.appendChild(copy);
     }
-    const rm = button('Odebrat', 'btn-danger btn-small', async () => {
-      if (!confirm(`Odebrat účet „${a.label}“ z aplikace?\n\nPřihlášení ani sezení se nesmažou, účet jen zmizí ze seznamu.`)) return;
-      await changeAccount('DELETE', a.id, undefined, `Účet „${a.label}“ odebrán.`);
+    const rm = button(_t('Odebrat'), 'btn-danger btn-small', async () => {
+      if (!confirm(_t('Odebrat účet „{0}“ z aplikace?\n\nPřihlášení ani sezení se nesmažou, účet jen zmizí ze seznamu.', a.label))) return;
+      await changeAccount('DELETE', a.id, undefined, _t('Účet „{0}“ odebrán.', a.label));
     });
     rm.disabled = view.accounts.length <= 1 || (!!S.run && S.run.account === a.id);
     li.appendChild(rm);
@@ -3672,7 +3688,7 @@ async function addAccountSubmit(e) {
   const label = $('#acc-label').value.trim(), email = $('#acc-email').value.trim(), dir = $('#acc-dir').value.trim();
   if (!label || !email || !dir) return;
   const view = await changeAccount('POST', '', { label, expectedEmail: email, configDir: dir, accent: $('#acc-color').value },
-    `Účet „${label}“ přidán. Pokud v té složce ještě nejste přihlášený, zkopírujte příkaz pro přihlášení a v terminálu napište /login.`);
+    _t('Účet „{0}“ přidán. Pokud v té složce ještě nejste přihlášený, zkopírujte příkaz pro přihlášení a v terminálu napište /login.', label));
   if (view) { $('#acc-label').value = ''; $('#acc-email').value = ''; $('#acc-dir').value = ''; }
 }
 
@@ -3728,7 +3744,7 @@ function runFind(keep) {
 function paintFind(reveal) {
   const n = FD.ranges.length;
   const q = $('#find-input').value.trim();
-  $('#find-count').textContent = !q ? '' : n ? `${FD.cur + 1} z ${n}${n >= FD.max ? '+' : ''}` : 'Nic nenalezeno';
+  $('#find-count').textContent = !q ? '' : n ? `${FD.cur + 1} z ${n}${n >= FD.max ? '+' : ''}` : _t('Nic nenalezeno');
   if (canHighlight()) {
     CSS.highlights.set('acd-find', new Highlight(...FD.ranges));
     if (FD.cur >= 0) CSS.highlights.set('acd-find-cur', new Highlight(FD.ranges[FD.cur]));
@@ -3767,10 +3783,10 @@ function setupFind() {
 }
 
 /* ---------- MCP servery (stav z init; nastavení účtu se nečte) ---------- */
-const MCP_LABELS = { connected: 'připojeno', failed: 'selhalo', 'needs-auth': 'vyžaduje přihlášení', pending: 'připojuje se',
-  disabled: 'vypnuto', unknown: 'neznámý stav' };
-const MCP_SOURCES = { claudeai: 'konektor claude.ai', plugin: 'plugin', user: 'váš (uživatel)', project: 'projekt (.mcp.json)',
-  local: 'váš (lokální)', dynamic: 'dynamický', enterprise: 'organizace', managed: 'organizace' };
+const MCP_LABELS = { connected: _t('připojeno'), failed: 'selhalo', 'needs-auth': _t('vyžaduje přihlášení'), pending: _t('připojuje se'),
+  disabled: 'vypnuto', unknown: _t('neznámý stav') };
+const MCP_SOURCES = { claudeai: _t('konektor claude.ai'), plugin: 'plugin', user: _t('váš (uživatel)'), project: _t('projekt (.mcp.json)'),
+  local: _t('váš (lokální)'), dynamic: _t('dynamický'), enterprise: _t('organizace'), managed: _t('organizace') };
 const MCP_ORDER = { failed: 0, pending: 1, connected: 2, unknown: 3, disabled: 4, 'needs-auth': 5 };
 /** Upozornit v konverzaci jen na selhání – nepřihlášené konektory claude.ai jsou běžné. */
 function rememberMcp(ev, run) {
@@ -3780,21 +3796,21 @@ function rememberMcp(ev, run) {
   const failed = ev.mcpServers.filter((s) => s.status === 'failed');
   const sig = failed.map((s) => s.name).join(',');
   if (sig && S.mcpWarned[key] !== sig)
-    append(el('div', 'msg msg--note', `MCP ${plural(failed.length, 'server se nepřipojil', 'servery se nepřipojily', 'serverů se nepřipojilo')}: `
-      + `${failed.map((s) => s.name).join(', ')}. Podrobnosti v Přehledu sezení.`));
+    append(el('div', 'msg msg--note', _t('MCP {0}: ', plural(failed.length, 'server se nepřipojil', 'servery se nepřipojily', 'serverů se nepřipojilo'))
+      + _t('{0}. Podrobnosti v Přehledu sezení.', failed.map((s) => s.name).join(', '))));
   S.mcpWarned[key] = sig;
 }
 function mcpFoot(servers) {
   if (!Array.isArray(servers) || !servers.length) return '';
   const ok = servers.filter((s) => s.status === 'connected').length;
   const failed = servers.filter((s) => s.status === 'failed').length;
-  return ` • MCP ${ok} připojeno${failed ? `, ${failed} selhalo` : ''}`;
+  return _t(' • MCP {0} připojeno{1}', ok, failed ? _t(', {0} selhalo', failed) : '');
 }
 
 /* ---------- Přehled sezení: soubory, úkoly, agenti, nástroje, MCP ---------- */
 const OV = { seq: 0 };
-const TODO_MARK = { completed: ['✓', 'hotovo'], in_progress: ['▶', 'probíhá'], pending: ['○', 'čeká'] };
-const AGENT_STATUS = { done: ['dokončeno', 'ok'], background: ['běží na pozadí', 'run'], running: ['běží', 'run'], error: ['chyba', 'bad'] };
+const TODO_MARK = { completed: ['✓', _t('hotovo')], in_progress: ['▶', _t('probíhá')], pending: ['○', _t('čeká')] };
+const AGENT_STATUS = { done: [_t('dokončeno'), 'ok'], background: [_t('běží na pozadí'), 'run'], running: [_t('běží'), 'run'], error: [_t('chyba'), 'bad'] };
 
 function ovSection(title) {
   const sec = el('section', 'ov-section');
@@ -3820,7 +3836,7 @@ async function openFileInViewer(p) {
   renderFiles();
   const b = [...$('#files-list').querySelectorAll('.git-file')].find((x) => x.getAttribute('aria-label') === p);
   if (b) { b.focus(); showFile(b, p); }
-  else $('#files-status').textContent = 'Soubor v projektu už není, nebo ho git ignoruje.';
+  else $('#files-status').textContent = _t('Soubor v projektu už není, nebo ho git ignoruje.');
 }
 
 async function loadOverview() {
@@ -3828,45 +3844,45 @@ async function loadOverview() {
   const seq = ++OV.seq;
   let o = null, err = null;
   if (S.sessionId) {
-    sub.textContent = 'Načítám…';
+    sub.textContent = _t('Načítám…');
     try {
       o = await apiJson(`/api/sessions/${encodeURIComponent(S.sessionId)}/overview?account=${encodeURIComponent(S.account)}&project=${encodeURIComponent(S.project)}`);
     } catch (e) { err = e.message; }
     if (seq !== OV.seq) return;
   }
   body.textContent = '';
-  if (!S.sessionId) sub.textContent = 'Nové sezení – přehled se ukáže po první zprávě.';
-  else if (err) sub.textContent = /neexistuje/.test(err) ? 'Přepis sezení zatím není uložený – zkuste Obnovit za chvíli.' : err;
+  if (!S.sessionId) sub.textContent = _t('Nové sezení – přehled se ukáže po první zprávě.');
+  else if (err) sub.textContent = /neexistuje|not exist/i.test(err) ? _t('Přepis sezení zatím není uložený – zkuste Obnovit za chvíli.') : err;
   else {
-    const parts = [`${o.userMessages} ${plural(o.userMessages, 'zpráva', 'zprávy', 'zpráv')} od vás`,
+    const parts = [_t('{0} {1} od vás', o.userMessages, plural(o.userMessages, 'zpráva', 'zprávy', 'zpráv')),
       `${o.replies} ${plural(o.replies, 'odpověď', 'odpovědi', 'odpovědí')}`];
-    if (o.started) parts.push(`od ${fmtWhen(o.started)}`);
-    if (o.updated) parts.push(`naposledy ${fmtWhen(o.updated)}`);
+    if (o.started) parts.push(_t('od {0}', fmtWhen(o.started)));
+    if (o.updated) parts.push(_t('naposledy {0}', fmtWhen(o.updated)));
     sub.textContent = parts.join(' • ');
   }
 
   if (o) {
     // Úkoly (poslední TodoWrite)
-    const sec = ovSection('Úkoly');
+    const sec = ovSection(_t('Úkoly'));
     if (o.todos && o.todos.length) {
       const done = o.todos.filter((t) => t.status === 'completed').length;
-      sec.querySelector('h3').textContent = `Úkoly – ${done} z ${o.todos.length} hotovo`;
+      sec.querySelector('h3').textContent = _t('Úkoly – {0} z {1} hotovo', done, o.todos.length);
       const ul = el('ul', 'ov-list ov-todos');
       for (const t of o.todos) {
         const li = el('li');
         li.dataset.status = t.status;
         const [mark, word] = TODO_MARK[t.status] || TODO_MARK.pending;
         const m = el('span', 'ov-mark', mark); m.setAttribute('aria-hidden', 'true');
-        li.append(m, el('span', 'sr-only', `${word}: `), el('span', 'ov-main', t.content || '(bez textu)'));
+        li.append(m, el('span', 'sr-only', `${word}: `), el('span', 'ov-main', t.content || _t('(bez textu)')));
         ul.appendChild(li);
       }
       sec.appendChild(ul);
-      if (o.todosAt) sec.appendChild(el('p', 'ov-empty', `Seznam z ${fmtWhen(o.todosAt)}.`));
-    } else sec.appendChild(el('p', 'ov-empty', 'Claude v tomto sezení nevedl seznam úkolů.'));
+      if (o.todosAt) sec.appendChild(el('p', 'ov-empty', _t('Seznam z {0}.', fmtWhen(o.todosAt))));
+    } else sec.appendChild(el('p', 'ov-empty', _t('Claude v tomto sezení nevedl seznam úkolů.')));
     body.appendChild(sec);
 
     // Upravené soubory
-    const fsec = ovSection(`Upravené soubory (${o.files.length})`);
+    const fsec = ovSection(_t('Upravené soubory ({0})', o.files.length));
     if (o.files.length) {
       const ul = el('ul', 'ov-list');
       for (const f of o.files) {
@@ -3875,25 +3891,25 @@ async function loadOverview() {
         else {
           const b = el('button', 'ov-file', f.path);
           b.type = 'button';
-          b.title = 'Otevřít v náhledu souborů';
+          b.title = _t('Otevřít v náhledu souborů');
           b.addEventListener('click', () => openFileInViewer(f.path));
           const wrap = el('span', 'ov-main'); wrap.appendChild(b); li.appendChild(wrap);
         }
         const meta = [];
-        if (f.edits) meta.push(`${f.edits}× úprava`);
-        if (f.writes) meta.push(`${f.writes}× zápis`);
+        if (f.edits) meta.push(_t('{0}× úprava', f.edits));
+        if (f.writes) meta.push(_t('{0}× zápis', f.writes));
         li.appendChild(el('span', 'ov-meta', meta.join(' · ')));
-        if (f.agent) li.appendChild(ovBadge(f.main ? 'i agent' : 'agent'));
-        if (f.outside) li.appendChild(ovBadge('mimo projekt'));
-        if (f.failed) li.appendChild(ovBadge(`${f.failed}× chyba`, 'bad'));
+        if (f.agent) li.appendChild(ovBadge(f.main ? _t('i agent') : _t('agent')));
+        if (f.outside) li.appendChild(ovBadge(_t('mimo projekt')));
+        if (f.failed) li.appendChild(ovBadge(_t('{0}× chyba', f.failed), 'bad'));
         ul.appendChild(li);
       }
       fsec.appendChild(ul);
-    } else fsec.appendChild(el('p', 'ov-empty', 'Žádný soubor upravený nástroji Edit nebo Write.'));
+    } else fsec.appendChild(el('p', 'ov-empty', _t('Žádný soubor upravený nástroji Edit nebo Write.')));
     body.appendChild(fsec);
 
     // Agenti
-    const asec = ovSection(`Agenti (${o.agents.length})`);
+    const asec = ovSection(_t('Agenti ({0})', o.agents.length));
     if (o.agents.length) {
       const ul = el('ul', 'ov-list');
       for (const a of o.agents) {
@@ -3905,19 +3921,19 @@ async function loadOverview() {
         ul.appendChild(li);
       }
       asec.appendChild(ul);
-    } else asec.appendChild(el('p', 'ov-empty', 'Claude v tomto sezení nespustil žádného agenta.'));
+    } else asec.appendChild(el('p', 'ov-empty', _t('Claude v tomto sezení nespustil žádného agenta.')));
     body.appendChild(asec);
 
     // Nástroje
     if (o.tools.length) {
-      const tsec = ovSection('Nástroje');
+      const tsec = ovSection(_t('Nástroje'));
       tsec.appendChild(el('p', 'ov-tools', o.tools.map((t) => `${t.name} ${t.count}×`).join(' · ')));
       body.appendChild(tsec);
     }
   }
 
   // MCP servery: stav z posledního spuštění + použití v sezení
-  const msec = ovSection('MCP servery');
+  const msec = ovSection(_t('MCP servery'));
   const st = S.mcp[`${S.account}|${S.project}`];
   const used = new Map((o ? o.mcp : []).map((m) => [m.name, m.count]));
   // Použité v sezení se jmenují podle nástroje (mcp__<server>__…) – u konektorů jiným tvarem než v init, proto zvlášť.
@@ -3932,18 +3948,18 @@ async function loadOverview() {
   if (servers.length) {
     const main = servers.filter((s) => s.status !== 'needs-auth');
     const auth = servers.filter((s) => s.status === 'needs-auth');
-    msec.querySelector('h3').textContent = `MCP servery – ${servers.filter((s) => s.status === 'connected').length} z ${servers.length} připojeno`;
+    msec.querySelector('h3').textContent = _t('MCP servery – {0} z {1} připojeno', servers.filter((s) => s.status === 'connected').length, servers.length);
     if (main.length) { const ul = el('ul', 'ov-list'); main.forEach((s) => ul.appendChild(mcpRow(s))); msec.appendChild(ul); }
     if (auth.length) {
       const det = el('details', 'ov-more');
-      det.appendChild(el('summary', null, `Nepřihlášené (${auth.length}) – připojí se až po přihlášení v Claude Code (/mcp)`));
+      det.appendChild(el('summary', null, _t('Nepřihlášené ({0}) – připojí se až po přihlášení v Claude Code (/mcp)', auth.length)));
       const ul = el('ul', 'ov-list'); auth.forEach((s) => ul.appendChild(mcpRow(s))); det.appendChild(ul);
       msec.appendChild(det);
     }
-    msec.appendChild(el('p', 'ov-empty', `Stav ze spuštění v ${new Date(st.at).toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' })}.`));
-  } else msec.appendChild(el('p', 'ov-empty', st ? 'Účet v tomto projektu nemá žádný MCP server.'
-    : 'Stav se ukáže po první zprávě v tomto projektu (Claude Code ho hlásí při spuštění).'));
-  if (used.size) msec.appendChild(el('p', 'ov-tools', `Použito v sezení: ${[...used].map(([n, c]) => `${n} ${c}×`).join(' · ')}`));
+    msec.appendChild(el('p', 'ov-empty', _t('Stav ze spuštění v {0}.', new Date(st.at).toLocaleTimeString(LOC, { hour: '2-digit', minute: '2-digit' }))));
+  } else msec.appendChild(el('p', 'ov-empty', st ? _t('Účet v tomto projektu nemá žádný MCP server.')
+    : _t('Stav se ukáže po první zprávě v tomto projektu (Claude Code ho hlásí při spuštění).')));
+  if (used.size) msec.appendChild(el('p', 'ov-tools', _t('Použito v sezení: {0}', [...used].map(([n, c]) => `${n} ${c}×`).join(' · '))));
   body.appendChild(msec);
 }
 
@@ -3958,7 +3974,7 @@ function setupOverview() {
 async function main() {
   setupMarkdown();
   if (!S.token) {
-    showError('Chybí přístupový klíč', 'Okno otevřete spouštěčem aplikace (klíč platí jen pro jedno spuštění a obnovením stránky se ztratí).');
+    showError(_t('Chybí přístupový klíč'), _t('Okno otevřete spouštěčem aplikace (klíč platí jen pro jedno spuštění a obnovením stránky se ztratí).'));
     $('#composer').hidden = true;
     return;
   }
@@ -4019,12 +4035,12 @@ async function main() {
     const cur = accountById(S.account);
     if (cur && !cur.ok) {
       const alt = otherAccount(S.account);
-      showBanner('err', [el('strong', null, `Účet ${cur.label} není dostupný: `), document.createTextNode(cur.error || '')],
-        alt ? [button(`Použít ${alt.label}`, 'btn-accent', () => switchAccount(alt.id))] : []);
+      showBanner('err', [el('strong', null, _t('Účet {0} není dostupný: ', cur.label)), document.createTextNode(_tr(cur.error || ''))],
+        alt ? [button(_t('Použít {0}', alt.label), 'btn-accent', () => switchAccount(alt.id))] : []);
     }
     await Promise.all([loadSessions(), loadGit()]);
   } catch (e) {
-    showError('Aplikace nemůže načíst stav', e.message);
+    showError(_t('Aplikace nemůže načíst stav'), e.message);
   }
 
   // Průběžně: stav účtů (a zároveň signál pro backend, že okno žije).

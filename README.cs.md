@@ -12,7 +12,7 @@ píšete si s Claudem se streamovanými odpověďmi, vidíte každé volání n�
 běhu, posíláte zprávy do běžícího tahu, řadíte další do fronty, vracíte soubory a přikládáte screenshoty nebo PDF.
 
 Bez závislostí – jen vestavěné moduly Node.js, okno Chrome a oficiální `claude` CLI, ve kterém už jste přihlášení.
-Běží na Windows a macOS (experimentálně). Rozhraní je v češtině.
+Běží na Windows a macOS (experimentálně). Rozhraní je **česky i anglicky** – přepíná se v *Nastavení → Jazyk*; výchozí je čeština.
 
 > Nejde o produkt Anthropicu. „Claude“ je ochranná známka Anthropicu. Aplikace spouští nezměněný program `claude` pod
 > vaším přihlášením a nikdy nečte ani neukládá přihlašovací údaje.
@@ -104,6 +104,7 @@ Běží na Windows a macOS (experimentálně). Rozhraní je v češtině.
 - **Oznámení** – když Claude doběhne, ptá se, čeká plán nebo se narazí na limit a okno je na pozadí.
 - **Klávesnice a čtečky obrazovky** – všechno jde ovládat klávesnicí; zprávy, chyby, plány, otázky a žádosti o svolení
   se hlásí čtečce; zkontrolováno nástrojem axe-core (WCAG 2.2 AA) v obou motivech.
+- **České nebo anglické rozhraní** – *Nastavení → Jazyk*; okno se znovu načte, rozepsané zprávy zůstanou. Volba platí pro daný prohlížeč.
 - **Světlý nebo tmavý motiv**, **vlastní název a vzhled** (jedna hodnota v configu a jeden soubor CSS, viz *Přizpůsobení*).
 - **Bezpečnost** – jen loopback, token na jedno spuštění, kontrola Host/Origin, přísné CSP; režimy oprávnění `auto`,
   `plan`, `acceptEdits` (a `default` se zapnutými žádostmi o svolení; nikdy `bypassPermissions` ani `dontAsk`);
@@ -269,6 +270,7 @@ ACD_OPEN_BROWSER=0 node src/server/server.mjs   # vypíše adresu s tokenem na i
 ```
 Testy nepotřebují skutečný `claude`; CI je spouští na Windows, macOS i Linuxu.
 Proměnné prostředí jen pro testy: `ACD_CONFIG`, `ACD_TOKEN` (≥ 32 znaků), `ACD_PORT`, `ACD_OPEN_BROWSER`.
+Texty: ve skriptech se píší česky jako `_t('Česká věta {0}', arg)`, anglický překlad patří do `src/server/wwwroot/i18n.en.js` pod stejným klíčem (`tests/i18n.test.mjs` selže, když chybí nebo mají různé `{n}`). Statické HTML se překládá podle přesného textu, hlášky serveru funkcí `_tr()`.
 Knihovny a volitelná písma: `scripts/fetch-vendor.ps1` (pevné verze, viz `src/server/wwwroot/vendor/VERSIONS.md`).
 
 ## Plán

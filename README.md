@@ -11,7 +11,7 @@ list with progress and time left, plan first and approve with one click, switch 
 send messages into a running turn, queue the next ones, rewind files, and attach screenshots or PDFs.
 
 No dependencies – just Node.js built-ins, a Chrome app window and the official `claude` CLI you are already logged into.
-Runs on Windows and macOS (experimental). The UI is in Czech.
+Runs on Windows and macOS (experimental). The UI is in **Czech and English** – switch in *Nastavení → Jazyk* (Settings → Language); Czech is the default.
 
 > Not affiliated with Anthropic. "Claude" is a trademark of Anthropic. The app runs the unmodified `claude` binary under
 > your own login and never reads or stores credentials.
@@ -98,6 +98,7 @@ Runs on Windows and macOS (experimental). The UI is in Czech.
 - **Notifications** – when Claude finishes, asks, a plan waits or a limit is hit while the window is in the background.
 - **Keyboard and screen readers** – everything works from the keyboard; messages, errors, plans, questions and
   permission requests are announced; checked with axe-core (WCAG 2.2 AA) in both themes.
+- **Czech or English interface** – *Nastavení → Jazyk*; the window reloads, drafts are kept. Chosen per browser.
 - **Light or dark**, **your own name and look** (one config value and one CSS file, see *Customize*).
 - **Security** – loopback only, per-launch token, Host/Origin checks, strict CSP; permission modes `auto`, `plan`,
   `acceptEdits` (plus `default` with permission requests on; never `bypassPermissions` or `dontAsk`); `claude` only via
@@ -262,6 +263,7 @@ ACD_OPEN_BROWSER=0 node src/server/server.mjs   # prints the URL with token on a
 ```
 No real `claude` is needed for the tests; CI runs them on Windows, macOS and Linux.
 Test-only environment variables: `ACD_CONFIG`, `ACD_TOKEN` (≥ 32 chars), `ACD_PORT`, `ACD_OPEN_BROWSER`.
+Texts: write them in Czech as `_t('Česká věta {0}', arg)` in the scripts; the English translation goes into `src/server/wwwroot/i18n.en.js` under the same key (`tests/i18n.test.mjs` fails when one is missing or its `{n}` differ). Static HTML is translated by exact text match; server messages by `_tr()`.
 Vendor libraries and optional fonts: `scripts/fetch-vendor.ps1` (pinned versions, see `src/server/wwwroot/vendor/VERSIONS.md`).
 
 ## Roadmap

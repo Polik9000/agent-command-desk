@@ -7,11 +7,11 @@
   const MAX_PROMPT = 100000;
   /** Důvody pozastavení → text pro UI. */
   const PAUSE_TEXT = {
-    stopped: 'Běh byl zastaven.',
-    error: 'Běh skončil chybou.',
-    limit: 'Účet narazil na limit.',
-    plan: 'Plán čeká na schválení.',
-    context: 'Fronta patří k jinému sezení, účtu nebo projektu.',
+    stopped: _t('Běh byl zastaven.'),
+    error: _t('Běh skončil chybou.'),
+    limit: _t('Účet narazil na limit.'),
+    plan: _t('Plán čeká na schválení.'),
+    context: _t('Fronta patří k jinému sezení, účtu nebo projektu.'),
     manual: 'Pozastaveno.',
   };
 
@@ -33,10 +33,10 @@
      */
     add({ prompt, mode, account, project, sessionId, run, attachments, opts }) {
       const text = String(prompt || '').trim();
-      if (!text) throw new Error('Prázdná zpráva.');
-      if (text.length > MAX_PROMPT) throw new Error('Zpráva je příliš dlouhá.');
-      if (this.items.length >= MAX_ITEMS) throw new Error(`Fronta je plná (max. ${MAX_ITEMS}).`);
-      if (!['auto', 'plan', 'acceptEdits', 'default'].includes(mode)) throw new Error('Neplatný režim.');
+      if (!text) throw new Error(_t('Prázdná zpráva.'));
+      if (text.length > MAX_PROMPT) throw new Error(_t('Zpráva je příliš dlouhá.'));
+      if (this.items.length >= MAX_ITEMS) throw new Error(_t('Fronta je plná (max. {0}).', MAX_ITEMS));
+      if (!['auto', 'plan', 'acceptEdits', 'default'].includes(mode)) throw new Error(_t('Neplatný režim.'));
       const files = Array.isArray(attachments) ? attachments.slice(0, 10) : [];
       const item = { id: this.nextId++, prompt: text, mode, account, project, sessionId: sessionId || null, run: run || null,
         attachments: files, opts: opts && typeof opts === 'object' ? { ...opts } : {} };
@@ -75,8 +75,8 @@
       const it = this.items.find((x) => x.id === id);
       const text = String(prompt || '').trim();
       if (!it) return false;
-      if (!text) throw new Error('Prázdná zpráva.');
-      if (text.length > MAX_PROMPT) throw new Error('Zpráva je příliš dlouhá.');
+      if (!text) throw new Error(_t('Prázdná zpráva.'));
+      if (text.length > MAX_PROMPT) throw new Error(_t('Zpráva je příliš dlouhá.'));
       it.prompt = text;
       return true;
     }
