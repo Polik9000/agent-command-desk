@@ -43,7 +43,11 @@ Runs on Windows and macOS (experimental). The UI is in Czech.
   deleted after 7 days. Claude can read only the current account's and project's attachment folder.
 - **Comfortable typing** – Enter after `1. item`, `- item` or `- [ ] item` continues the list, Enter on an empty item ends
   it, Shift+Enter is a plain new line.
-- **Notifications** (optional, footer toggle) – when Claude finishes, a plan waits or a limit is hit while the window is
+- **Settings** (*Nastavení* in the header) – add, rename and remove projects without editing JSON (the folder must
+  exist; drive roots, your home folder and Claude Code account folders are refused; the previous config is kept as
+  `config.json.bak`). Accounts are listed read-only: they are changed only by hand in `local/config.json`, so the UI can
+  never add an unverified (e.g. personal) account. Full-screen toggle (or F11) and notification options.
+- **Notifications** (optional, footer toggle or *Settings*) – when Claude finishes, a plan waits or a limit is hit while the window is
   in the background; the window title gets a ● marker.
 - **Usage limits** – warning when an account gets close; when it hits the limit, one click switches to another account
   and resends.
@@ -90,6 +94,7 @@ Runs on Windows and macOS (experimental). The UI is in Czech.
    "models": [{ "id": "opus", "label": "Opus" }, { "id": "sonnet", "label": "Sonnet" }, { "id": "fable", "label": "Fable" }]
    ```
    The server accepts only these ids and the effort levels `low`, `medium`, `high`, `xhigh`, `max`.
+   `"startFullscreen": true` opens the window in full screen. Projects can also be managed later in the app (*Nastavení*).
 4. **Install the launcher:**
    - Windows: `powershell -ExecutionPolicy Bypass -File scripts\install.ps1` → creates `%USERPROFILE%\bin\<app id>.cmd`
      (make sure `%USERPROFILE%\bin` is on `PATH`).
@@ -122,7 +127,7 @@ Only create files inside local/, do not change anything else and do not commit. 
 
 ## Development
 ```
-npm test        # 61 tests: stream parser, config (incl. model allowlist), account guard, queue, list editing, attachments, 401/403/CSP
+npm test        # 69 tests: stream parser, config (incl. model allowlist), settings writes, account guard, queue, list editing, attachments, 401/403/CSP
 npm run check   # syntax check
 ACD_OPEN_BROWSER=0 node src/server/server.mjs   # prints the URL with token on an interactive console
 ```
@@ -132,7 +137,7 @@ Vendor libraries and optional fonts: `scripts/fetch-vendor.ps1` (pinned versions
 How the CLI is driven (stream-json input/output, sending into a running turn): [docs/claude-code-headless.md](docs/claude-code-headless.md).
 
 ## Roadmap
-Settings panel (accounts, projects, full screen), read-only git diff view, command palette,
+Read-only git diff view, command palette,
 usage statistics. Interactive permission prompts are being researched.
 
 ## Uninstall
@@ -153,7 +158,9 @@ do fronty; přikládat jde screenshoty (Ctrl+V), PDF a textové soubory. Rozhran
 **Nastavení**
 1. Každý účet = vlastní složka `CLAUDE_CONFIG_DIR` (alias viz *Setup*), jednou `/login`.
 2. `config.example.json` zkopírujte do `local/config.json` a vyplňte účty (včetně očekávaného e-mailu) a projekty.
-   Volitelně `models` = seznam modelů nabízených ve výběru (viz *Setup*).
+   Volitelně `models` = seznam modelů nabízených ve výběru (viz *Setup*), `startFullscreen` = okno na celou obrazovku.
+   Projekty jde později přidávat, přejmenovat a odebírat přímo v aplikaci (tlačítko **Nastavení**); účty jen ručně
+   v configu.
 3. Vlastní název: `app.name` v configu. Vlastní vzhled: `local/theme.css` (vzor `src/server/wwwroot/theme.css`),
    ikona `local/favicon.svg`. Složka `local/` se nikdy necommituje.
 4. Spouštěč: Windows `scripts\install.ps1`, macOS `scripts/install.sh`; pak příkaz podle `app.id`.

@@ -241,18 +241,33 @@ function setupRunOpts() {
 const NOTIFY_KEY = 'acd.notify';
 const notifyEnabled = () => localStorage.getItem(NOTIFY_KEY) === '1' && 'Notification' in window && Notification.permission === 'granted';
 
+const NOTIFY_KINDS_KEY = 'acd.notify.kinds';
+const NOTIFY_KINDS = ['ok', 'plan', 'problem'];
+/** Kdy upozornit (výchozí: vždy). */
+function notifyKinds() {
+  let o = {};
+  try { o = JSON.parse(localStorage.getItem(NOTIFY_KINDS_KEY) || '{}') || {}; } catch { o = {}; }
+  return Object.fromEntries(NOTIFY_KINDS.map((k) => [k, o[k] !== false]));
+}
+
 function renderNotifyToggle() {
-  const b = $('#notify-toggle');
-  if (!b) return;
   const supported = 'Notification' in window;
   const denied = supported && Notification.permission === 'denied';
   const on = notifyEnabled();
-  b.textContent = on ? 'Oznámení: zapnuto' : 'Oznámení: vypnuto';
-  b.setAttribute('aria-pressed', on ? 'true' : 'false');
-  b.title = !supported ? 'Prohlížeč oznámení nepodporuje.'
-    : denied ? 'Oznámení jsou v prohlížeči zakázaná (ikona zámku vedle adresy → Oznámení).'
-      : 'Upozornit, když Claude doběhne nebo čeká (jen když okno není aktivní).';
-  b.disabled = !supported;
+  for (const b of document.querySelectorAll('.notify-toggle')) {
+    b.textContent = on ? 'Oznámení: zapnuto' : 'Oznámení: vypnuto';
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    b.title = !supported ? 'Prohlížeč oznámení nepodporuje.'
+      : denied ? 'Oznámení jsou v prohlížeči zakázaná (ikona zámku vedle adresy → Oznámení).'
+        : 'Upozornit, když Claude doběhne nebo čeká (jen když okno není aktivní).';
+    b.disabled = !supported;
+  }
+  const kinds = notifyKinds();
+  const fs = $('#set-notify-kinds');
+  if (fs) {
+    fs.disabled = !on;
+    for (const c of fs.querySelectorAll('input')) c.checked = kinds[c.value];
+  }
 }
 
 async function toggleNotify() {
@@ -264,12 +279,12 @@ async function toggleNotify() {
   renderNotifyToggle();
 }
 
-/** Upozorní, jen když se uživatel zrovna nedívá. */
-function notify(title, body) {
+/** Upozorní, jen když se uživatel zrovna nedívá. kind: ok | plan | problem (volby v Nastavení). */
+function notify(title, body, kind) {
   if (document.hasFocus() && !document.hidden) return;
   S.attention = true;
   applyAccent();
-  if (!notifyEnabled()) return;
+  if (!notifyEnabled() || (kind && !notifyKinds()[kind])) return;
   try {
     const n = new Notification(title, { body: (body || '').slice(0, 180), icon: 'favicon.svg', tag: 'acd-run' });
     n.onclick = () => { window.focus(); n.close(); };
@@ -394,6 +409,148 @@ async function switchProject(id) {
   S.project = id;
   newSession();
   await Promise.all([loadSessions(), loadGit()]);
+}
+
+/* ---------- Nastavení ---------- */
+function setMsg(text, kind) {
+  const m = $('#set-projects-msg');
+  m.textContent = text || '';
+  if (kind) m.dataset.kind = kind; else delete m.dataset.kind;
+}
+
+async function openSettings() {
+  const d = $('#settings');
+  setMsg('');
+  renderSettingsAccounts();
+  renderFullscreenButton();
+  renderNotifyToggle();
+  if (!d.open) d.showModal();
+  try { renderSettingsProjects(await apiJson('/api/settings')); } catch (e) { setMsg(e.message, 'err'); }
+}
+
+function renderSettingsAccounts() {
+  const ul = $('#set-accounts');
+  ul.textContent = '';
+  for (const a of S.accounts) {
+    const li = el('li', 'set-item');
+    const sw = el('i', 'swatch'); sw.style.background = a.accent; li.appendChild(sw);
+    const main = el('div', 'set-item-main');
+    main.appendChild(el('span', 'set-item-label', a.label));
+    main.appendChild(el('span', 'set-item-path', a.ok ? a.email : (a.error || '')));
+    li.appendChild(main);
+    li.appendChild(el('span', a.ok ? 'set-badge' : 'set-badge set-badge--bad', a.ok ? 'ověřen' : 'nedostupný'));
+    ul.appendChild(li);
+  }
+}
+
+function renderSettingsProjects(view) {
+  const ul = $('#set-projects');
+  ul.textContent = '';
+  for (const p of view.projects) {
+    const li = el('li', 'set-item');
+    const main = el('div', 'set-item-main');
+    main.appendChild(el('span', 'set-item-label', p.label));
+    main.appendChild(el('span', 'set-item-path', p.path));
+    li.appendChild(main);
+    if (p.id === S.project) li.appendChild(el('span', 'set-badge', 'otevřený'));
+    if (p.id === view.defaultProject) li.appendChild(el('span', 'set-badge', 'výchozí'));
+    li.appendChild(button('Přejmenovat', 'btn-ghost btn-small', () => startRename(li, p)));
+    const rm = button('Odebrat', 'btn-danger btn-small', () => removeProject(p));
+    rm.disabled = view.projects.length <= 1 || (!!S.run && p.id === S.project);
+    if (rm.disabled) rm.title = view.projects.length <= 1 ? 'Poslední projekt nelze odebrat.' : 'V projektu právě běží Claude.';
+    li.appendChild(rm);
+    ul.appendChild(li);
+  }
+}
+
+function startRename(li, p) {
+  const main = li.querySelector('.set-item-main');
+  const label = main.querySelector('.set-item-label');
+  const input = el('input');
+  input.type = 'text'; input.value = p.label; input.maxLength = 60;
+  input.setAttribute('aria-label', `Nový název projektu ${p.label}`);
+  main.replaceChild(input, label);
+  input.focus(); input.select();
+  let done = false;
+  const finish = async (save) => {
+    if (done) return;
+    done = true;
+    const v = input.value.trim();
+    if (!save || !v || v === p.label) { main.replaceChild(label, input); return; }
+    await changeProject('PATCH', p.id, { label: v }, `Projekt přejmenován na „${v}“.`);
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
+  });
+  input.addEventListener('blur', () => finish(true));
+}
+
+async function removeProject(p) {
+  const current = p.id === S.project;
+  if (!confirm(`Odebrat projekt „${p.label}“ ze seznamu?\n\nSložka ani sezení se nesmažou, jen zmizí z aplikace.`)) return;
+  if (current && !leaveContext()) return;
+  await changeProject('DELETE', p.id, undefined, `Projekt „${p.label}“ odebrán.`);
+}
+
+/** Zápis projektů → obnovit seznam v Nastavení i v hlavičce; zmizí-li otevřený projekt, přepnout. */
+async function changeProject(method, id, body, okText) {
+  const url = id ? `/api/settings/projects/${encodeURIComponent(id)}` : '/api/settings/projects';
+  try {
+    const view = await apiJson(url, { method, body });
+    await loadState();
+    if (!S.projects.some((x) => x.id === S.project)) {
+      const next = S.projects.find((x) => x.exists) || S.projects[0];
+      S.project = '';
+      await switchProject(next.id);
+    }
+    renderSettingsProjects(view);
+    setMsg(okText);
+    return view;
+  } catch (e) {
+    setMsg(e.message, 'err');
+    try { renderSettingsProjects(await apiJson('/api/settings')); } catch { }
+    return null;
+  }
+}
+
+async function addProjectSubmit(e) {
+  e.preventDefault();
+  const label = $('#set-add-label').value.trim();
+  const path = $('#set-add-path').value.trim();
+  if (!label || !path) return;
+  const view = await changeProject('POST', '', { label, path }, `Projekt „${label}“ přidán – najdete ho v přepínači projektů.`);
+  if (view) { $('#set-add-label').value = ''; $('#set-add-path').value = ''; }
+}
+
+function renderFullscreenButton() {
+  const b = $('#set-fullscreen');
+  const on = !!document.fullscreenElement;
+  b.textContent = on ? 'Ukončit celou obrazovku' : 'Celá obrazovka';
+  b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  b.disabled = !document.fullscreenEnabled;
+}
+
+async function toggleFullscreen() {
+  try {
+    if (document.fullscreenElement) await document.exitFullscreen();
+    else await document.documentElement.requestFullscreen();
+  } catch { /* prohlížeč odmítl */ }
+}
+
+function setupSettings() {
+  $('#settings-open').addEventListener('click', openSettings);
+  $('#settings-close').addEventListener('click', () => $('#settings').close());
+  $('#settings').addEventListener('click', (e) => { if (e.target === e.currentTarget) e.currentTarget.close(); }); // klik na pozadí
+  $('#set-add').addEventListener('submit', addProjectSubmit);
+  $('#set-fullscreen').addEventListener('click', toggleFullscreen);
+  document.addEventListener('fullscreenchange', renderFullscreenButton);
+  $('#set-notify').addEventListener('click', toggleNotify);
+  $('#set-notify-kinds').addEventListener('change', () => {
+    const o = {};
+    for (const c of $('#set-notify-kinds').querySelectorAll('input')) o[c.value] = c.checked;
+    localStorage.setItem(NOTIFY_KINDS_KEY, JSON.stringify(o));
+  });
 }
 
 /* ---------- Banner ---------- */
@@ -753,7 +910,8 @@ function afterRun(run) {
     limit: ['Účet narazil na limit', 'Přepněte na jiný účet, nebo počkejte na obnovení.' + queued],
     error: ['Běh skončil chybou', (run.resultText || 'Podívejte se do okna.') + queued],
   };
-  if (texts[outcome]) notify(...texts[outcome]);
+  const kind = { ok: 'ok', plan: 'plan', limit: 'problem', error: 'problem' }[outcome];
+  if (texts[outcome]) notify(...texts[outcome], kind);
 }
 
 function dispatchNext() {
@@ -1187,6 +1345,7 @@ async function main() {
   $('#queue-send').addEventListener('click', () => send('queue'));
   setupAttachments();
   setupRunOpts();
+  setupSettings();
   $('#new-session').addEventListener('click', newSession);
   $('#project').addEventListener('change', (e) => switchProject(e.target.value));
   document.querySelectorAll('input[name="mode"]').forEach((i) => i.addEventListener('change', () => { S.mode = i.value; }));

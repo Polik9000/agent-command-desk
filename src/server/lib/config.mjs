@@ -12,7 +12,7 @@ export { expand, norm, samePath, isUnder } from './platform.mjs';
 /** @typedef {{id:string,label:string,configDir:string,expectedEmail:string,accent:string,configDirFull:string}} Account */
 /** @typedef {{id:string,label:string,path:string,pathFull:string}} Project */
 /**
- * @typedef {{app:{id:string,name:string}, port:number, openBrowser:boolean,
+ * @typedef {{app:{id:string,name:string}, port:number, openBrowser:boolean, startFullscreen?:boolean,
  *   claudeExeFull:string, gitExeFull:string, browserExeFull:string, stateDirFull:string,
  *   disallowedTools:string[], appendSystemPrompt:string, defaultAccount:string, accounts:Account[],
  *   defaultProject:string, projects:Project[]}} Config
@@ -41,12 +41,24 @@ export function configPath(repoRoot) {
  * @returns {Config}
  */
 export function loadConfig(file, { checkExe = true } = {}) {
-  const fail = (msg) => { throw new Error(`${path.basename(file)}: ${msg}`); };
   if (!existsSync(file))
     throw new Error(`Chybí konfigurace ${file}. Zkopírujte config.example.json do local/config.json a upravte účty a projekty.`);
+  let raw;
+  try { raw = JSON.parse(readFileSync(file, 'utf8')); } catch (e) { throw new Error(`${path.basename(file)}: neplatný JSON (${e.message})`); }
+  return parseConfig(raw, path.basename(file), { checkExe });
+}
+
+/**
+ * Ověří a doplní konfiguraci z už načteného JSON (vstup se nemění). Používá i zápis z Nastavení, aby se do souboru
+ * nikdy nedostalo nic, co by loadConfig odmítl.
+ * @param {any} raw @param {string} name @param {{checkExe?: boolean}} [opts]
+ * @returns {Config}
+ */
+export function parseConfig(raw, name, { checkExe = true } = {}) {
+  const fail = (msg) => { throw new Error(`${name}: ${msg}`); };
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) fail('očekávám objekt');
   /** @type {any} */
-  let cfg;
-  try { cfg = JSON.parse(readFileSync(file, 'utf8')); } catch (e) { fail(`neplatný JSON (${e.message})`); }
+  const cfg = structuredClone(raw);
 
   if (process.env.ACD_PORT) cfg.port = Number(process.env.ACD_PORT);
   if (process.env.ACD_OPEN_BROWSER) cfg.openBrowser = process.env.ACD_OPEN_BROWSER === '1';

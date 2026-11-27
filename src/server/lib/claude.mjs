@@ -134,6 +134,8 @@ export class ClaudeRunner {
   get hasActiveRuns() { return this.runs.size > 0; }
   isSessionBusy(id) { return this.busySessions.has(id); }
   find(id) { return this.runs.get(id); }
+  /** Běží v projektu nějaký claude? (takový projekt nejde odebrat v Nastavení) */
+  isProjectBusy(projectId) { for (const r of this.runs.values()) if (r.projectId === projectId) return true; return false; }
   stopAll() { for (const r of this.runs.values()) r.stop(); }
 
   /**

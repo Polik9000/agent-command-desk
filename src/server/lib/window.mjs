@@ -32,7 +32,8 @@ export function openWindow({ cfg, url, heartbeat, hasActiveRuns, shutdown, log }
 
   const started = Date.now();
   const p = spawn(exe, [`--app=${url}`, `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check',
-    '--window-size=1400,900'], { stdio: 'ignore', windowsHide: false });
+    '--window-size=1400,900', ...(cfg.startFullscreen === true ? ['--start-fullscreen'] : [])],
+  { stdio: 'ignore', windowsHide: false });
   let exited = false;
   p.on('error', (e) => { log(`Prohlížeč se nespustil: ${e.message}`); shutdown('chyba prohlížeče'); });
   log(`Okno otevřeno (PID prohlížeče ${p.pid}).`);

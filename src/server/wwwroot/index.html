@@ -35,6 +35,7 @@
       </label>
 
       <span class="git" id="git" title="Aktuální větev a počet změněných souborů"></span>
+      <button type="button" class="btn btn-ghost btn-small" id="settings-open" aria-haspopup="dialog">Nastavení</button>
     </div>
   </header>
 
@@ -92,11 +93,60 @@
     <div class="drop-hint" id="drop-hint" aria-hidden="true" hidden><span>Pusťte soubory sem – přiloží se ke zprávě.</span></div>
   </div>
 
+  <dialog class="dialog settings" id="settings" aria-labelledby="settings-title">
+    <div class="dialog-head">
+      <h2 class="dialog-title" id="settings-title">Nastavení</h2>
+      <button type="button" class="btn btn-ghost btn-small" id="settings-close">Zavřít</button>
+    </div>
+
+    <section class="set-section" aria-labelledby="set-projects-title">
+      <h3 class="eyebrow" id="set-projects-title">Projekty</h3>
+      <ul class="set-list" id="set-projects"></ul>
+      <form class="set-add" id="set-add">
+        <label class="set-field"><span>Název</span><input id="set-add-label" maxlength="60" required autocomplete="off"></label>
+        <label class="set-field set-field--wide"><span>Složka (celá cesta)</span><input id="set-add-path" maxlength="1000" required autocomplete="off" spellcheck="false" placeholder="např. ~/code/web nebo D:\projekty\web"></label>
+        <button type="submit" class="btn btn-accent btn-small">Přidat projekt</button>
+      </form>
+      <p class="set-msg" id="set-projects-msg" role="status" aria-live="polite"></p>
+      <p class="set-hint">Ukládá se jen seznam projektů (předchozí verze konfigurace zůstane vedle jako <code>.bak</code>).
+        Claude pracuje vždy jen ve vybraném projektu. Složku účtu Claude Code, domovskou složku ani kořen disku přidat nejde.</p>
+    </section>
+
+    <section class="set-section" aria-labelledby="set-accounts-title">
+      <h3 class="eyebrow" id="set-accounts-title">Účty</h3>
+      <ul class="set-list" id="set-accounts"></ul>
+      <p class="set-hint">Účty se z bezpečnostních důvodů upravují jen ručně v <code>local/config.json</code> – každý s očekávaným
+        e-mailem, který aplikace ověřuje. Jiný účet (třeba osobní) tak nejde použít ani omylem.</p>
+    </section>
+
+    <section class="set-section" aria-labelledby="set-window-title">
+      <h3 class="eyebrow" id="set-window-title">Okno</h3>
+      <div class="set-row">
+        <button type="button" class="btn btn-ghost btn-small" id="set-fullscreen">Celá obrazovka</button>
+        <span class="set-hint">Také klávesa F11. Spouštět rovnou na celou obrazovku: <code>"startFullscreen": true</code> v configu.</span>
+      </div>
+    </section>
+
+    <section class="set-section" aria-labelledby="set-notify-title">
+      <h3 class="eyebrow" id="set-notify-title">Oznámení</h3>
+      <div class="set-row">
+        <button type="button" class="btn btn-ghost btn-small notify-toggle" id="set-notify" aria-pressed="false">Oznámení: vypnuto</button>
+        <span class="set-hint">Jen když okno není aktivní.</span>
+      </div>
+      <fieldset class="set-checks" id="set-notify-kinds">
+        <legend class="sr-only">Kdy upozornit</legend>
+        <label><input type="checkbox" value="ok"> Claude doběhl</label>
+        <label><input type="checkbox" value="plan"> Plán čeká na schválení</label>
+        <label><input type="checkbox" value="problem"> Chyba, limit účtu nebo pozastavená fronta</label>
+      </fieldset>
+    </section>
+  </dialog>
+
   <footer class="foot" id="foot">
     <span id="foot-session">Nové sezení</span>
     <span id="foot-model"></span>
     <span id="foot-cost"></span>
-    <button type="button" class="foot-btn" id="notify-toggle" aria-pressed="false">Oznámení: vypnuto</button>
+    <button type="button" class="foot-btn notify-toggle" id="notify-toggle" aria-pressed="false">Oznámení: vypnuto</button>
   </footer>
 </body>
 </html>

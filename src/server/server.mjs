@@ -13,6 +13,7 @@ import { listSessions, history, transcriptPath } from './lib/sessions.mjs';
 import { gitStatus } from './lib/git.mjs';
 import { AttachmentStore, attachmentsPrompt, MAX_PER_RUN as MAX_ATTACHMENTS } from './lib/attachments.mjs';
 import { openWindow, createHeartbeat } from './lib/window.mjs';
+import { changeProjects, settingsView } from './lib/settings.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..', '..');
@@ -218,6 +219,28 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'POST' && p === '/api/runs') return startRun(req, res);
+
+  // Nastavení: jen projekty (účty se z UI nikdy nemění – viz docs/security.md).
+  if (req.method === 'GET' && p === '/api/settings') return sendJson(res, 200, settingsView(cfg));
+  if ((req.method === 'POST' && p === '/api/settings/projects')
+    || ((req.method === 'PATCH' || req.method === 'DELETE') && (m = /^\/api\/settings\/projects\/([^/]+)$/.exec(p)))) {
+    let body = {};
+    if (req.method !== 'DELETE') {
+      try { body = await readJson(req); } catch (e) { return problem(res, e.status ?? 400, e.message); }
+      if (!body || typeof body !== 'object') return problem(res, 400, 'Prázdný požadavek.');
+    } else req.resume();
+    const id = m ? decodeURIComponent(m[1]) : '';
+    const change = req.method === 'POST' ? { op: 'add', label: body.label, path: body.path }
+      : req.method === 'PATCH' ? { op: 'rename', id, label: body.label } : { op: 'remove', id };
+    try {
+      const r = changeProjects(CONFIG_FILE, cfg, /** @type {any} */ (change), { isBusy: (x) => runner.isProjectBusy(x) });
+      log(`Nastavení: projekt ${r.id} – ${change.op}`);
+      return sendJson(res, 200, { ...settingsView(cfg), changed: r.id });
+    } catch (e) {
+      if (!e.status) log(`Nastavení: zápis selhal: ${e.message}`);
+      return problem(res, e.status ?? 500, e.status ? e.message : 'Uložení konfigurace selhalo.');
+    }
+  }
 
   // Zpráva do běžícího tahu („Poslat hned“). 409 = běh už vstup nepřijímá → UI ji dá do fronty.
   if (req.method === 'POST' && (m = /^\/api\/runs\/([0-9a-f]+)\/message$/.exec(p))) {

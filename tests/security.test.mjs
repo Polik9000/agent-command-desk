@@ -166,3 +166,34 @@ test('/api/state: seznam modelů a effortů', async () => {
   assert.ok(st.models.some((m) => m.id === '' ) && st.models.some((m) => m.id === 'opus'));
   assert.deepEqual(st.efforts, ['', 'low', 'medium', 'high', 'xhigh', 'max']);
 });
+
+test('Nastavení: jen s tokenem a Origin, neplatná cesta 400, přidání/přejmenování/odebrání projektu', async () => {
+  const send = (method, p, obj, headers = origin()) => {
+    const body = obj === undefined ? undefined : Buffer.from(JSON.stringify(obj));
+    const h = body ? { 'Content-Type': 'application/json', 'Content-Length': body.length } : {};
+    return req(method, p, { ...headers, ...h }, body);
+  };
+  const extra = path.join(root, '.test-state', 'security-proj');
+  mkdirSync(extra, { recursive: true });
+  assert.equal((await req('GET', '/api/settings')).status, 401);
+  assert.equal((await send('POST', '/api/settings/projects', { label: 'X', path: extra }, { 'X-ACD-Token': TOKEN })).status, 403);
+  assert.equal((await send('DELETE', '/api/settings/projects/p2', undefined, { 'X-ACD-Token': TOKEN })).status, 403);
+  assert.equal((await send('POST', '/api/settings/projects', { label: 'X', path: stateDir })).status, 400);
+  assert.equal((await send('POST', '/api/settings/projects', { label: 'X', path: 'relativni' })).status, 400);
+  // účty z UI měnit nejde – neexistuje žádná taková adresa
+  assert.equal((await send('POST', '/api/settings/accounts', { id: 'x' })).status, 404);
+
+  const added = await send('POST', '/api/settings/projects', { label: 'Navíc', path: extra });
+  assert.equal(added.status, 200);
+  const view = JSON.parse(added.body);
+  assert.equal(view.changed, 'navic');
+  assert.ok(view.projects.some((x) => x.id === 'navic' && x.path === extra));
+  let st = JSON.parse((await req('GET', '/api/state', { 'X-ACD-Token': TOKEN })).body);
+  assert.ok(st.projects.some((x) => x.id === 'navic'));
+  assert.equal((await send('PATCH', '/api/settings/projects/navic', { label: 'Navíc 2' })).status, 200);
+  assert.equal((await send('DELETE', '/api/settings/projects/navic')).status, 200);
+  st = JSON.parse((await req('GET', '/api/state', { 'X-ACD-Token': TOKEN })).body);
+  assert.ok(!st.projects.some((x) => x.id === 'navic'));
+  assert.ok(existsSync(path.join(stateDir, 'config.json.bak')));
+  rmSync(extra, { recursive: true, force: true });
+});
