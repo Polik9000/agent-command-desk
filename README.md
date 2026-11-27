@@ -68,6 +68,7 @@ Runs on Windows and macOS (experimental). The UI is in Czech.
   Code's `default` mode): Claude Code asks before every file edit and command.
 - **Usage limits** – warning when an account gets close; when it hits the limit, one click switches to another account
   and resends.
+- **Light or dark** – *Nastavení → Vzhled*: dark (default), light, or follow the system. Remembered per browser.
 - **Your own name and look** – one config value and one CSS file (see *Customize*).
 - **Security** – loopback only, per-launch token, Host/Origin checks, strict CSP, permission mode only `auto` or `plan`
   (plus `default` with permission requests on; never `bypassPermissions`). Details in [docs/security.md](docs/security.md).
@@ -130,7 +131,7 @@ Everything personal lives in `local/` (git-ignored):
 | File | What |
 |---|---|
 | `local/config.json` | `app.id` (launcher and state folder name), `app.name` (window title and logo), accounts, projects |
-| `local/theme.css` | your look: copy `src/server/wwwroot/theme.css` and change colours, fonts (`@font-face`), brand suffix, motif, spinner, scrollbars |
+| `local/theme.css` | your look: copy `src/server/wwwroot/theme.css` and change colours, fonts (`@font-face`), brand suffix, motif, spinner, scrollbars; light colours go in a `:root[data-theme="light"]` block (`--accent-ink` = accent used for text and lines) |
 | `local/favicon.svg` | your icon |
 
 Ready-made prompt for Claude Code (replace the parts in brackets):
@@ -156,7 +157,7 @@ Vendor libraries and optional fonts: `scripts/fetch-vendor.ps1` (pinned versions
 How the CLI is driven (stream-json input/output, sending into a running turn): [docs/claude-code-headless.md](docs/claude-code-headless.md).
 
 ## Roadmap
-Light theme, one long-lived Claude Code process per session (faster replies), keyboard and screen-reader review.
+One long-lived Claude Code process per session (faster replies), keyboard and screen-reader review.
 
 ## Uninstall
 Windows: `powershell -ExecutionPolicy Bypass -File scripts\uninstall.ps1` · macOS: `sh scripts/uninstall.sh`.
@@ -182,7 +183,8 @@ do fronty; přikládat jde screenshoty (Ctrl+V), PDF a textové soubory. Rozhran
 
 Kliknutím na větev a počet změn v hlavičce se otevře **přehled změn v gitu** (soubory a diff, jen pro čtení).
 3. Vlastní název: `app.name` v configu. Vlastní vzhled: `local/theme.css` (vzor `src/server/wwwroot/theme.css`),
-   ikona `local/favicon.svg`. Složka `local/` se nikdy necommituje.
+   ikona `local/favicon.svg`. Složka `local/` se nikdy necommituje. Světlý nebo tmavý motiv: **Nastavení → Vzhled**
+   (barvy světlého motivu ve vlastním tématu: blok `:root[data-theme="light"]`).
 4. Spouštěč: Windows `scripts\install.ps1`, macOS `scripts/install.sh`; pak příkaz podle `app.id`.
 
 Nebo dejte Claudovi prompt z části *Customize* a nechte ho nastavit všechno za vás.

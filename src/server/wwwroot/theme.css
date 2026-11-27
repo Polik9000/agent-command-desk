@@ -14,6 +14,8 @@
   --line: #2a2f3a;        /* okraje */
   --scroll-thumb: #3a404d; /* posuvníky */
   --accent: #7aa2ff;      /* přepisuje app.js podle účtu */
+  --accent-ink: var(--accent); /* akcent jako barva textu a čar (ve světlém motivu tmavší) */
+  --code-bg: #000;        /* pozadí výstupů nástrojů a diffu */
   --on-accent: #000;      /* text na akcentu */
   --ok: #7ee0a1;
   --info: #7fc8ff;
@@ -40,4 +42,27 @@
   --spinner: "●";         /* indikátor běhu */
 
   color-scheme: dark;
+}
+
+/* Světlý motiv (Nastavení → Vzhled). Vlastní téma může přidat vlastní blok :root[data-theme="light"]. */
+:root[data-theme="light"] {
+  --bg: #f6f6f4;
+  --fg: #16181d;
+  --gray-1: #ffffff;
+  --gray-2: #e9ebef;
+  --gray-3: #646a76;
+  --bubble: #e9ebef;
+  --text-muted: #474c57;
+  --line: #d3d6dc;
+  --scroll-thumb: #b5bac4;
+  --code-bg: #f1f2f4;
+  --accent-ink: color-mix(in oklab, var(--accent) 45%, #000); /* světlé akcenty účtů by na bílé nebyly čitelné */
+  --ok: #17703c;
+  --info: #0a5c97;
+  --err: #b3261e;
+  --hl-keyword: #6a35c2;
+  --hl-string: #17703c;
+  --hl-number: #8f5200;
+  --hl-title: #0a5c97;
+  color-scheme: light;
 }

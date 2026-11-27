@@ -625,6 +625,8 @@ function paletteActions() {
     { label: 'Nastavení', run: () => openSettings() },
     { label: 'Statistiky a limit účtu', run: () => openStats() },
     { label: document.fullscreenElement ? 'Ukončit celou obrazovku' : 'Celá obrazovka', run: () => toggleFullscreen() },
+    ...[['dark', 'Tmavý'], ['light', 'Světlý'], ['system', 'Podle systému']].map(([v, l]) =>
+      ({ label: `Motiv: ${l}`, run: () => window.acdTheme && window.acdTheme.set(v) })),
   ];
 }
 
@@ -836,6 +838,7 @@ async function openSettings() {
     ? 'Žádosti o svolení: zapnuto. Když se Claude Code zeptá, objeví se v chatu karta Povolit jednou / Povolit vždy / Zamítnout. V režimu Auto se ptá jen výjimečně – většinu rozhodne sám; na každý zápis a příkaz se ptá v režimu Ručně.'
     : 'Žádosti o svolení: vypnuto – na co by se Claude Code zeptal, to se samo zamítne. Zapnout jde volbou "interactivePermissions": true v local/config.json.';
   renderFullscreenButton();
+  renderThemeChoice();
   renderNotifyToggle();
   if (!d.open) d.showModal();
   try { renderSettingsProjects(await apiJson('/api/settings')); } catch (e) { setMsg(e.message, 'err'); }
@@ -936,6 +939,11 @@ async function addProjectSubmit(e) {
   if (view) { $('#set-add-label').value = ''; $('#set-add-path').value = ''; }
 }
 
+function renderThemeChoice() {
+  const c = window.acdTheme ? window.acdTheme.get() : 'dark';
+  for (const i of $('#set-theme').querySelectorAll('input')) i.checked = i.value === c;
+}
+
 function renderFullscreenButton() {
   const b = $('#set-fullscreen');
   const on = !!document.fullscreenElement;
@@ -957,6 +965,7 @@ function setupSettings() {
   $('#settings').addEventListener('click', (e) => { if (e.target === e.currentTarget) e.currentTarget.close(); }); // klik na pozadí
   $('#set-add').addEventListener('submit', addProjectSubmit);
   $('#set-fullscreen').addEventListener('click', toggleFullscreen);
+  $('#set-theme').addEventListener('change', (e) => { if (window.acdTheme) window.acdTheme.set(e.target.value); });
   document.addEventListener('fullscreenchange', renderFullscreenButton);
   $('#set-notify').addEventListener('click', toggleNotify);
   $('#set-notify-kinds').addEventListener('change', () => {

@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Agent Command Desk</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <script src="theme-init.js"></script>
   <link rel="stylesheet" href="theme.css">
   <link rel="stylesheet" href="app.css">
   <link rel="stylesheet" href="theme.local.css">
@@ -128,6 +129,19 @@
     <section class="set-section" aria-labelledby="set-perm-title">
       <h3 class="eyebrow" id="set-perm-title">Oprávnění</h3>
       <p class="set-hint" id="set-perm"></p>
+    </section>
+
+    <section class="set-section" aria-labelledby="set-theme-title">
+      <h3 class="eyebrow" id="set-theme-title">Vzhled</h3>
+      <div class="set-row">
+        <fieldset class="seg" id="set-theme">
+          <legend class="sr-only">Motiv</legend>
+          <label class="seg-item"><input type="radio" name="theme" value="dark"><span>Tmavý</span></label>
+          <label class="seg-item"><input type="radio" name="theme" value="light"><span>Světlý</span></label>
+          <label class="seg-item"><input type="radio" name="theme" value="system"><span>Podle systému</span></label>
+        </fieldset>
+        <span class="set-hint">Platí jen pro toto okno a počítač.</span>
+      </div>
     </section>
 
     <section class="set-section" aria-labelledby="set-window-title">
