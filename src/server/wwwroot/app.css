@@ -41,7 +41,7 @@ body {
   padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--line); flex-wrap: wrap;
 }
 .brand { display: flex; align-items: baseline; }
-.brand-name { font: 700 1.6rem/var(--lh-head) var(--font-head); letter-spacing: -.01em; }
+.brand-name { font: 700 1.6rem/var(--lh-head) var(--font-head); letter-spacing: -.01em; margin: 0; }
 .controls { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; }
 
 .seg { border: 0; margin: 0; padding: 0; display: flex; align-items: center; gap: var(--space-2); }

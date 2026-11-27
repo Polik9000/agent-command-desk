@@ -21,7 +21,7 @@
 
   <header class="top">
     <div class="brand">
-      <span class="brand-name" id="brand-name">Agent Command Desk</span>
+      <h1 class="brand-name" id="brand-name">Agent Command Desk</h1>
       <span class="motif motif--short" aria-hidden="true"></span>
     </div>
 
@@ -36,7 +36,7 @@
       </label>
 
       <button type="button" class="git" id="git" title="Větev a změněné soubory – kliknutím zobrazíte změny (jen pro čtení)" aria-haspopup="dialog"></button>
-      <button type="button" class="btn btn-ghost btn-small" id="palette-open" aria-haspopup="dialog" title="Příkazy, skilly, akce a nedávné zprávy (Ctrl+K)">Příkazy</button>
+      <button type="button" class="btn btn-ghost btn-small" id="palette-open" aria-haspopup="dialog" aria-keyshortcuts="Control+K" title="Příkazy, skilly, akce a nedávné zprávy (Ctrl+K)">Příkazy</button>
       <button type="button" class="btn btn-ghost btn-small" id="settings-open" aria-haspopup="dialog">Nastavení</button>
     </div>
   </header>
@@ -60,7 +60,7 @@
       <section class="chat" id="chat" aria-label="Konverzace">
         <div class="empty" id="empty">
           <div class="motif motif--fill" aria-hidden="true"></div>
-          <h1 class="empty-title">Co dnes uděláme</h1>
+          <h2 class="empty-title">Co dnes uděláme</h2>
           <p class="empty-text">Napište zadání. Režim <strong>Plán</strong> nejdřív navrhne postup a nic nezmění,
             režim <strong>Auto</strong> rovnou pracuje.</p>
         </div>
@@ -92,8 +92,8 @@
           <button type="button" class="btn btn-ghost btn-pill" id="attach" title="Přiložit soubory (nebo je přetáhněte do okna, obrázek vložte Ctrl+V)">Přiložit</button>
           <input type="file" id="file-input" multiple hidden accept=".png,.jpg,.jpeg,.gif,.webp,.pdf,.txt,.md,.csv,.json,.log">
           <button type="button" class="btn btn-ghost" id="stop" hidden>Zastavit</button>
-          <button type="button" class="btn btn-ghost" id="queue-send" hidden title="Odešle se až po dokončení běhu (Ctrl+Shift+Enter)">Do fronty</button>
-          <button type="submit" class="btn btn-accent" id="send">Odeslat</button>
+          <button type="button" class="btn btn-ghost" id="queue-send" aria-keyshortcuts="Control+Shift+Enter" hidden title="Odešle se až po dokončení běhu (Ctrl+Shift+Enter)">Do fronty</button>
+          <button type="submit" class="btn btn-accent" id="send" aria-keyshortcuts="Control+Enter">Odeslat</button>
         </div>
       </form>
     </main>
@@ -198,10 +198,13 @@
     </div>
     <div class="git-body">
       <nav class="git-files" id="git-files" aria-label="Změněné soubory"></nav>
-      <section class="git-diff" id="git-diff" aria-label="Rozdíly vybraného souboru" aria-live="polite"></section>
+      <section class="git-diff" id="git-diff" aria-label="Rozdíly vybraného souboru"></section>
+      <p class="sr-only" id="git-status" role="status"></p>
     </div>
     <p class="set-hint">Jen pro čtení – commit, push ani jiné změny v gitu se odsud nedělají.</p>
   </dialog>
+
+  <div class="sr-only" id="announce" aria-live="assertive" aria-atomic="true"></div>
 
   <footer class="foot" id="foot">
     <span id="foot-session">Nové sezení</span>

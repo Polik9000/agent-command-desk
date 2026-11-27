@@ -70,6 +70,9 @@ Runs on Windows and macOS (experimental). The UI is in Czech.
   Code's `default` mode): Claude Code asks before every file edit and command.
 - **Usage limits** – warning when an account gets close; when it hits the limit, one click switches to another account
   and resends.
+- **Keyboard and screen readers** – everything works from the keyboard (Ctrl+K, Ctrl+Enter, Esc closes dialogs and
+  returns focus), messages are labelled *Vaše zpráva* / *Claude*, errors, plans and permission requests are announced;
+  a permission card never steals focus while you type. Checked with axe-core (WCAG 2.2 AA) in both themes.
 - **Light or dark** – *Nastavení → Vzhled*: dark (default), light, or follow the system. Remembered per browser.
 - **Your own name and look** – one config value and one CSS file (see *Customize*).
 - **Security** – loopback only, per-launch token, Host/Origin checks, strict CSP, permission mode only `auto` or `plan`
@@ -161,7 +164,7 @@ Vendor libraries and optional fonts: `scripts/fetch-vendor.ps1` (pinned versions
 How the CLI is driven (stream-json input/output, sending into a running turn): [docs/claude-code-headless.md](docs/claude-code-headless.md).
 
 ## Roadmap
-Keyboard and screen-reader review.
+Ideas and feedback welcome – open an issue.
 
 ## Uninstall
 Windows: `powershell -ExecutionPolicy Bypass -File scripts\uninstall.ps1` · macOS: `sh scripts/uninstall.sh`.

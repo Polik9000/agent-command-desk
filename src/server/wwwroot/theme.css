@@ -8,7 +8,7 @@
   --fg: #e8e8ea;
   --gray-1: #171a21;      /* karty, panely, pole */
   --gray-2: #1f232c;      /* zvýraznění */
-  --gray-3: #6e7380;      /* dekor, popisky */
+  --gray-3: #8a8f9c;      /* dekor, popisky (kontrast ≥ 4,5:1 i na --gray-2) */
   --bubble: #232835;      /* bublina odpovědi */
   --text-muted: #b4b8c2;
   --line: #2a2f3a;        /* okraje */

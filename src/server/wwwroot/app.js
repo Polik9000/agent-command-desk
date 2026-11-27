@@ -104,6 +104,14 @@ function clearChat() {
   chat().querySelectorAll(':scope > :not(#empty)').forEach((n) => n.remove());
   $('#empty').hidden = false;
 }
+/** Důležité hlášení pro čtečku obrazovky (přeruší čtení). Stav běhu hlásí #status zdvořile. */
+function announce(text) {
+  const r = $('#announce');
+  r.textContent = '';
+  setTimeout(() => { r.textContent = text; }, 50); // stejný text znovu = znovu přečíst
+}
+/** Píše uživatel právě do pole? (pak mu nebrat fokus) */
+const isTyping = () => { const a = document.activeElement; return !!a && (a.matches('textarea, input, select, [contenteditable="true"]') || !!a.closest('dialog[open]')); };
 function setStatus(text, busy) {
   const s = $('#status');
   s.textContent = '';
@@ -614,6 +622,11 @@ const fold = (s) => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase(); // 
 
 function paletteActions() {
   return [
+    ...(document.querySelector('.perm:not([data-state="resolved"]) .perm-actions button:not(:disabled)')
+      ? [{ label: 'Žádost o svolení', meta: 'přejít na kartu', run: () => {
+        const b = document.querySelector('.perm:not([data-state="resolved"]) .perm-actions button:not(:disabled)');
+        if (b) { b.scrollIntoView({ block: 'center' }); b.focus(); }
+      } }] : []),
     { label: 'Nové sezení', run: () => newSession() },
     { label: 'Režim Auto', run: () => setMode('auto') },
     { label: 'Režim Plán', run: () => setMode('plan') },
@@ -793,8 +806,16 @@ async function selectGitFile(btn, path, area) {
   showDiff(null, 'Načítám…');
   try {
     const r = await apiJson(`/api/projects/${encodeURIComponent(S.project)}/git/diff?path=${encodeURIComponent(path)}&area=${area}`);
-    if (seq === G.seq) showDiff(r);
-  } catch (e) { if (seq === G.seq) showDiff(null, e.message); }
+    if (seq === G.seq) {
+      showDiff(r);
+      // Čtečce stačí shrnutí; celý diff si projde sama (živá oblast nad diffem by ho předčítala celý).
+      const lines = (r.diff || '').split(/\n/);
+      const add = lines.filter((l) => l.startsWith('+') && !l.startsWith('+++')).length;
+      const del = lines.filter((l) => l.startsWith('-') && !l.startsWith('---')).length;
+      $('#git-status').textContent = `${path}: ${add} ${plural(add, 'přidaný řádek', 'přidané řádky', 'přidaných řádků')}, `
+        + `${del} ${plural(del, 'odebraný', 'odebrané', 'odebraných')}${r.note ? '. ' + r.note : ''}`;
+    }
+  } catch (e) { if (seq === G.seq) { showDiff(null, e.message); $('#git-status').textContent = e.message; } }
 }
 
 /** Unified diff → řádky s barvami (stejné třídy jako u karet nástrojů). */
@@ -986,6 +1007,7 @@ function showBanner(kind, html, actions) {
   b.appendChild(t);
   for (const a of actions || []) b.appendChild(a);
   b.hidden = false;
+  announce(t.textContent.slice(0, 300) + (actions && actions.length ? ' Možnosti jsou nad konverzací.' : ''));
 }
 function button(text, cls, onClick) {
   const b = el('button', 'btn ' + cls, text);
@@ -1017,6 +1039,7 @@ function showError(title, detail) {
   box.appendChild(el('div', 'eyebrow', title));
   if (detail) box.appendChild(el('pre', null, detail));
   append(box, true);
+  announce(`${title}${detail ? ': ' + detail.slice(0, 200) : ''}`);
 }
 
 /* ---------- Nástroje ---------- */
@@ -1133,6 +1156,8 @@ function fillToolResult(t, ev) {
 /* ---------- Plán ---------- */
 function showPlanCard(markdown, title) {
   const box = el('div', 'plan');
+  box.setAttribute('role', 'group'); // skupina, ne orientační bod – karet může být víc
+  box.setAttribute('aria-label', title || 'Plán');
   box.appendChild(el('div', 'eyebrow', title || 'Plán'));
   if (markdown) {
     const body = el('div', 'md');
@@ -1144,6 +1169,7 @@ function showPlanCard(markdown, title) {
   actions.append(approve, el('span', 'hint', 'Spustí se v režimu Auto ve stejném sezení. Úpravy plánu napište jako další zprávu.'));
   box.appendChild(actions);
   append(box, true);
+  announce(`${title || 'Plán'} – tlačítko Schválit plán je pod ním.`);
 }
 
 /* ---------- Žádost o svolení (jen s interactivePermissions v configu) ---------- */
@@ -1153,9 +1179,10 @@ const PERM_RESULT = {
 };
 
 function showPermissionCard(ev, run) {
-  const box = el('section', 'perm');
+  const box = el('div', 'perm');
   box.dataset.requestId = ev.requestId;
-  box.setAttribute('aria-label', 'Claude žádá o svolení');
+  box.setAttribute('role', 'group');
+  box.setAttribute('aria-label', `Claude žádá o svolení: ${ev.displayName || ev.toolName}`);
   box.appendChild(el('div', 'eyebrow', 'Claude žádá o svolení'));
   box.appendChild(el('h3', 'perm-title', ev.displayName || ev.toolName));
   if (ev.description) box.appendChild(el('p', 'perm-desc', ev.description));
@@ -1165,7 +1192,9 @@ function showPermissionCard(ev, run) {
   if (ev.blockedPath && ev.blockedPath !== pv.path) box.appendChild(el('p', 'perm-desc', `Cesta: ${ev.blockedPath}`));
   const actions = el('div', 'perm-actions');
   const answer = async (decision, btn) => {
+    const hadFocus = box.contains(document.activeElement);
     for (const b of actions.querySelectorAll('button')) b.disabled = true;
+    if (hadFocus) $('#prompt').focus({ preventScroll: true }); // zakázané tlačítko by fokus ztratilo
     try {
       await apiJson(`/api/runs/${encodeURIComponent(run.runId)}/permission`, { method: 'POST', body: { requestId: ev.requestId, decision } });
     } catch (e) {
@@ -1185,7 +1214,11 @@ function showPermissionCard(ev, run) {
   const mins = Math.round((ev.timeoutMs || 600000) / 60000);
   box.appendChild(el('p', 'perm-rule perm-wait', `Claude čeká. Bez odpovědi do ${mins} min se akce zamítne.`));
   append(box, true);
-  once.focus({ preventScroll: true });
+  // Fokus jen když uživatel nepíše – jinak by mezerník nebo Enter akci omylem povolil.
+  const typing = isTyping();
+  if (!typing) once.focus({ preventScroll: true });
+  announce(`Claude žádá o svolení: ${ev.displayName || ev.toolName}${detail ? ' – ' + String(detail).slice(0, 160) : ''}.`
+    + (typing ? ' Karta je v konverzaci, najdete ji i v Příkazech (Ctrl+K).' : ''));
   run.pendingPermissions = (run.pendingPermissions || 0) + 1;
   setStatus('Claude čeká na vaše svolení…', true);
   notify('Claude žádá o svolení', `${ev.displayName || ev.toolName}: ${detail || ''}`, 'plan');
@@ -1206,6 +1239,7 @@ function resolvePermissionCard(box, decision, errorText) {
   const p = el('p', 'perm-result', PERM_RESULT[decision] || decision);
   p.dataset.decision = decision;
   box.appendChild(p);
+  if (decision === 'timeout') announce(PERM_RESULT.timeout);
 }
 
 function approvePlan(btn) {
@@ -1302,6 +1336,8 @@ function userBubble(text, files) {
     body = body.slice(0, at);
   }
   const box = el('div', 'msg msg--me', body);
+  box.setAttribute('role', 'article');
+  box.setAttribute('aria-label', 'Vaše zpráva');
   if (names.length) {
     const list = el('div', 'msg-attachments');
     for (const n of names) list.appendChild(el('span', 'msg-attachment', `📎 ${n}`));
@@ -1672,6 +1708,8 @@ function textBlock(state, messageId, index) {
   let b = state.msgBlocks.get(key);
   if (!b) {
     const node = append(el('div', 'msg msg--claude md'));
+    node.setAttribute('role', 'article');
+    node.setAttribute('aria-label', 'Claude');
     b = { node, raw: '', messageId, pending: false };
     state.msgBlocks.set(key, b);
   }
