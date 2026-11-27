@@ -12,12 +12,20 @@ claude -p --input-format stream-json --output-format stream-json --verbose --inc
 The prompt is written to stdin as one JSON line `{"type":"user","message":{"role":"user","content":"…"}}`; stdin stays
 open until the turn ends. A message written during the turn is picked up at the next tool boundary and answered in the
 same turn (verified on 2.1.332); `--replay-user-messages` echoes each accepted message (`type: "user"`, `isReplay: true`),
-the first echo being the initial prompt. After `result`, stdin is closed unless an injected message has not been echoed
-yet (then Claude answers it as a follow-up turn; a 60 s fallback closes stdin anyway). Environment: `CLAUDE_CONFIG_DIR` from the account allowlist; inherited `CLAUDECODE`,
+the first echo being the initial prompt. After `result`, if an injected message has not been echoed yet, Claude answers
+it as a follow-up turn of the same run (a 60 s fallback closes stdin). Otherwise the turn ends and the process is kept
+waiting with stdin open (see below). Environment: `CLAUDE_CONFIG_DIR` from the account allowlist; inherited `CLAUDECODE`,
 `CLAUDE_CODE_*`, `CLAUDE_PID` and `ANTHROPIC_*` are removed.
 
-One process per message + `--resume` (no long-lived process): the mode is a start-up flag, Stop simply kills the tree,
-and nothing depends on an undocumented control protocol. The cost is a few seconds of start-up per message.
+**Process per session.** One process can take several turns: each further user line on stdin starts a new turn
+(a new `system/init` with the same `session_id`, then replay, messages and `result`). Measured on 2.1.332: a message
+to a waiting process answers in ~0.8 s, a new process with `--resume` in ~2.5–3 s. So after a successful `result`
+the process waits (`sessionProcessMinutes`, default 10, at most 3 waiting processes, oldest closed first). The next
+message to the same session with the same account, project, mode, model, effort and directories is written to it;
+anything else closes the waiting process (end of stdin) and starts a new one with `--resume`, since mode, model and
+effort are start-up flags. The process is kept only if the last `init` reported the requested `permissionMode` and the
+turn used no `ExitPlanMode`/`EnterPlanMode`; a reused process whose `init` reports another mode is stopped. Errors,
+Stop and `sessionProcessMinutes: 0` mean a new process next time. If the app dies, stdin closes and `claude` exits.
 
 ## Events (one JSON object per line, by `type`)
 | type / subtype | Fields used | UI |

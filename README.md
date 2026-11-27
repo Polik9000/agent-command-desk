@@ -38,6 +38,8 @@ Runs on Windows and macOS (experimental). The UI is in Czech.
 - **Sessions** – list with history, resume any session, Stop kills the whole process tree. Search across your and
   Claude's messages in the account's and project's sessions (case and diacritics ignored, matching snippet shown) and
   rename sessions with ✎ (the name is stored in the app only; Claude Code's transcripts are never modified).
+- **Fast follow-ups** – after a reply Claude Code keeps running for a while, so the next message in the same session
+  (same mode and model) is answered without start-up – about 0.8 s instead of 3 s for a short reply.
 - **Send now** – while Claude works, *Poslat hned* passes your message into the running turn; Claude picks it up at the
   next step (like in the Claude Code terminal) and the message shows when it was read.
 - **Message queue** – *Do fronty* keeps messages until the run finishes, then sends them one by one to the same session.
@@ -114,7 +116,9 @@ Runs on Windows and macOS (experimental). The UI is in Czech.
    ```
    The server accepts only these ids and the effort levels `low`, `medium`, `high`, `xhigh`, `max`.
    `"startFullscreen": true` opens the window in full screen. `"interactivePermissions": true` turns on permission
-   requests in the window (see *Features*). Projects can also be managed later in the app (*Nastavení*).
+   requests in the window (see *Features*). `"sessionProcessMinutes": 10` = how long Claude Code stays running after a
+   reply so the next message in the session starts instantly (`0` = new process for every message).
+   Projects can also be managed later in the app (*Nastavení*).
 4. **Install the launcher:**
    - Windows: `powershell -ExecutionPolicy Bypass -File scripts\install.ps1` → creates `%USERPROFILE%\bin\<app id>.cmd`
      (make sure `%USERPROFILE%\bin` is on `PATH`).
@@ -157,7 +161,7 @@ Vendor libraries and optional fonts: `scripts/fetch-vendor.ps1` (pinned versions
 How the CLI is driven (stream-json input/output, sending into a running turn): [docs/claude-code-headless.md](docs/claude-code-headless.md).
 
 ## Roadmap
-One long-lived Claude Code process per session (faster replies), keyboard and screen-reader review.
+Keyboard and screen-reader review.
 
 ## Uninstall
 Windows: `powershell -ExecutionPolicy Bypass -File scripts\uninstall.ps1` · macOS: `sh scripts/uninstall.sh`.

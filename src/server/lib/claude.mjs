@@ -124,38 +124,82 @@ export class AccountGuard {
 }
 
 /* ---------------- Běhy ---------------- */
+//
+// Běh = jeden tah (zpráva → odpověď), pro UI jeden SSE proud. Proces claude může přežít víc běhů téhož sezení:
+// po `result` zůstane stdin otevřený a proces čeká (nanejvýš `sessionProcessMinutes`, nejvýš MAX_IDLE procesů).
+// Další zpráva do stejného sezení se stejným účtem, projektem, režimem, modelem, effortem a složkami ho převezme
+// (bez startu procesu a --resume). Jiné nastavení → čekající proces se zavře a spustí se nový s --resume.
+// Bezpečnost: proces se k dalšímu použití odloží jen tehdy, když poslední init hlásil očekávaný režim a v tahu
+// nebyl nástroj, který režim mění (ExitPlanMode/EnterPlanMode); u převzatého procesu se režim kontroluje znovu.
+
+const MAX_IDLE = 3;
+const MODE_TOOLS = new Set(['ExitPlanMode', 'EnterPlanMode']);
+const RETIRE_WAIT_MS = 5000;
 
 export class ClaudeRunner {
-  /** @param {import('./config.mjs').Config} cfg @param {(m:string)=>void} log */
-  constructor(cfg, log) {
+  /**
+   * @param {import('./config.mjs').Config} cfg @param {(m:string)=>void} log
+   * @param {{spawnFn?: typeof spawn, idleMs?: number}} [opts] jen pro testy (falešný claude, krátký limit)
+   */
+  constructor(cfg, log, { spawnFn = spawn, idleMs } = {}) {
     this.cfg = cfg;
     this.log = log;
-    /** @type {Map<string, any>} */
+    this.spawnFn = spawnFn;
+    this.idleMsOverride = idleMs;
+    /** @type {Map<string, any>} běhy (tahy) */
     this.runs = new Map();
     /** @type {Set<string>} */
     this.busySessions = new Set();
+    /** @type {Map<string, any>} čekající procesy podle id sezení (pořadí = od nejstaršího) */
+    this.idle = new Map();
   }
 
+  get idleMs() { return this.idleMsOverride ?? (this.cfg.sessionProcessMinutes ?? 10) * 60_000; }
   get hasActiveRuns() { return this.runs.size > 0; }
   isSessionBusy(id) { return this.busySessions.has(id); }
   find(id) { return this.runs.get(id); }
   /** Běží v projektu nějaký claude? (takový projekt nejde odebrat v Nastavení) */
   isProjectBusy(projectId) { for (const r of this.runs.values()) if (r.projectId === projectId) return true; return false; }
-  stopAll() { for (const r of this.runs.values()) r.stop(); }
+  /** Zavře čekající procesy projektu (po odebrání projektu z Nastavení). */
+  closeProject(projectId) { for (const p of [...this.idle.values()]) if (p.projectId === projectId) this.#retire(p); }
+  stopAll() {
+    for (const r of this.runs.values()) r.stop();
+    for (const p of [...this.idle.values()]) { this.#unpark(p); killTree(p.child.pid); }
+  }
 
   /**
-   * Spustí claude; události emituje jako 'event', na konci 'end'.
+   * Spustí tah; události emituje jako 'event', na konci 'end'.
    * @param {import('./config.mjs').Account} account @param {import('./config.mjs').Project} project
    * @param {string} mode @param {string} prompt @param {string|null} resume
-   * @param {{addDirs?: string[], model?: string, effort?: string}} [opts] addDirs = další složky jen pro tento běh
-   *   (přílohy); model/effort už ověřené proti allowlistu (server.mjs)
+   * @param {{addDirs?: string[], model?: string, effort?: string}} [opts] addDirs = další složky (přílohy);
+   *   model/effort už ověřené proti allowlistu (server.mjs)
    */
-  start(account, project, mode, prompt, resume, { addDirs = [], model = '', effort = '' } = {}) {
+  async start(account, project, mode, prompt, resume, { addDirs = [], model = '', effort = '' } = {}) {
     if (!allowedModes(this.cfg).includes(mode)) throw new Error('Neplatný režim.');
     if (resume && this.busySessions.has(resume)) throw new Error('Toto sezení už běží.');
+    if (resume) this.busySessions.add(resume); // hned, ať nikdo jiný sezení nepřevezme během čekání níže
+    const sig = JSON.stringify([account.id, project.id, mode, model, effort, addDirs]);
+    let proc = resume ? this.idle.get(resume) : undefined;
+    try {
+      if (proc && (proc.sig !== sig || proc.exited)) { await this.#retire(proc); proc = undefined; }
+      if (proc) this.#unpark(proc);
+      else proc = this.#spawn(account, project, mode, resume, { addDirs, model, effort }, sig);
+    } catch (e) {
+      if (resume) this.busySessions.delete(resume);
+      throw e;
+    }
+    const warm = proc.turns > 0;
+    const run = this.#newRun(proc, account, project, resume, warm);
+    this.log(`Běh ${run.id} spuštěn: účet ${account.id}, projekt ${project.id}, režim ${mode}, resume ${!!resume}`
+      + `, model ${model || 'výchozí'}, effort ${effort || 'výchozí'}${warm ? `, proces ${proc.id} převzat` : ''}`);
+    proc.turns++;
+    try { proc.child.stdin.write(userLine(prompt), 'utf8'); } catch { /* proces skončil – ohlásí 'close' */ }
+    return run;
+  }
 
-    // Vstup jako stream-json: stdin zůstane otevřený, dokud tah neskončí, takže lze poslat další zprávu
-    // do běžícího tahu (Claude ji převezme na nejbližším předělu; --replay-user-messages to potvrdí).
+  #spawn(account, project, mode, resume, { addDirs, model, effort }, sig) {
+    // Vstup jako stream-json: stdin zůstává otevřený, takže lze poslat další zprávu do běžícího tahu
+    // (Claude ji převezme na nejbližším předělu; --replay-user-messages to potvrdí) i další tah do stejného procesu.
     const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
       '--include-partial-messages', '--replay-user-messages', '--permission-mode', mode];
     // Výchozí: na co by se Claude Code zeptal, to se samo zamítne. Volitelně se ptá uživatele v okně (docs/security.md).
@@ -168,40 +212,55 @@ export class ClaudeRunner {
     if (model) args.push('--model', model);
     if (effort) args.push('--effort', effort);
 
-    const child = spawn(claudeExePath(this.cfg), args, {
+    const child = this.spawnFn(claudeExePath(this.cfg), args, {
       cwd: project.pathFull, env: claudeEnv(account), shell: false, stdio: ['pipe', 'pipe', 'pipe'], ...childSpawnOptions(),
     });
+    let closedResolve;
+    const proc = {
+      id: randomUUID().slice(0, 8), child, sig, mode, accountId: account.id, projectId: project.id,
+      sessionId: resume ?? null, run: /** @type {any} */ (null), turns: 0, exited: false, stdinOpen: true,
+      lastMode: /** @type {string|undefined} */ (undefined), turnTools: new Set(), idleTimer: /** @type {any} */ (null),
+      parser: new StreamParser(path.join(account.configDirFull, 'plans')), stderr: '', spawnError: /** @type {any} */ (null),
+      closed: new Promise((r) => { closedResolve = r; }),
+      endInput() {
+        if (!proc.stdinOpen) return;
+        proc.stdinOpen = false;
+        try { child.stdin.end(); } catch { /* už zavřeno */ }
+      },
+    };
+    this.#pump(proc, /** @type {any} */ (closedResolve));
+    return proc;
+  }
 
+  #newRun(proc, account, project, resume, warm) {
+    const runner = this;
     const run = Object.assign(new EventEmitter(), {
       id: randomUUID().replaceAll('-', ''),
       accountId: account.id,
       projectId: project.id,
       sessionId: resume ?? null,
+      warm,                 // převzatý čekající proces
+      blocked: false,       // zastaven pojistkou režimu
       stopped: false,
       ended: false,
-      acceptingInput: true, // dokud je stdin otevřený
+      acceptingInput: true, // dokud tah nepřijme výsledek
       injected: 0,          // zprávy poslané do běžícího tahu
       replayed: 0,          // potvrzení převzetí od claude (včetně úvodního promptu)
+      closeTimer: /** @type {any} */ (null),
       stop() {
         if (run.ended) return;
         run.stopped = true;
-        run.closeInput();
-        killTree(child.pid);
+        run.acceptingInput = false;
+        proc.endInput();
+        killTree(proc.child.pid);
       },
       /** Pošle zprávu do běžícího tahu. @returns {boolean} false, pokud už běh vstup nepřijímá */
       inject(text) {
-        if (!run.acceptingInput || run.ended || run.stopped) return false;
+        if (!run.acceptingInput || run.ended || run.stopped || !proc.stdinOpen) return false;
         run.injected++;
-        child.stdin.write(userLine(text), 'utf8');
+        try { proc.child.stdin.write(userLine(text), 'utf8'); } catch { return false; }
         return true;
       },
-      closeInput() {
-        if (!run.acceptingInput) return;
-        run.acceptingInput = false;
-        clearTimeout(run.closeTimer);
-        try { child.stdin.end(); } catch { /* už zavřeno */ }
-      },
-      closeTimer: /** @type {any} */ (null),
       /** Nevyřízené žádosti o svolení: requestId → {input, suggestions, timer} */
       permissions: new Map(),
       /**
@@ -213,17 +272,15 @@ export class ClaudeRunner {
         if (!p || run.ended) return false;
         run.permissions.delete(requestId);
         clearTimeout(p.timer);
-        try { child.stdin.write(controlResponse(requestId, decision, p.input, p.suggestions), 'utf8'); } catch { /* proces skončil */ }
+        try { proc.child.stdin.write(controlResponse(requestId, decision, p.input, p.suggestions), 'utf8'); } catch { /* proces skončil */ }
         const always = decision === 'always' ? alwaysUpdates(p.suggestions).flatMap((u) => u.rules.map(ruleLabel)) : [];
         run.emit('event', ev('permission_resolved', { requestId, decision: decision === 'always' && !always.length ? 'once' : decision, rules: always }));
         return true;
       },
     });
-    if (resume) this.busySessions.add(resume);
-    this.runs.set(run.id, run);
-    this.log(`Běh ${run.id} spuštěn: účet ${account.id}, projekt ${project.id}, režim ${mode}, resume ${!!resume}`
-      + `, model ${model || 'výchozí'}, effort ${effort || 'výchozí'}`);
-    this.#pump(run, child, account, prompt);
+    proc.run = run;
+    proc.turnTools.clear();
+    runner.runs.set(run.id, run);
     return run;
   }
 
@@ -240,62 +297,130 @@ export class ClaudeRunner {
       alwaysRules: always, timeoutMs: PERMISSION_TIMEOUT_MS }));
   }
 
-  #pump(run, child, account, prompt) {
-    const parser = new StreamParser(path.join(account.configDirFull, 'plans'));
-    let stderr = '';
-    let spawnError = null;
-    child.on('error', (e) => { spawnError = e; });
+  #pump(proc, closedResolve) {
+    const { child, parser } = proc;
+    child.on('error', (e) => { proc.spawnError = e; });
     child.stderr.setEncoding('utf8');
-    child.stderr.on('data', (d) => { stderr = (stderr + d).slice(-4000); });
+    child.stderr.on('data', (d) => { proc.stderr = (proc.stderr + d).slice(-4000); });
     child.stdin.on('error', () => { /* proces skončil dřív, než přečetl stdin */ });
-    child.stdin.write(userLine(prompt), 'utf8');
 
     const rl = createInterface({ input: child.stdout, crlfDelay: Infinity });
     rl.on('line', (line) => {
       for (const e of parser.parse(line)) {
-        if (e.type === 'init' && parser.sessionId && !run.sessionId) {
-          run.sessionId = parser.sessionId;
-          this.busySessions.add(parser.sessionId);
-        }
-        if (e.type === 'control_permission') { this.#askPermission(run, e); continue; }
+        const run = proc.run;
         if (e.type === 'control_other') { try { child.stdin.write(controlError(e.requestId), 'utf8'); } catch { } continue; }
+        if (run?.blocked) continue; // tah zastavený pojistkou režimu: nic dalšího z něj nepředat
+        if (!run || run.ended) {
+          // Mimo tah (čekající proces) nemá claude co posílat; žádost o svolení bez okna = zamítnout.
+          if (e.type === 'control_permission') try { child.stdin.write(controlResponse(e.requestId, 'deny', e.input, []), 'utf8'); } catch { }
+          continue;
+        }
+        if (e.type === 'init') {
+          proc.lastMode = e.permissionMode;
+          if (parser.sessionId) proc.sessionId ??= parser.sessionId;
+          if (parser.sessionId && !run.sessionId) {
+            run.sessionId = parser.sessionId;
+            this.busySessions.add(parser.sessionId);
+          }
+          if (run.warm && e.permissionMode !== proc.mode) {
+            // Pojistka: převzatý proces musí běžet v režimu, který uživatel zvolil.
+            this.log(`Běh ${run.id}: převzatý proces hlásí režim ${e.permissionMode}, očekáván ${proc.mode} – zastavuji`);
+            run.emit('event', ev('error', { message: 'Claude Code běžel v jiném režimu, než je zvolený – běh zastaven. Pošlete zprávu znovu.' }));
+            run.blocked = true;
+            run.stop();
+            continue;
+          }
+        }
+        if (e.type === 'tool_use' && e.name) proc.turnTools.add(e.name);
+        if (e.type === 'control_permission') { this.#askPermission(run, e); continue; }
         if (e.type === 'user_replay') {
           run.replayed++;
           clearTimeout(run.closeTimer);
         }
-        if (e.type === 'result') {
-          // Tah skončil. Čeká-li ještě vložená zpráva (ještě nepřevzatá), claude ji vezme jako další tah;
-          // jinak vstup zavřít, aby proces skončil. Pojistka: bez převzetí do 60 s zavřít i tak.
-          clearTimeout(run.closeTimer);
-          if (run.injected <= run.replayed - 1) run.closeInput();
-          else run.closeTimer = setTimeout(() => run.closeInput(), 60_000);
-        }
         run.emit('event', e);
+        if (e.type === 'result') {
+          // Tah skončil. Čeká-li ještě vložená zpráva (nepřevzatá), claude ji vezme jako další tah téhož běhu;
+          // jinak tah uzavřít. Pojistka: bez převzetí do 60 s proces zavřít.
+          clearTimeout(run.closeTimer);
+          if (run.injected <= run.replayed - 1) this.#finishTurn(proc, run, e);
+          else run.closeTimer = setTimeout(() => this.#finishTurn(proc, run, null), 60_000);
+        }
       }
     });
 
     const rlClosed = new Promise((r) => rl.once('close', r));
     const exited = new Promise((r) => child.once('close', (code) => r(code)));
     Promise.all([rlClosed, exited]).then(([, code]) => {
-      if (spawnError) run.emit('event', ev('error', { message: `Běh selhal: ${spawnError.message}` }));
-      for (const file of parser.planFiles) {
-        try {
-          if (statSync(file).size <= MAX_PLAN_BYTES) run.emit('event', ev('plan', { path: file, content: readFileSync(file, 'utf8') }));
-        } catch { /* soubor plánu zmizel */ }
-      }
+      proc.exited = true;
+      proc.stdinOpen = false;
+      if (this.idle.get(proc.sessionId) === proc) this.#unpark(proc);
+      const run = proc.run;
+      if (!run || run.ended) { this.log(`Proces ${proc.id} skončil kódem ${code}`); return; }
+      if (proc.spawnError) run.emit('event', ev('error', { message: `Běh selhal: ${proc.spawnError.message}` }));
+      this.#emitPlans(proc, run);
       const exitCode = typeof code === 'number' ? code : -1;
-      const err = stderr.trim() && exitCode !== 0 && !run.stopped ? stderr.trim() : undefined;
+      const err = proc.stderr.trim() && exitCode !== 0 && !run.stopped ? proc.stderr.trim() : undefined;
       run.emit('event', ev('exit', { code: exitCode, stopped: run.stopped, sessionId: run.sessionId, stderr: err }));
       this.log(`Běh ${run.id} skončil kódem ${exitCode}${run.stopped ? ' (zastaven)' : ''}`);
-    }).finally(() => {
-      clearTimeout(run.closeTimer);
-      for (const p of run.permissions.values()) clearTimeout(p.timer);
-      run.permissions.clear();
-      run.acceptingInput = false;
-      run.ended = true;
-      this.runs.delete(run.id);
-      if (run.sessionId) this.busySessions.delete(run.sessionId);
-      run.emit('end');
-    });
+      this.#endRun(run);
+    }).finally(() => closedResolve());
+  }
+
+  /** Konec tahu: proces buď odložit k dalšímu použití, nebo zavřít vstup (pak ohlásí konec 'close'). */
+  #finishTurn(proc, run, result) {
+    if (run.ended) return;
+    run.acceptingInput = false;
+    const reusable = this.idleMs > 0 && !!result && !result.isError && !run.stopped && !proc.exited && proc.stdinOpen
+      && !!proc.sessionId && proc.lastMode === proc.mode && ![...proc.turnTools].some((t) => MODE_TOOLS.has(t));
+    if (!reusable) { proc.endInput(); return; }
+    this.#emitPlans(proc, run);
+    run.emit('event', ev('exit', { code: 0, stopped: false, sessionId: run.sessionId, kept: true }));
+    this.log(`Běh ${run.id} hotov, proces ${proc.id} čeká na další zprávu`);
+    this.#endRun(run);
+    proc.run = null;
+    this.#park(proc);
+  }
+
+  #emitPlans(proc, run) {
+    for (const file of proc.parser.planFiles) {
+      try {
+        if (statSync(file).size <= MAX_PLAN_BYTES) run.emit('event', ev('plan', { path: file, content: readFileSync(file, 'utf8') }));
+      } catch { /* soubor plánu zmizel */ }
+    }
+    proc.parser.planFiles.clear();
+  }
+
+  #endRun(run) {
+    clearTimeout(run.closeTimer);
+    for (const p of run.permissions.values()) clearTimeout(p.timer);
+    run.permissions.clear();
+    run.acceptingInput = false;
+    run.ended = true;
+    this.runs.delete(run.id);
+    if (run.sessionId) this.busySessions.delete(run.sessionId);
+    run.emit('end');
+  }
+
+  #park(proc) {
+    const old = this.idle.get(proc.sessionId);
+    if (old && old !== proc) this.#retire(old);
+    this.idle.set(proc.sessionId, proc);
+    proc.idleTimer = setTimeout(() => this.#retire(proc), this.idleMs);
+    proc.idleTimer.unref?.();
+    while (this.idle.size > MAX_IDLE) this.#retire(this.idle.values().next().value);
+  }
+
+  #unpark(proc) {
+    clearTimeout(proc.idleTimer);
+    if (this.idle.get(proc.sessionId) === proc) this.idle.delete(proc.sessionId);
+  }
+
+  /** Zavře čekající proces (konec vstupu; když neskončí včas, zabít). */
+  async #retire(proc) {
+    this.#unpark(proc);
+    proc.endInput();
+    const t = setTimeout(() => killTree(proc.child.pid), RETIRE_WAIT_MS);
+    await proc.closed;
+    clearTimeout(t);
   }
 }

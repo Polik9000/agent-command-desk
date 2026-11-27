@@ -97,3 +97,9 @@ test('interactivePermissions: výchozí false, jen boolean', () => {
   assert.equal(loadConfig(writeCfg('ip2.json', { ...base(), interactivePermissions: true })).interactivePermissions, true);
   assert.throws(() => loadConfig(writeCfg('ip3.json', { ...base(), interactivePermissions: 'ano' })), /interactivePermissions/);
 });
+
+test('sessionProcessMinutes: výchozí 10, 0 vypne, jinak celé číslo do 120', () => {
+  assert.equal(loadConfig(writeCfg('sp1.json', base())).sessionProcessMinutes, 10);
+  assert.equal(loadConfig(writeCfg('sp2.json', { ...base(), sessionProcessMinutes: 0 })).sessionProcessMinutes, 0);
+  for (const v of [-1, 1.5, '10', 121]) assert.throws(() => loadConfig(writeCfg('sp3.json', { ...base(), sessionProcessMinutes: v })), /sessionProcessMinutes/);
+});

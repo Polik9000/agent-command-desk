@@ -1687,6 +1687,7 @@ function handleEvent(ev, run, state) {
   switch (ev.type) {
     case 'run':
       run.runId = ev.runId;
+      run.warm = ev.warm === true; // navázáno na čekající proces claude (bez startu)
       break;
     case 'init':
       S.sessionId = ev.sessionId;
@@ -1696,7 +1697,8 @@ function handleEvent(ev, run, state) {
       rememberCommands(ev);
       markCurrentSession();
       $('#foot-model').textContent = `${ev.model || ''} • ${ev.permissionMode || ''}`
-        + (run.effort ? ` • effort ${run.effort} (požadováno)` : '') + ` • v${ev.version || ''}`;
+        + (run.effort ? ` • effort ${run.effort} (požadováno)` : '') + ` • v${ev.version || ''}`
+        + (run.warm ? ' • navázáno na běžící proces' : '');
       setStatus(run.mode === 'plan' ? 'Claude plánuje…' : 'Claude pracuje…', true);
       break;
     case 'text_delta': {

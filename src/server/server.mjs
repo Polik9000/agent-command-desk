@@ -258,6 +258,7 @@ async function handleApi(req, res, url) {
     try {
       const r = changeProjects(CONFIG_FILE, cfg, /** @type {any} */ (change), { isBusy: (x) => runner.isProjectBusy(x) });
       log(`Nastavení: projekt ${r.id} – ${change.op}`);
+      if (change.op === 'remove') runner.closeProject(r.id); // čekající procesy odebraného projektu
       return sendJson(res, 200, { ...settingsView(cfg), changed: r.id });
     } catch (e) {
       if (!e.status) log(`Nastavení: zápis selhal: ${e.message}`);
@@ -355,12 +356,12 @@ async function startRun(req, res) {
   }
 
   let run;
-  try { run = runner.start(account, project, body.mode, prompt, resume, { addDirs, model, effort }); }
+  try { run = await runner.start(account, project, body.mode, prompt, resume, { addDirs, model, effort }); }
   catch (e) { return problem(res, 409, e.message); }
 
   res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'X-Accel-Buffering': 'no' });
   const send = (e) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(e)}\n\n`); };
-  send(ev('run', { runId: run.id, account: account.id, project: project.id, mode: body.mode, model, effort }));
+  send(ev('run', { runId: run.id, account: account.id, project: project.id, mode: body.mode, model, effort, warm: run.warm || undefined }));
   run.on('event', send);
   run.once('end', () => res.end());
   // Okno zavřeno / spojení přerušeno → běh nenecháme viset.

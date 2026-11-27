@@ -63,3 +63,9 @@ Claude Code login and never reads, copies or stores credentials.
     edit and command; stricter than `auto`). Without the option the server rejects `default` (400), since everything
     would be denied anyway. `acceptEdits`, `dontAsk` and `bypassPermissions` are never accepted.
     No answer within 10 minutes, Stop or closing the window = deny. Other control requests get an error reply.
+20. **Waiting processes.** After a reply the `claude` process may wait for the next message of the same session
+    (`sessionProcessMinutes`, default 10, max 3 processes). It is reused only for the same account, project, mode,
+    model, effort and directories, and only if its last `init` reported the requested permission mode and the turn did
+    not use `ExitPlanMode`/`EnterPlanMode`; a reused process reporting another mode is stopped and its output dropped.
+    A waiting process gets no input; a permission request arriving without a run is denied. Removing a project,
+    closing the app or the window timeout closes waiting processes; if the server dies, stdin closes and `claude` exits.
