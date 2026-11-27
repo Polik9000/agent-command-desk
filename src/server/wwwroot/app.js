@@ -19,6 +19,7 @@ const S = {
   account: null,
   project: null,
   mode: 'auto',
+  modes: ['auto', 'plan'],
   sessionId: null,
   run: null,          // { runId, controller, mode, account, prompt, sawPlan, resultText, resultError }
   lastPrompt: null,
@@ -135,6 +136,9 @@ async function loadState() {
   if (Array.isArray(st.models)) S.models = st.models;
   if (Array.isArray(st.efforts)) S.efforts = st.efforts;
   S.interactivePermissions = st.interactivePermissions === true;
+  S.modes = Array.isArray(st.modes) ? st.modes : ['auto', 'plan'];
+  $('#mode-ask').hidden = !S.modes.includes('default');
+  if (!S.modes.includes(S.mode)) setMode('auto');
   S.accounts = st.accounts;
   S.projects = st.projects;
   if (!S.account) S.account = st.defaultAccount;
@@ -605,6 +609,7 @@ function rememberPrompt(text) {
   P.recent = [t, ...P.recent.filter((x) => x !== t)].slice(0, 20);
 }
 
+const MODE_LABELS = { auto: 'Auto', plan: 'Plán', default: 'Ručně' };
 const fold = (s) => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase(); // bez diakritiky a velikosti písmen
 
 function paletteActions() {
@@ -612,6 +617,7 @@ function paletteActions() {
     { label: 'Nové sezení', run: () => newSession() },
     { label: 'Režim Auto', run: () => setMode('auto') },
     { label: 'Režim Plán', run: () => setMode('plan') },
+    ...(S.modes.includes('default') ? [{ label: 'Režim Ručně', meta: 'ptá se na každý zápis a příkaz', run: () => setMode('default') }] : []),
     ...PRESETS.filter((x) => !x.model || S.models.some((m) => m.id === x.model))
       .map((p) => ({ label: `Model: ${p.label}`, meta: `${modelLabel(p.model)} · ${p.effort || 'výchozí'}`, run: () => setRunOpts(p.model, p.effort) })),
     { label: 'Přiložit soubory', run: () => $('#file-input').click() },
@@ -827,7 +833,7 @@ async function openSettings() {
   setMsg('');
   renderSettingsAccounts();
   $('#set-perm').textContent = S.interactivePermissions
-    ? 'Žádosti o svolení: zapnuto. Když se Claude Code zeptá, objeví se v chatu karta Povolit jednou / Povolit vždy / Zamítnout. V režimu Auto se ptá jen výjimečně – většinu rozhodne sám.'
+    ? 'Žádosti o svolení: zapnuto. Když se Claude Code zeptá, objeví se v chatu karta Povolit jednou / Povolit vždy / Zamítnout. V režimu Auto se ptá jen výjimečně – většinu rozhodne sám; na každý zápis a příkaz se ptá v režimu Ručně.'
     : 'Žádosti o svolení: vypnuto – na co by se Claude Code zeptal, to se samo zamítne. Zapnout jde volbou "interactivePermissions": true v local/config.json.';
   renderFullscreenButton();
   renderNotifyToggle();
@@ -1555,7 +1561,7 @@ function renderQueue() {
   const ol = el('ol', 'queue-list');
   q.items.forEach((it, idx) => {
     const li = el('li', 'queue-item');
-    li.appendChild(el('span', 'queue-mode', it.mode === 'plan' ? 'Plán' : 'Auto'));
+    li.appendChild(el('span', 'queue-mode', MODE_LABELS[it.mode] || it.mode));
     if (S.queueEdit === it.id) {
       const ta = el('textarea', 'queue-edit');
       ta.value = it.prompt;

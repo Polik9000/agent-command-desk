@@ -13,6 +13,10 @@ import { alwaysUpdates, ruleLabel, inputPreview, controlResponse, controlError, 
 
 export { killTree };
 export const MODES = ['auto', 'plan'];
+/** Režim „Ručně“: Claude Code se ptá na každý zápis a příkaz. Jen s interactivePermissions – jinak by se vše zamítlo. */
+export const ASK_MODE = 'default';
+/** Povolené režimy podle configu (nikdy bypassPermissions, acceptEdits ani dontAsk). */
+export const allowedModes = (cfg) => (cfg.interactivePermissions === true ? [...MODES, ASK_MODE] : [...MODES]);
 const MAX_PLAN_BYTES = 512 * 1024;
 const ACCOUNT_MAX_AGE_MS = 10 * 60 * 1000;
 
@@ -147,7 +151,7 @@ export class ClaudeRunner {
    *   (přílohy); model/effort už ověřené proti allowlistu (server.mjs)
    */
   start(account, project, mode, prompt, resume, { addDirs = [], model = '', effort = '' } = {}) {
-    if (!MODES.includes(mode)) throw new Error('Neplatný režim.');
+    if (!allowedModes(this.cfg).includes(mode)) throw new Error('Neplatný režim.');
     if (resume && this.busySessions.has(resume)) throw new Error('Toto sezení už běží.');
 
     // Vstup jako stream-json: stdin zůstane otevřený, dokud tah neskončí, takže lze poslat další zprávu

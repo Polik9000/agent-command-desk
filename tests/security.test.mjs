@@ -158,6 +158,9 @@ test('běh: model mimo allowlist a neplatný effort → 400 (claude se nespustí
   assert.equal((await run({ model: '--dangerously-skip-permissions' })).status, 400);
   assert.equal((await run({ model: 42 })).status, 400);
   assert.match(JSON.parse((await run({ effort: 'ultra' })).body).error, /effort/i);
+  // režim Ručně (default) jen s interactivePermissions; ostatní režimy nikdy
+  for (const mode of ['default', 'bypassPermissions', 'acceptEdits', 'dontAsk'])
+    assert.match(JSON.parse((await run({ mode })).body).error, /Režim musí být auto nebo plan/);
   // povolené hodnoty projdou validací (pak skončí na neověřeném účtu → 409)
   assert.equal((await run({ model: 'opus', effort: 'high' })).status, 409);
 });
@@ -165,6 +168,7 @@ test('/api/state: seznam modelů a effortů', async () => {
   const st = JSON.parse((await req('GET', '/api/state', { 'X-ACD-Token': TOKEN })).body);
   assert.ok(st.models.some((m) => m.id === '' ) && st.models.some((m) => m.id === 'opus'));
   assert.deepEqual(st.efforts, ['', 'low', 'medium', 'high', 'xhigh', 'max']);
+  assert.deepEqual(st.modes, ['auto', 'plan']);
 });
 
 test('Nastavení: jen s tokenem a Origin, neplatná cesta 400, přidání/přejmenování/odebrání projektu', async () => {

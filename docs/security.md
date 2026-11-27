@@ -14,8 +14,8 @@ Claude Code login and never reads, copies or stores credentials.
    `object-src 'none'`, `frame-ancestors 'none'`), `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
    `X-Frame-Options: DENY`, `Cache-Control: no-store`.
 6. **Spawning `claude`.** Absolute path to the executable (on Windows only `.exe`; `.cmd`/`.bat` are rejected), argument
-   array with `shell: false`, prompt via stdin. Permission mode is only `auto` or `plan`, always with
-   `--permission-prompts none`; `bypassPermissions` and `--dangerously-skip-permissions` are never used.
+   array with `shell: false`, prompt via stdin. Permission mode is only `auto` or `plan` (with `interactivePermissions`
+   also `default`, see 19), validated on the server; without `interactivePermissions` always `--permission-prompts none`; `bypassPermissions` and `--dangerously-skip-permissions` are never used.
    `CLAUDE*` and `ANTHROPIC_*` variables are removed from the child environment and `CLAUDE_CONFIG_DIR` is set from the
    allowlist. Stop kills the whole process tree (`taskkill /T /F` on Windows, process group on macOS/Linux).
 7. **Allowlists.** Working directory only from `projects`, `CLAUDE_CONFIG_DIR` only from `accounts`; the client sends
@@ -58,5 +58,8 @@ Claude Code login and never reads, copies or stores credentials.
     (`POST /api/runs/:id/permission`, token + Origin). The tool input sent back is always the server's copy. *Always*
     applies only Claude Code's own `addRules` suggestions with `behavior: allow` and `destination: localSettings`
     (the project's `.claude/settings.local.json`, same as the terminal); `setMode` (e.g. acceptEdits),
-    `addDirectories` and any other destination are never applied, so the permission mode stays `auto`/`plan`.
+    `addDirectories` and any other destination are never applied, so the permission mode stays what the user picked.
+    Only with this option the composer offers a third mode *Ručně* = Claude Code's `default` mode (asks before every
+    edit and command; stricter than `auto`). Without the option the server rejects `default` (400), since everything
+    would be denied anyway. `acceptEdits`, `dontAsk` and `bypassPermissions` are never accepted.
     No answer within 10 minutes, Stop or closing the window = deny. Other control requests get an error reply.

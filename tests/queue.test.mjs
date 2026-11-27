@@ -80,6 +80,7 @@ test('validace: prázdná, dlouhá, plná fronta, neplatný režim', () => {
   assert.throws(() => add(q, '  '), /Prázdná/);
   assert.throws(() => add(q, 'x'.repeat(100001)), /dlouhá/);
   assert.throws(() => add(q, 'x', { mode: 'bypassPermissions' }), /režim/);
+  assert.equal(add(new MessageQueue(), 'ručně', { mode: 'default' }).mode, 'default');
   for (let i = 0; i < MessageQueue.MAX_ITEMS; i++) add(q, `m${i}`);
   assert.throws(() => add(q, 'navíc'), /plná/);
 });

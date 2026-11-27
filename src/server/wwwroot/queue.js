@@ -36,7 +36,7 @@
       if (!text) throw new Error('Prázdná zpráva.');
       if (text.length > MAX_PROMPT) throw new Error('Zpráva je příliš dlouhá.');
       if (this.items.length >= MAX_ITEMS) throw new Error(`Fronta je plná (max. ${MAX_ITEMS}).`);
-      if (mode !== 'auto' && mode !== 'plan') throw new Error('Neplatný režim.');
+      if (mode !== 'auto' && mode !== 'plan' && mode !== 'default') throw new Error('Neplatný režim.');
       const files = Array.isArray(attachments) ? attachments.slice(0, 10) : [];
       const item = { id: this.nextId++, prompt: text, mode, account, project, sessionId: sessionId || null, run: run || null,
         attachments: files, opts: opts && typeof opts === 'object' ? { ...opts } : {} };

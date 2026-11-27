@@ -64,12 +64,13 @@ Runs on Windows and macOS (experimental). The UI is in Czech.
   a card in the chat offers *Povolit jednou* (allow once), *Povolit vždy* (allow always: saves the rule Claude Code
   suggests, e.g. `Bash(npm test *)`, to the project's `.claude/settings.local.json`, like the terminal does) and
   *Zamítnout* (deny). No answer in 10 minutes = deny. Off by default: then anything that would ask is denied
-  automatically. In Auto mode Claude Code asks only rarely.
+  automatically. In Auto mode Claude Code asks only rarely, so this also adds a third mode, *Ručně* (manual, Claude
+  Code's `default` mode): Claude Code asks before every file edit and command.
 - **Usage limits** – warning when an account gets close; when it hits the limit, one click switches to another account
   and resends.
 - **Your own name and look** – one config value and one CSS file (see *Customize*).
 - **Security** – loopback only, per-launch token, Host/Origin checks, strict CSP, permission mode only `auto` or `plan`
-  (never `bypassPermissions`). Details in [docs/security.md](docs/security.md).
+  (plus `default` with permission requests on; never `bypassPermissions`). Details in [docs/security.md](docs/security.md).
 
 ### Keyboard
 | Keys | Action |

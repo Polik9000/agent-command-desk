@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { alwaysUpdates, ruleLabel, inputPreview, controlResponse, controlError } from '../src/server/lib/permissions.mjs';
 import { StreamParser } from '../src/server/lib/parser.mjs';
+import { allowedModes } from '../src/server/lib/claude.mjs';
 
 // Skutečné návrhy z Claude Code 2.1.332 (Bash mkdir v režimu default).
 const SUGGESTIONS = [
@@ -56,4 +57,11 @@ test('parser: control_request can_use_tool a jiné podtypy', () => {
   const [b] = p.parse(JSON.stringify({ type: 'control_request', request_id: 'r2', request: { subtype: 'hook_callback' } }));
   assert.deepEqual(b, { type: 'control_other', requestId: 'r2', subtype: 'hook_callback' });
   assert.deepEqual(p.parse(JSON.stringify({ type: 'control_request', request: { subtype: 'can_use_tool' } })), []);
+});
+
+test('allowedModes: Ručně (default) jen s interactivePermissions, nikdy bypass/acceptEdits', () => {
+  assert.deepEqual(allowedModes({}), ['auto', 'plan']);
+  assert.deepEqual(allowedModes({ interactivePermissions: false }), ['auto', 'plan']);
+  assert.deepEqual(allowedModes({ interactivePermissions: true }), ['auto', 'plan', 'default']);
+  assert.deepEqual(allowedModes({ interactivePermissions: 'true' }), ['auto', 'plan']);
 });

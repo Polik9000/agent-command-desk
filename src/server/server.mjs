@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadConfig, configPath, findAccount, findProject, EFFORTS } from './lib/config.mjs';
 import { createSecret, setSecurityHeaders, checkRequest } from './lib/guard.mjs';
-import { AccountGuard, ClaudeRunner, MODES } from './lib/claude.mjs';
+import { AccountGuard, ClaudeRunner, allowedModes } from './lib/claude.mjs';
 import { ev } from './lib/parser.mjs';
 import { listSessions, history, transcriptPath, searchSessions } from './lib/sessions.mjs';
 import { gitStatus, gitFiles, gitDiff } from './lib/git.mjs';
@@ -171,7 +171,7 @@ async function handleApi(req, res, url) {
       projects: cfg.projects.map((x) => ({ id: x.id, label: x.label, exists: existsSync(x.pathFull) })),
       defaultAccount: cfg.defaultAccount,
       defaultProject: findProject(cfg, cfg.defaultProject)?.id ?? cfg.projects[0].id,
-      modes: MODES,
+      modes: allowedModes(cfg),
       models: cfg.models.map((x) => ({ id: x.id, label: x.label })),
       interactivePermissions: cfg.interactivePermissions === true,
       efforts: EFFORTS,
@@ -317,7 +317,8 @@ async function startRun(req, res) {
   const project = findProject(cfg, body.project);
   if (!account) return problem(res, 400, 'Neznámý účet.');
   if (!project) return problem(res, 400, 'Neznámý projekt.');
-  if (!MODES.includes(body.mode)) return problem(res, 400, 'Režim musí být auto nebo plan.');
+  if (!allowedModes(cfg).includes(body.mode))
+    return problem(res, 400, cfg.interactivePermissions === true ? 'Režim musí být auto, plan nebo default.' : 'Režim musí být auto nebo plan.');
   const model = body.model ?? '';
   const effort = body.effort ?? '';
   if (typeof model !== 'string' || !cfg.models.some((x) => x.id === model)) return problem(res, 400, 'Neznámý model.');
