@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { loadConfig, configPath, findAccount, findProject, EFFORTS } from './lib/config.mjs';
 import { createSecret, setSecurityHeaders, checkRequest } from './lib/guard.mjs';
 import { AccountGuard, ClaudeRunner, allowedModes } from './lib/claude.mjs';
+import { UsageLog } from './lib/usage.mjs';
 import { ev } from './lib/parser.mjs';
 import { listSessions, history, transcriptPath, searchSessions, overview } from './lib/sessions.mjs';
 import { gitStatus, gitFiles, gitDiff } from './lib/git.mjs';
@@ -76,6 +77,8 @@ const heartbeat = createHeartbeat();
 const accounts = new AccountGuard(cfg, log);
 const runner = new ClaudeRunner(cfg, log);
 const attachments = new AttachmentStore(stateDir, log);
+const usage = new UsageLog(stateDir, { log });
+usage.prune();
 attachments.cleanup();
 
 /* ---------- Pomocné ---------- */
@@ -266,6 +269,9 @@ async function handleApi(req, res, url) {
 
   if (req.method === 'POST' && p === '/api/runs') return startRun(req, res);
 
+  // Statistiky v čase (jen čísla z usage.jsonl).
+  if (req.method === 'GET' && p === '/api/stats/history') return sendJson(res, 200, usage.read(Number(q.get('days') ?? 30)));
+
   // Nastavení: jen projekty (účty se z UI nikdy nemění – viz docs/security.md).
   if (req.method === 'GET' && p === '/api/settings') return sendJson(res, 200, settingsView(cfg));
   if ((req.method === 'POST' && p === '/api/settings/projects')
@@ -348,6 +354,8 @@ async function startRun(req, res) {
   const effort = body.effort ?? '';
   if (typeof model !== 'string' || !cfg.models.some((x) => x.id === model)) return problem(res, 400, 'Neznámý model.');
   if (!EFFORTS.includes(effort)) return problem(res, 400, 'Neplatný effort.');
+  if (body.progress != null && typeof body.progress !== 'boolean') return problem(res, 400, 'Neplatná volba průběhu.');
+  const progress = body.progress === true;
   if (typeof body.prompt !== 'string' || !body.prompt.trim() || body.prompt.length > MAX_PROMPT)
     return problem(res, 400, 'Prázdná nebo příliš dlouhá zpráva.');
   if (!existsSync(project.pathFull)) return problem(res, 400, 'Složka projektu neexistuje.');
@@ -380,13 +388,15 @@ async function startRun(req, res) {
   }
 
   let run;
-  try { run = await runner.start(account, project, body.mode, prompt, resume, { addDirs, model, effort }); }
+  try { run = await runner.start(account, project, body.mode, prompt, resume, { addDirs, model, effort, progress }); }
   catch (e) { return problem(res, 409, e.message); }
 
   res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'X-Accel-Buffering': 'no' });
   const send = (e) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(e)}\n\n`); };
-  send(ev('run', { runId: run.id, account: account.id, project: project.id, mode: body.mode, model, effort, warm: run.warm || undefined }));
+  send(ev('run', { runId: run.id, account: account.id, project: project.id, mode: body.mode, model, effort,
+    warm: run.warm || undefined, progress: progress || undefined }));
   run.on('event', send);
+  run.on('event', usage.observer(account.id, project.id, { model, effort }));
   run.once('end', () => res.end());
   // Okno zavřeno / spojení přerušeno → běh nenecháme viset.
   res.on('close', () => { if (!run.ended) run.stop(); });

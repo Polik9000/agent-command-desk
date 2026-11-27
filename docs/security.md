@@ -83,3 +83,15 @@ Claude Code login and never reads, copies or stores credentials.
     and tool counts – no tool outputs and no message texts. **MCP state** comes only from Claude Code's `init` event
     (name, status, source); the app never reads MCP or account configuration. Diff comments and find stay in the
     window's memory.
+23. **Usage history stores numbers only.** After each turn the server appends one line to
+    `<stateDir>/usage.jsonl`: time, account id, project id, model, effort, token counts, API-price estimate, duration,
+    turn count, error flag – never prompts, replies or file names. Account-limit samples (window, utilization, reset time)
+    at most every 10 minutes per window. Records older than 180 days are removed at start-up. `GET /api/stats/history`
+    (token required like every API call) returns at most 180 days.
+24. **Progress tracking (optional, off by default)** adds a fixed paragraph to `--append-system-prompt` asking Claude to
+    write `[[plan: …]]` / `[[step: N]]` markers; the request only carries a boolean, the text cannot be changed from the
+    browser. A process waiting for the next message is reused only with the same setting.
+25. **Automatic continue after a limit** sends one fixed message ("continue where you stopped") to the same account,
+    project, session, mode and model after the reported reset time; only while the window is open, at most 3 attempts per
+    session, cancelled by switching session, account or project, or in the banner; can be turned off in Settings.
+    **Drafts** of unsent messages live only in the browser's localStorage (max 30, 30 days), can be turned off.

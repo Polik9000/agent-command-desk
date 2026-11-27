@@ -228,7 +228,7 @@ function renderRunOpts() {
   const sum = $('#runopts-summary');
   if (!sum) return;
   const custom = S.model || S.effort;
-  sum.textContent = custom ? `${modelLabel(S.model)} · ${S.effort || 'výchozí'}` : 'Model: výchozí';
+  sum.textContent = (custom ? `${modelLabel(S.model)} · ${S.effort || 'výchozí'}` : 'Model: výchozí') + (progressOn() ? ' · průběh' : '');
   sum.classList.toggle('is-custom', !!custom);
   const ms = $('#model'), es = $('#effort'), box = $('#runopts-presets');
   // Volby a předvolby se staví jen jednou: přestavění by zrušilo fokus a klik by vypadal jako klik mimo panel.
@@ -361,7 +361,8 @@ async function loadSessions() {
     const title = titles[s.id] || s.title;
     b.appendChild(el('span', 's-title', title));
     if (s.snippet) b.appendChild(snippetNode(s.snippet, q, s.role));
-    b.appendChild(el('span', 's-meta', fmtRelative(s.updated) + (s.busy ? ' • běží' : '') + (titles[s.id] ? ' • přejmenováno' : '')));
+    b.appendChild(el('span', 's-meta', fmtRelative(s.updated) + (s.busy ? ' • běží' : '') + (titles[s.id] ? ' • přejmenováno' : '')
+      + (hasDraft(s.id) ? ' • koncept' : '')));
     b.addEventListener('click', () => openSession(s.id));
     li.appendChild(b);
     const r = el('button', 's-rename', '✎');
@@ -443,7 +444,12 @@ function leaveContext() {
 
 function newSession() {
   if (S.run || !leaveContext()) return;
+  if (!DR.skip) saveDraft();
+  DR.skip = false;
+  cancelContinue();
   S.sessionId = null;
+  restoreDraft();
+  resetProgress();
   P.sessionPrompts = [];
   clearChat();
   hideBanner();
@@ -453,7 +459,11 @@ function newSession() {
 
 async function openSession(id) {
   if (S.run || !leaveContext()) return;
+  saveDraft();
+  cancelContinue();
   S.sessionId = id;
+  restoreDraft();
+  resetProgress();
   markCurrentSession();
   clearChat();
   hideBanner();
@@ -475,9 +485,12 @@ async function openSession(id) {
         const m = claudeBubble();
         append(m.node);
         setClaudeText(m, it.text, true);
+        for (const mk of Review.progressMarks(it.text).marks) Review.applyMark(PR.st, mk, null); // bez časů
       }
     }
     append(el('div', 'msg msg--note', 'Pokračujte další zprávou.'), true);
+    if (PR.st.steps.length) { PR.hidden = PR.st.done; if (!PR.st.done) PR.stopped = 'Rozpracovaný plán z dřívějška.'; }
+    renderProgress();
     setStatus('');
   } catch (e) {
     setStatus('');
@@ -489,6 +502,8 @@ async function openSession(id) {
 async function switchAccount(id) {
   if (S.run || id === S.account) return false;
   if (!leaveContext()) { renderAccounts(); return false; }
+  saveDraft();
+  DR.skip = true;
   discardPending();
   S.account = id;
   loadRunOpts();
@@ -502,6 +517,8 @@ async function switchAccount(id) {
 async function switchProject(id) {
   if (S.run || id === S.project) return;
   if (!leaveContext()) { $('#project').value = S.project; return; }
+  saveDraft();
+  DR.skip = true;
   discardPending();
   S.project = id;
   GC.items = [];
@@ -594,12 +611,325 @@ function openStats() {
   renderStats();
   const d = $('#statsdlg');
   if (!d.open) d.showModal();
+  if (!$('#stats-hist').hidden) loadHistory();
 }
 
 function setupStats() {
   $('#foot-cost').addEventListener('click', openStats);
   $('#stats-close').addEventListener('click', () => $('#statsdlg').close());
   $('#statsdlg').addEventListener('click', (e) => { if (e.target === e.currentTarget) e.currentTarget.close(); });
+}
+
+/* ---------- Statistiky v čase: grafy z /api/stats/history (jen čísla) ---------- */
+// Barvy sérií: ověřená kategoriální paleta (5 slotů, pořadí pevné, nikdy cyklicky), zbytek = „Ostatní“ (šedá).
+const H = { data: null, days: 30, seq: 0 };
+const SERIES_MAX = 5;
+const SVGNS = 'http://www.w3.org/2000/svg';
+const svgEl = (tag, attrs = {}) => { const e = document.createElementNS(SVGNS, tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, String(v)); return e; };
+const dayKey = (t) => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+const dayLabel = (key) => { const [, m, d] = key.split('-'); return `${Number(d)}. ${Number(m)}.`; };
+const METRICS = {
+  cost: { label: 'Odhad ceny API', get: (r) => r.cost || 0, fmt: (v) => `$${v.toLocaleString('cs-CZ', { minimumFractionDigits: v < 10 ? 2 : 0, maximumFractionDigits: v < 10 ? 2 : 0 })}` },
+  tokens: { label: 'Tokeny', get: (r) => (r.input || 0) + (r.output || 0) + (r.cacheRead || 0) + (r.cacheWrite || 0), fmt: (v) => fmtTok(v) },
+  runs: { label: 'Běhy', get: () => 1, fmt: (v) => fmtNum(v) },
+  minutes: { label: 'Čas práce', get: (r) => (r.ms || 0) / 60_000, fmt: (v) => (v < 60 ? `${Math.round(v)} min` : `${(v / 60).toLocaleString('cs-CZ', { maximumFractionDigits: 1 })} h`) },
+};
+function groupLabel(kind, id) {
+  if (kind === 'project') { const p = S.projects.find((x) => x.id === id); return p ? p.label : id || '?'; }
+  if (kind === 'account') { const a = accountById(id); return a ? a.label : id || '?'; }
+  return (id || 'výchozí').replace(/^claude-/, '');
+}
+/** Nice horní mez osy (1, 2, 2.5, 5 × 10^k). */
+function niceMax(v) {
+  if (!(v > 0)) return 1;
+  const p = 10 ** Math.floor(Math.log10(v));
+  for (const m of [1, 2, 2.5, 5, 10]) if (v <= m * p) return m * p;
+  return 10 * p;
+}
+
+async function loadHistory() {
+  const body = $('#hist-body');
+  const seq = ++H.seq;
+  body.textContent = '';
+  body.appendChild(el('p', 'stats-empty', 'Načítám…'));
+  try { H.data = await apiJson(`/api/stats/history?days=${H.days}`); }
+  catch (e) { if (seq === H.seq) { body.textContent = ''; body.appendChild(el('p', 'stats-empty', e.message)); } return; }
+  if (seq === H.seq) renderHistory();
+}
+
+function renderHistory() {
+  const body = $('#hist-body');
+  body.textContent = '';
+  const data = H.data;
+  if (!data) return;
+  const metric = METRICS[$('#hist-metric').value] || METRICS.cost;
+  const kind = $('#hist-group').value;
+  const runs = data.runs;
+  // Dny od začátku období po dnešek.
+  const days = [];
+  for (let t = Date.now() - (data.days - 1) * 86_400_000; days.length < data.days; t += 86_400_000) days.push(dayKey(t));
+
+  // Souhrn.
+  const tiles = el('div', 'tiles');
+  const sum = (f) => runs.reduce((a, r) => a + f(r), 0);
+  for (const [label, value] of [['Běhy', fmtNum(runs.length)], ['Tokeny', fmtTok(sum(METRICS.tokens.get))],
+    ['Odhad ceny API', METRICS.cost.fmt(sum(METRICS.cost.get))], ['Čas práce', METRICS.minutes.fmt(sum(METRICS.minutes.get))],
+    ['Chyby', fmtNum(runs.filter((r) => r.error).length)]]) {
+    const t = el('div', 'tile');
+    t.append(el('span', 'tile-label', label), el('span', 'tile-value', value));
+    tiles.appendChild(t);
+  }
+  body.appendChild(tiles);
+  if (!runs.length) {
+    body.appendChild(el('p', 'stats-empty', `Za posledních ${data.days} dní zatím žádný běh. Historie se začala ukládat s touto verzí aplikace.`));
+  } else {
+    // Série: nejvýš 5 největších skupin podle ukazatele, zbytek „Ostatní“. Barva patří skupině (pořadí podle velikosti v období).
+    const totals = new Map();
+    for (const r of runs) totals.set(r[kind], (totals.get(r[kind]) || 0) + metric.get(r));
+    const order = [...totals.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => id);
+    const top = order.slice(0, order.length > SERIES_MAX ? SERIES_MAX - 1 : SERIES_MAX);
+    const series = top.map((id, i) => ({ id, label: groupLabel(kind, id), color: `var(--s${i + 1})` }));
+    if (order.length > top.length) series.push({ id: '\u0000other', label: 'Ostatní', color: 'var(--s-other)' });
+    const idx = new Map(series.map((s, i) => [s.id, i]));
+    const values = days.map(() => series.map(() => 0));
+    const dayIdx = new Map(days.map((d, i) => [d, i]));
+    for (const r of runs) {
+      const di = dayIdx.get(dayKey(r.t));
+      if (di == null) continue;
+      const si = idx.has(r[kind]) ? idx.get(r[kind]) : idx.get('\u0000other');
+      values[di][si] += metric.get(r);
+    }
+    body.appendChild(el('h3', 'eyebrow chart-title', `${metric.label} po dnech – podle ${$('#hist-group').selectedOptions[0].textContent}`));
+    body.appendChild(columnChart(days, series, values, metric.fmt));
+
+    // Tabulka (přístupná podoba grafu) – skupiny za celé období.
+    const t = el('table', 'stats-table');
+    t.appendChild(el('caption', null, `Za ${data.days} dní podle ${$('#hist-group').selectedOptions[0].textContent}`));
+    const hr = el('tr');
+    for (const h of [{ project: 'Projekt', model: 'Model', account: 'Účet' }[kind], 'Běhy', 'Tokeny', 'Odhad ceny API', 'Čas práce', 'Chyby']) { const th = el('th', null, h); th.scope = 'col'; hr.appendChild(th); }
+    const thead = el('thead'); thead.appendChild(hr); t.appendChild(thead);
+    const tb = el('tbody');
+    for (const id of order) {
+      const rs = runs.filter((r) => r[kind] === id);
+      const tr = el('tr');
+      const th = el('th', null, groupLabel(kind, id)); th.scope = 'row'; tr.appendChild(th);
+      const s = (f) => rs.reduce((a, r) => a + f(r), 0);
+      for (const v of [fmtNum(rs.length), fmtTok(s(METRICS.tokens.get)), METRICS.cost.fmt(s(METRICS.cost.get)), METRICS.minutes.fmt(s(METRICS.minutes.get)),
+        fmtNum(rs.filter((r) => r.error).length)]) tr.appendChild(el('td', null, v));
+      tb.appendChild(tr);
+    }
+    t.appendChild(tb);
+    body.appendChild(t);
+  }
+
+  // Limit účtu v čase (aktuální účet).
+  const acc = accountById(S.account);
+  const lims = data.limits.filter((l) => l.account === S.account);
+  body.appendChild(el('h3', 'eyebrow chart-title', `Využití limitu – účet ${acc ? acc.label : S.account}`));
+  if (!lims.length) body.appendChild(el('p', 'stats-empty', 'Zatím bez údajů – Claude Code je posílá během běhů.'));
+  else {
+    const names = { five_hour: '5 hodin', seven_day: '7 dní', seven_day_opus: '7 dní (Opus)', seven_day_sonnet: '7 dní (Sonnet)' };
+    const wins = [...new Set(lims.map((l) => l.window))].slice(0, 3);
+    const series = wins.map((w, i) => ({ label: names[w] || w, color: `var(--s${i + 1})`,
+      points: lims.filter((l) => l.window === w).map((l) => ({ t: l.t, v: Math.min(100, l.utilization * 100) })) }));
+    body.appendChild(lineChart(series, data.from, Date.now()));
+  }
+}
+
+/** Legenda (pro ≥ 2 série) – barva jen u značky, text v barvě textu. */
+function legend(series) {
+  const ul = el('ul', 'legend');
+  ul.setAttribute('aria-label', 'Legenda');
+  for (const s of series) {
+    const li = el('li');
+    const sw = el('span', 'legend-swatch'); sw.style.background = s.color; sw.setAttribute('aria-hidden', 'true');
+    li.append(sw, document.createTextNode(s.label));
+    ul.appendChild(li);
+  }
+  return ul;
+}
+
+function chartTip(wrap) {
+  const tip = el('div', 'chart-tip');
+  tip.setAttribute('aria-hidden', 'true'); // přístupná je tabulka
+  tip.hidden = true;
+  wrap.appendChild(tip);
+  return (rows, x, y) => {
+    if (!rows) { tip.hidden = true; return; }
+    tip.textContent = '';
+    for (const [sw, text, strong] of rows) {
+      const line = el('div', strong ? 'chart-tip-head' : null);
+      if (sw) { const k = el('span', 'legend-swatch'); k.style.background = sw; line.appendChild(k); }
+      line.appendChild(document.createTextNode(text));
+      tip.appendChild(line);
+    }
+    tip.hidden = false;
+    const w = wrap.clientWidth;
+    tip.style.left = `${Math.min(Math.max(0, x + 12), w - tip.offsetWidth - 4)}px`;
+    tip.style.top = `${Math.max(0, y - tip.offsetHeight - 8)}px`;
+  };
+}
+
+/** Skládaný sloupcový graf po dnech: sloupce ≤ 24 px, 2px mezera mezi díly, zaoblený horní konec. */
+function columnChart(days, series, values, fmt) {
+  const wrap = el('div', 'chart');
+  if (series.length >= 2) wrap.appendChild(legend(series));
+  const W = 720, Hh = 220, L = 56, R = 8, T = 10, B = 26;
+  const totals = values.map((v) => v.reduce((a, b) => a + b, 0));
+  const max = niceMax(Math.max(...totals));
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${Hh}`, class: 'chart-svg', role: 'img',
+    'aria-label': `Sloupcový graf, ${days.length} dní, nejvíc ${fmt(Math.max(...totals))} za den. Hodnoty jsou v tabulce pod grafem.` });
+  const y = (v) => T + (Hh - T - B) * (1 - v / max);
+  for (let i = 0; i <= 4; i++) {
+    const v = (max / 4) * i;
+    svg.appendChild(svgEl('line', { x1: L, x2: W - R, y1: y(v), y2: y(v), class: 'chart-grid' }));
+    const tx = svgEl('text', { x: L - 6, y: y(v) + 4, class: 'chart-axis', 'text-anchor': 'end' }); tx.textContent = fmt(v); svg.appendChild(tx);
+  }
+  const band = (W - L - R) / days.length;
+  const bw = Math.max(2, Math.min(24, band * 0.7));
+  const every = Math.ceil(days.length / 8);
+  const tip = chartTip(wrap);
+  days.forEach((d, i) => {
+    const cx = L + band * i + band / 2;
+    if ((days.length - 1 - i) % every === 0) { // od dneška pozpátku – popisky se nepřekrývají
+      const tx = svgEl('text', { x: cx, y: Hh - 8, class: 'chart-axis', 'text-anchor': 'middle' }); tx.textContent = dayLabel(d); svg.appendChild(tx);
+    }
+    let base = y(0);
+    const segs = series.map((s, si) => [s, values[i][si]]).filter(([, v]) => v > 0);
+    segs.forEach(([s, v], k) => {
+      const h = base - y(v);
+      const top = k === segs.length - 1;
+      const hh = Math.max(1, h - (top ? 0 : 2)); // 2px mezera k dalšímu dílu
+      const x0 = cx - bw / 2, y0 = base - h + (top ? 0 : 2);
+      const r = top ? Math.min(4, hh, bw / 2) : 0;
+      const path = `M${x0},${base} V${y0 + r} Q${x0},${y0} ${x0 + r},${y0} H${x0 + bw - r} Q${x0 + bw},${y0} ${x0 + bw},${y0 + r} V${base} Z`;
+      const p = svgEl('path', { d: path, class: 'chart-bar' }); p.style.fill = s.color;
+      svg.appendChild(p);
+      base -= h;
+    });
+    // Zásah pro najetí myší je celý pruh dne, ne jen sloupec.
+    const hit = svgEl('rect', { x: L + band * i, y: T, width: band, height: Hh - T - B, class: 'chart-hit' });
+    hit.addEventListener('mouseenter', () => {
+      const rect = svg.getBoundingClientRect(), scale = rect.width / W;
+      tip([[null, `${dayLabel(d)} – celkem ${fmt(totals[i])}`, true],
+        ...series.map((s, si) => [s.color, `${s.label}: ${fmt(values[i][si])}`]).filter((_, si) => values[i][si] > 0)],
+      cx * scale, y(totals[i]) * scale + (series.length >= 2 ? wrap.querySelector('.legend').offsetHeight : 0));
+    });
+    hit.addEventListener('mouseleave', () => tip(null));
+    svg.appendChild(hit);
+  });
+  svg.appendChild(svgEl('line', { x1: L, x2: W - R, y1: y(0), y2: y(0), class: 'chart-base' }));
+  wrap.appendChild(svg);
+  return wrap;
+}
+
+/** Čárový graf 0–100 % v čase: čáry 2 px, koncové body s prstencem, popisek na konci, nitkový kříž. */
+function lineChart(series, from, to) {
+  const wrap = el('div', 'chart');
+  if (series.length >= 2) wrap.appendChild(legend(series));
+  const W = 720, Hh = 200, L = 44, R = 70, T = 10, B = 26;
+  const x = (t) => L + (W - L - R) * Math.min(1, Math.max(0, (t - from) / Math.max(1, to - from)));
+  const y = (v) => T + (Hh - T - B) * (1 - v / 100);
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${Hh}`, class: 'chart-svg', role: 'img',
+    'aria-label': `Využití limitu v čase: ${series.map((s) => `${s.label} naposledy ${Math.round(s.points.at(-1).v)} %`).join(', ')}.` });
+  for (const v of [0, 25, 50, 75, 100]) {
+    svg.appendChild(svgEl('line', { x1: L, x2: W - R, y1: y(v), y2: y(v), class: v === 0 ? 'chart-base' : 'chart-grid' }));
+    const tx = svgEl('text', { x: L - 6, y: y(v) + 4, class: 'chart-axis', 'text-anchor': 'end' }); tx.textContent = `${v} %`; svg.appendChild(tx);
+  }
+  const spanDays = (to - from) / 86_400_000;
+  const ticks = Math.min(7, Math.max(2, Math.round(spanDays)));
+  for (let i = 0; i <= ticks; i++) {
+    const t = from + ((to - from) / ticks) * i;
+    const tx = svgEl('text', { x: x(t), y: Hh - 8, class: 'chart-axis', 'text-anchor': i === 0 ? 'start' : i === ticks ? 'end' : 'middle' });
+    tx.textContent = dayLabel(dayKey(t));
+    svg.appendChild(tx);
+  }
+  for (const s of series) {
+    const pts = s.points;
+    const line = svgEl('polyline', { points: pts.map((p) => `${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join(' '), class: 'chart-line' });
+    line.style.stroke = s.color;
+    svg.appendChild(line);
+    const last = pts[pts.length - 1];
+    const dot = svgEl('circle', { cx: x(last.t), cy: y(last.v), r: 4, class: 'chart-dot' }); dot.style.fill = s.color;
+    svg.appendChild(dot);
+  }
+  // Popisky na konci čar jen když se nepřekrývají (jinak stačí legenda a nitkový kříž).
+  const ends = series.map((s) => ({ s, last: s.points[s.points.length - 1] })).sort((a, b) => y(a.last.v) - y(b.last.v));
+  if (series.length <= 4 && ends.every((e, i) => i === 0 || y(e.last.v) - y(ends[i - 1].last.v) >= 14)) {
+    for (const { s, last } of ends) {
+      const lab = svgEl('text', { x: x(last.t) + 8, y: y(last.v) + 4, class: 'chart-label' });
+      lab.textContent = `${s.label} ${Math.round(last.v)} %`;
+      svg.appendChild(lab);
+    }
+  }
+  const cross = svgEl('line', { y1: T, y2: Hh - B, class: 'chart-cross', visibility: 'hidden' });
+  svg.appendChild(cross);
+  const hit = svgEl('rect', { x: L, y: T, width: W - L - R, height: Hh - T - B, class: 'chart-hit' });
+  const tip = chartTip(wrap);
+  hit.addEventListener('mousemove', (e) => {
+    const rect = svg.getBoundingClientRect(), scale = rect.width / W;
+    const t = from + ((e.clientX - rect.left) / scale - L) / (W - L - R) * (to - from);
+    cross.setAttribute('x1', x(t)); cross.setAttribute('x2', x(t)); cross.setAttribute('visibility', 'visible');
+    const rows = [[null, new Date(t).toLocaleString('cs-CZ', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }), true]];
+    for (const s of series) {
+      const before = s.points.filter((p) => p.t <= t).at(-1);
+      if (before) rows.push([s.color, `${s.label}: ${Math.round(before.v)} %`]);
+    }
+    tip(rows, x(t) * scale, (series.length >= 2 ? wrap.querySelector('.legend').offsetHeight : 0) + 20);
+  });
+  hit.addEventListener('mouseleave', () => { cross.setAttribute('visibility', 'hidden'); tip(null); });
+  svg.appendChild(hit);
+  wrap.appendChild(svg);
+  return wrap;
+}
+
+function downloadCsv() {
+  const runs = (H.data && H.data.runs) || [];
+  const head = ['datum', 'cas', 'ucet', 'projekt', 'model', 'effort', 'vstup', 'vystup', 'cache_cteni', 'cache_zapis', 'odhad_ceny_usd', 'doba_s', 'tahy', 'chyba'];
+  const q = (v) => { const s = String(v ?? ''); return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+  const lines = [head.join(',')];
+  for (const r of runs) {
+    const d = new Date(r.t);
+    lines.push([dayKey(r.t), d.toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' }), groupLabel('account', r.account),
+      groupLabel('project', r.project), r.model, r.effort, r.input, r.output, r.cacheRead, r.cacheWrite, (r.cost || 0).toFixed(4),
+      ((r.ms || 0) / 1000).toFixed(1), r.turns, r.error ? 1 : 0].map(q).join(','));
+  }
+  const url = URL.createObjectURL(new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' }));
+  const a = el('a');
+  a.href = url;
+  a.download = `statistiky-${dayKey(Date.now())}-${H.days}dni.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  announce(`Staženo ${runs.length} ${plural(runs.length, 'záznam', 'záznamy', 'záznamů')}.`);
+}
+
+function selectStatsTab(hist) {
+  $('#stats-tab-now').setAttribute('aria-selected', String(!hist));
+  $('#stats-tab-hist').setAttribute('aria-selected', String(hist));
+  $('#stats-tab-now').tabIndex = hist ? -1 : 0;
+  $('#stats-tab-hist').tabIndex = hist ? 0 : -1;
+  $('#stats-body').hidden = hist;
+  $('#stats-hist').hidden = !hist;
+  $('#statsdlg').classList.toggle('stats--wide', hist);
+  if (hist) loadHistory();
+}
+
+function setupHistory() {
+  $('#stats-tab-now').addEventListener('click', () => selectStatsTab(false));
+  $('#stats-tab-hist').addEventListener('click', () => selectStatsTab(true));
+  $('.tabs').addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    const hist = $('#stats-tab-now').getAttribute('aria-selected') === 'true';
+    selectStatsTab(hist);
+    (hist ? $('#stats-tab-hist') : $('#stats-tab-now')).focus();
+  });
+  $('#hist-range').addEventListener('change', (e) => { H.days = Number(e.target.value) || 30; loadHistory(); });
+  $('#hist-metric').addEventListener('change', renderHistory);
+  $('#hist-group').addEventListener('change', renderHistory);
+  $('#hist-csv').addEventListener('click', downloadCsv);
 }
 
 /* ---------- Paleta příkazů (Ctrl+K) ---------- */
@@ -648,10 +978,13 @@ function paletteActions() {
     { label: 'Přiložit soubory', run: () => $('#file-input').click() },
     { label: 'Změny v gitu', meta: 'komentáře k řádkům', run: () => openGit() },
     { label: 'Přehled sezení', meta: 'soubory, úkoly, agenti, MCP', run: () => openOverview() },
+    { label: progressOn() ? 'Vypnout sledování průběhu' : 'Zapnout sledování průběhu', meta: 'kroky, procenta, odhad času', run: () => setProgressOn(!progressOn()) },
+    ...(PR.st.steps.length ? [{ label: PR.hidden ? 'Ukázat průběh' : 'Skrýt průběh', run: () => { PR.hidden = !PR.hidden; renderProgress(); } }] : []),
     { label: 'Hledat v konverzaci', meta: 'Ctrl+F', run: () => openFind() },
     { label: 'Soubory projektu', meta: 'hledání a náhled', run: () => openFiles() },
     { label: 'Nastavení', run: () => openSettings() },
     { label: 'Statistiky a limit účtu', run: () => openStats() },
+    { label: 'Statistiky v čase', meta: 'grafy, CSV', run: () => { openStats(); selectStatsTab(true); } },
     { label: document.fullscreenElement ? 'Ukončit celou obrazovku' : 'Celá obrazovka', run: () => toggleFullscreen() },
     ...[['dark', 'Tmavý'], ['light', 'Světlý'], ['system', 'Podle systému']].map(([v, l]) =>
       ({ label: `Motiv: ${l}`, run: () => window.acdTheme && window.acdTheme.set(v) })),
@@ -667,6 +1000,8 @@ function insertIntoPrompt(text, { replaceEmpty = true } = {}) {
     ta.setSelectionRange(a + text.length, a + text.length);
   }
   ta.focus();
+  clearTimeout(DR.timer);
+  DR.timer = setTimeout(saveDraft, 400);
 }
 
 function buildPalette(q) {
@@ -1136,6 +1471,9 @@ async function openSettings() {
   renderFullscreenButton();
   renderThemeChoice();
   renderNotifyToggle();
+  $('#set-progress').checked = progressOn();
+  $('#set-autocontinue').checked = autoOn();
+  $('#set-drafts').checked = draftsOn();
   if (!d.open) d.showModal();
   try { renderSettingsProjects(await apiJson('/api/settings')); } catch (e) { setMsg(e.message, 'err'); }
 }
@@ -1264,6 +1602,12 @@ function setupSettings() {
   $('#set-theme').addEventListener('change', (e) => { if (window.acdTheme) window.acdTheme.set(e.target.value); });
   document.addEventListener('fullscreenchange', renderFullscreenButton);
   $('#set-notify').addEventListener('click', toggleNotify);
+  $('#set-progress').addEventListener('change', (e) => setProgressOn(e.target.checked));
+  $('#set-autocontinue').addEventListener('change', (e) => { store(AUTO_KEY, e.target.checked ? '1' : '0'); if (!e.target.checked) cancelContinue(); });
+  $('#set-drafts').addEventListener('change', (e) => {
+    store(DRAFTS_ON_KEY, e.target.checked ? '1' : '0');
+    if (!e.target.checked) { try { localStorage.removeItem(DRAFTS_KEY); } catch { } loadSessions(); }
+  });
   $('#set-notify-kinds').addEventListener('change', () => {
     const o = {};
     for (const c of $('#set-notify-kinds').querySelectorAll('input')) o[c.value] = c.checked;
@@ -1299,6 +1643,14 @@ function showLimit(accountId, resetsAt, detail) {
   const parts = [strong, document.createTextNode(when ? ` Obnoví se v ${when}.` : ' Čas obnovení není známý.')];
   if (detail) parts.push(el('div', null, detail));
   const actions = [];
+  if (AC.timer && AC.ctx && AC.ctx.account === accountId) {
+    const left = el('span', null, fmtLeft(AC.at - Date.now()));
+    left.id = 'ac-left';
+    const line = el('div', null, `Automaticky pokračuji v ${fmtTime(AC.at / 1000)} (za `);
+    line.append(left, document.createTextNode(') – pokud okno zůstane otevřené. Fronta zůstane pozastavená.'));
+    parts.push(line);
+    actions.push(button('Nepokračovat automaticky', 'btn-ghost', () => { cancelContinue(); showLimit(accountId, resetsAt, detail); announce('Automatické pokračování zrušeno.'); }));
+  } else if (!autoOn()) parts.push(el('div', null, 'Automatické pokračování po obnovení je vypnuté (Nastavení → Zprávy a práce).'));
   if (other) {
     actions.push(button(`Přepnout na ${other.label} a poslat znovu`, 'btn-accent', async () => {
       const prompt = S.lastPrompt;
@@ -1334,9 +1686,11 @@ function claudeBubble() {
   node.append(body, bar);
   return { node, body };
 }
-function setClaudeText(m, text, highlight) {
-  RAW.set(m.node, text || '');
-  renderMd(m.body, text, highlight);
+function setClaudeText(m, text, highlight, partial) {
+  const clean = Review.progressMarks(text, partial).clean; // značky průběhu se nezobrazují
+  RAW.set(m.node, clean);
+  renderMd(m.body, clean, highlight);
+  m.node.hidden = !clean.trim(); // odpověď jen se značkou = žádná bublina
 }
 async function copyText(text, btn, done) {
   btn.dataset.label ??= btn.textContent;
@@ -1579,6 +1933,7 @@ function setRunning(on) {
  * 'queue' = do fronty (odešle se po dokončení).
  */
 function send(target = 'now') {
+  setTimeout(saveDraft, 0); // odeslaný text už není koncept
   const ta = $('#prompt');
   if (S.pending.some((a) => a.status === 'uploading')) { S.attachNotice = 'Počkejte, až se přílohy nahrají.'; renderAttachments(); return; }
   const files = S.pending.filter((a) => a.status === 'ok').map(({ id, name, type, size }) => ({ id, name, type, size }));
@@ -1650,8 +2005,9 @@ function userBubble(text, files) {
   return box;
 }
 
-async function startRun(prompt, mode, files = [], opts = { model: S.model, effort: S.effort }) {
+async function startRun(prompt, mode, files = [], opts = { model: S.model, effort: S.effort }, { auto = false } = {}) {
   if (S.run) return;
+  if (!auto) cancelContinue();
   hideBanner();
   S.lastPrompt = prompt;
   append(userBubble(prompt, files), true);
@@ -1659,9 +2015,11 @@ async function startRun(prompt, mode, files = [], opts = { model: S.model, effor
   const controller = new AbortController();
   const run = { runId: null, controller, mode, account: S.account, prompt, sawPlan: false, resultText: null,
     resultError: false, hadError: false, cwd: null, limitShown: false, outcome: null, sessionId: S.sessionId,
-    replays: 0, injectedBubbles: [], model: opts.model || '', effort: opts.effort || '' };
+    replays: 0, injectedBubbles: [], model: opts.model || '', effort: opts.effort || '', auto, progress: progressOn() };
   S.run = run;
+  PR.stopped = null;
   setRunning(true);
+  renderProgress();
   setStatus('Spouštím Claude…', true);
 
   const state = { msgBlocks: new Map(), finalized: new Set() };
@@ -1669,7 +2027,7 @@ async function startRun(prompt, mode, files = [], opts = { model: S.model, effor
     const res = await api('/api/runs', {
       method: 'POST',
       signal: controller.signal,
-      body: { account: S.account, project: S.project, mode, prompt, resume: S.sessionId, attachments: files.map((f) => f.id), model: run.model, effort: run.effort },
+      body: { account: S.account, project: S.project, mode, prompt, resume: S.sessionId, attachments: files.map((f) => f.id), model: run.model, effort: run.effort, progress: run.progress },
     });
     if (!res.ok) {
       let msg = `HTTP ${res.status}`;
@@ -1726,6 +2084,8 @@ function enqueue(prompt, files = []) {
 /** Konec běhu → výsledek pro frontu: ok | stopped | error | limit | plan. */
 function afterRun(run) {
   const outcome = run.outcome ?? 'error';
+  if (outcome === 'limit') scheduleContinue(run);
+  else if (outcome === 'ok' && run.sessionId) delete AC.attempts[run.sessionId];
   const go = S.queue.onRunEnd(outcome);
   renderQueue();
   if (go) { setTimeout(dispatchNext, 0); return; }
@@ -1858,7 +2218,17 @@ function setupAttachments() {
 
 /** Enter v seznamu doplní další číslo / odrážku; Shift+Enter = obyčejný nový řádek (výchozí chování). */
 /* ---------- Našeptávání příkazů při psaní „/“ na začátku zprávy ---------- */
-const SL = { items: [], sel: 0 };
+const SL = { items: [], sel: 0, mode: 'cmd', at: null };
+const AT = { files: null, project: null, at: 0, loading: false };
+/** Seznam souborů pro @ (stejný jako v okně Soubory; obnoví se nejvýš jednou za minutu). */
+async function ensureAtFiles() {
+  if (AT.loading) return false;
+  AT.loading = true;
+  try { const r = await apiJson(`/api/projects/${encodeURIComponent(S.project)}/files`); AT.files = r.files; }
+  catch { AT.files = []; }
+  finally { AT.project = S.project; AT.at = Date.now(); AT.loading = false; }
+  return true;
+}
 const slashOpen = () => !$('#slash-list').hidden;
 /** Rozpracovaný příkaz: „/abc“ od začátku zprávy až po kurzor (Claude Code bere příkazy jen na začátku). */
 function slashQuery() {
@@ -1877,20 +2247,39 @@ function closeSlash() {
 }
 function updateSlash() {
   const q = slashQuery();
-  if (q === null) { closeSlash(); return; }
-  const f = fold(q);
-  const items = commandEntries().filter((c) => fold(c.name).includes(f))
-    .sort((x, y) => (fold(x.name).startsWith(f) ? 0 : 1) - (fold(y.name).startsWith(f) ? 0 : 1)).slice(0, 50);
+  const ta = $('#prompt');
+  let items, mode = 'cmd', at = null;
+  if (q !== null) {
+    const f = fold(q);
+    items = commandEntries().filter((c) => fold(c.name).includes(f))
+      .sort((x, y) => (fold(x.name).startsWith(f) ? 0 : 1) - (fold(y.name).startsWith(f) ? 0 : 1)).slice(0, 50)
+      .map((c) => ({ ...c, label: `/${c.name}`, meta: c.kind === 'skill' ? 'skill' : '' }));
+  } else {
+    at = ta.selectionStart === ta.selectionEnd ? Review.atQuery(ta.value, ta.selectionStart) : null;
+    if (!at) { closeSlash(); return; }
+    if (AT.project !== S.project || !AT.files) { ensureAtFiles().then((ok) => { if (ok) updateSlash(); }); return; }
+    if (Date.now() - AT.at > 60_000) ensureAtFiles();
+    mode = 'file';
+    items = Review.rankFiles(AT.files, at.query, 12).map((p) => {
+      const slash = p.lastIndexOf('/');
+      return { name: p, kind: 'file', label: p.slice(slash + 1), meta: slash > 0 ? p.slice(0, slash) : '' };
+    });
+  }
   if (!items.length) { closeSlash(); return; }
   const ul = $('#slash-list');
-  const wasOpen = slashOpen();
+  const wasOpen = slashOpen() && SL.mode === mode;
+  SL.mode = mode;
+  SL.at = at;
+  ul.setAttribute('aria-label', mode === 'file' ? 'Soubory projektu' : 'Příkazy a skilly');
   ul.textContent = '';
   SL.items = items.map((c, i) => {
     const li = el('li', 'palette-item');
     li.id = `slash-${i}`;
     li.setAttribute('role', 'option');
-    li.appendChild(el('span', 'palette-label', `/${c.name}`));
-    if (c.kind === 'skill') li.appendChild(el('span', 'palette-meta', 'skill'));
+    li.dataset.kind = mode === 'file' ? 'file' : 'cmd';
+    li.appendChild(el('span', 'palette-label', c.label));
+    if (c.meta) li.appendChild(el('span', 'palette-meta', c.meta));
+    if (mode === 'file') li.setAttribute('aria-label', c.name);
     li.addEventListener('mousedown', (e) => e.preventDefault()); // fokus zůstane v poli
     li.addEventListener('click', () => { SL.sel = i; acceptSlash(); });
     ul.appendChild(li);
@@ -1899,7 +2288,9 @@ function updateSlash() {
   SL.sel = 0;
   ul.hidden = false;
   markSlash();
-  if (!wasOpen) $('#slash-status').textContent = `${items.length} ${plural(items.length, 'příkaz', 'příkazy', 'příkazů')} – šipky vyberou, Enter nebo Tab vloží, Esc zavře.`;
+  if (!wasOpen) $('#slash-status').textContent = mode === 'file'
+    ? `${items.length} ${plural(items.length, 'soubor', 'soubory', 'souborů')} – šipky vyberou, Enter nebo Tab vloží, Esc zavře.`
+    : `${items.length} ${plural(items.length, 'příkaz', 'příkazy', 'příkazů')} – šipky vyberou, Enter nebo Tab vloží, Esc zavře.`;
 }
 function markSlash() {
   SL.items.forEach((it, i) => it.node.setAttribute('aria-selected', i === SL.sel ? 'true' : 'false'));
@@ -1910,6 +2301,19 @@ function acceptSlash() {
   const it = SL.items[SL.sel];
   const ta = $('#prompt');
   if (!it) return;
+  if (SL.mode === 'file' && SL.at) {
+    // @cesta: nahradit rozepsané @… (i zbytek slova za kurzorem); Claude Code soubor načte sám.
+    const from = SL.at.start;
+    const end = ta.selectionStart + /^[^\s@"]*/.exec(ta.value.slice(ta.selectionStart))[0].length;
+    const after = ta.value.slice(end);
+    const text = `@${it.name}` + (after.startsWith(' ') ? '' : ' ');
+    ta.setSelectionRange(from, end);
+    if (!document.execCommand('insertText', false, text)) ta.setRangeText(text, from, end, 'end');
+    const caret = from + text.length + (after.startsWith(' ') ? 1 : 0);
+    ta.setSelectionRange(caret, caret);
+    closeSlash();
+    return;
+  }
   const end = ta.selectionStart + /^[\w:.-]*/.exec(ta.value.slice(ta.selectionStart))[0].length; // i zbytek slova za kurzorem
   const after = ta.value.slice(end);
   const text = `/${it.name}` + (after.startsWith(' ') ? '' : ' ');
@@ -2098,7 +2502,7 @@ function textBlock(state, messageId, index) {
 function scheduleRender(b) {
   if (b.pending) return;
   b.pending = true;
-  requestAnimationFrame(() => { b.pending = false; setClaudeText(b, b.raw, false); scrollDown(); });
+  requestAnimationFrame(() => { b.pending = false; setClaudeText(b, b.raw, false, true); scrollDown(); });
 }
 
 function handleEvent(ev, run, state) {
@@ -2106,6 +2510,7 @@ function handleEvent(ev, run, state) {
     case 'run':
       run.runId = ev.runId;
       run.warm = ev.warm === true; // navázáno na čekající proces claude (bez startu)
+      run.progress = ev.progress === true;
       break;
     case 'init':
       S.sessionId = ev.sessionId;
@@ -2147,6 +2552,7 @@ function handleEvent(ev, run, state) {
       state.finalized.add(key);
       b.raw = ev.text || '';
       setClaudeText(b, b.raw, true);
+      progressFromText(b.raw, Date.now());
       scrollDown();
       break;
     }
@@ -2169,7 +2575,7 @@ function handleEvent(ev, run, state) {
     }
     case 'rate_limit':
       S.limits[run.account] = { ...ev, at: Date.now() };
-      if (ev.status === 'rejected') { run.limitShown = true; showLimit(run.account, ev.resetsAt); }
+      if (ev.status === 'rejected') { run.limitShown = true; run.limitResetsAt = ev.resetsAt; showLimit(run.account, ev.resetsAt); }
       else if (ev.status === 'allowed_warning') {
         const pct = ev.utilization != null ? ` (${Math.round(ev.utilization * 100)} %)` : '';
         const acc = accountById(run.account);
@@ -2226,6 +2632,9 @@ function handleEvent(ev, run, state) {
       if (ev.stopped) { append(el('div', 'msg msg--note', 'Zastaveno.')); setStatus('Zastaveno.'); }
       else if (ev.code !== 0 && ev.stderr && !run.limitShown) showError(`claude skončil kódem ${ev.code}`, ev.stderr);
       else setStatus('Hotovo.');
+      if (PR.st.steps.length && !PR.st.done)
+        PR.stopped = ev.stopped ? 'Zastaveno.' : run.limitShown ? 'Přerušeno limitem účtu.' : 'Claude skončil před koncem plánu – pokračujte další zprávou.';
+      renderProgress();
       // Plan bez souboru plánu → plán je text odpovědi.
       if (run.mode === 'plan' && !run.sawPlan && !ev.stopped && !run.resultError && run.resultText) showPlanCard(null, 'Plán je výše – schválit?');
       break;
@@ -2243,6 +2652,176 @@ async function stop() {
   if (run.runId) {
     try { await api(`/api/runs/${run.runId}/stop`, { method: 'POST' }); } catch { }
   } else run.controller.abort();
+}
+
+/* ---------- Úložiště prohlížeče (vše v try/catch – může být zakázané) ---------- */
+const load = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+const store = (k, v) => { try { localStorage.setItem(k, v); } catch { /* nevadí */ } };
+
+/* ---------- Průběh práce (volitelné): Claude píše [[plan: …]] a [[step: N]], vpravo kroky, procenta, odhad ---------- */
+const PROGRESS_KEY = 'acd.progress';
+const progressOn = () => load(PROGRESS_KEY) === '1';
+const PR = { st: Review.newProgress(), hidden: false, timer: null, stopped: null, said: '' };
+
+function setProgressOn(on) {
+  store(PROGRESS_KEY, on ? '1' : '0');
+  $('#progress-toggle').checked = on;
+  $('#set-progress').checked = on;
+  renderRunOpts();
+  announce(on ? 'Sledování průběhu zapnuto – platí od další zprávy.' : 'Sledování průběhu vypnuto.');
+}
+function resetProgress() {
+  PR.st = Review.newProgress();
+  PR.hidden = false;
+  PR.stopped = null;
+  renderProgress();
+}
+function progressFromText(text, now) {
+  const { marks } = Review.progressMarks(text);
+  if (!marks.length) return;
+  for (const m of marks) {
+    if (m.type === 'plan' && PR.st.done) { PR.st = Review.newProgress(); PR.hidden = false; } // nový úkol po dokončeném
+    Review.applyMark(PR.st, m, now);
+  }
+  PR.stopped = null;
+  renderProgress();
+}
+const fmtDur = (ms) => (ms < 60_000 ? `${Math.max(1, Math.round(ms / 1000))} s` : `${Math.round(ms / 60_000)} min`);
+
+function renderProgress() {
+  const st = PR.st, panel = $('#progress'), foot = $('#foot-progress');
+  const info = Review.progressInfo(st, Date.now());
+  const has = info.total > 0;
+  panel.hidden = !has || PR.hidden;
+  $('.layout').classList.toggle('has-progress', !panel.hidden);
+  foot.hidden = !has;
+  const running = !!S.run && !st.done && !PR.stopped;
+  if (running && !PR.timer) PR.timer = setInterval(renderProgress, 5000);
+  if (!running && PR.timer) { clearInterval(PR.timer); PR.timer = null; }
+  if (!has) return;
+  const label = st.done ? 'hotovo' : info.cur ? `krok ${info.cur} z ${info.total}` : `${info.total} ${plural(info.total, 'krok', 'kroky', 'kroků')}`;
+  foot.textContent = `Průběh: ${label} · ${info.percent} %`;
+  foot.setAttribute('aria-expanded', String(!panel.hidden));
+  foot.title = panel.hidden ? 'Ukázat průběh' : 'Skrýt průběh';
+  $('#progress-pct').textContent = `${info.percent} %`;
+  $('#progress-eta').textContent = st.done ? `hotovo${st.endAt && st.times[1] ? ` za ${fmtDur(st.endAt - st.times[1])}` : ''}`
+    : !running ? '' : info.etaMs != null ? `zbývá ${Review.fmtEta(info.etaMs)}` : info.cur ? 'odhad po prvním kroku' : '';
+  const bar = $('#progress-bar');
+  bar.setAttribute('aria-valuenow', String(info.percent));
+  bar.setAttribute('aria-valuetext', `${label}, ${info.percent} %`);
+  bar.firstElementChild.style.width = `${info.percent}%`;
+  const ol = $('#progress-steps');
+  ol.textContent = '';
+  st.steps.forEach((text, i) => {
+    const n = i + 1;
+    const state = st.done || n < info.cur ? 'done' : n === info.cur ? 'current' : 'todo';
+    const li = el('li');
+    li.dataset.state = state;
+    if (state === 'current') li.setAttribute('aria-current', 'step');
+    const num = el('span', 'progress-num', state === 'done' ? '✓' : String(n));
+    num.setAttribute('aria-hidden', 'true');
+    li.append(num, el('span', 'sr-only', state === 'done' ? `${n}, hotovo: ` : state === 'current' ? `${n}, právě teď: ` : `${n}: `),
+      el('span', 'progress-text', text));
+    const end = st.times[n + 1] ?? (st.done && n === info.total ? st.endAt : null);
+    if (st.times[n] != null && end) li.appendChild(el('span', 'progress-time', fmtDur(end - st.times[n])));
+    ol.appendChild(li);
+  });
+  $('#progress-note').textContent = st.done ? '' : PR.stopped || '';
+  const say = st.done ? 'Průběh: hotovo.' : info.cur ? `Krok ${info.cur} z ${info.total}: ${st.steps[info.cur - 1]}` : '';
+  if (say && say !== PR.said) { PR.said = say; $('#progress-status').textContent = say; }
+}
+
+function setupProgress() {
+  $('#progress-toggle').checked = progressOn();
+  $('#progress-toggle').addEventListener('change', (e) => setProgressOn(e.target.checked));
+  $('#progress-hide').addEventListener('click', () => { PR.hidden = true; renderProgress(); $('#foot-progress').focus(); });
+  $('#foot-progress').addEventListener('click', () => { PR.hidden = !PR.hidden; renderProgress(); });
+}
+
+/* ---------- Rozepsané zprávy (koncepty) po sezeních – jen localStorage tohoto prohlížeče ---------- */
+const DRAFTS_KEY = 'acd.drafts';
+const DRAFTS_ON_KEY = 'acd.drafts.on';
+const DRAFT_MAX = 30, DRAFT_DAYS = 30, DRAFT_CHARS = 20_000;
+const draftsOn = () => load(DRAFTS_ON_KEY) !== '0';
+const draftKey = () => `${S.account}|${S.project}|${S.sessionId || 'nové'}`;
+const DR = { timer: null, skip: false };
+function readDrafts() {
+  try { const o = JSON.parse(load(DRAFTS_KEY) || '{}'); return o && typeof o === 'object' && !Array.isArray(o) ? o : {}; } catch { return {}; }
+}
+function writeDrafts(o) {
+  const now = Date.now();
+  const keep = Object.entries(o).filter(([, d]) => d && typeof d.text === 'string' && typeof d.at === 'number' && now - d.at < DRAFT_DAYS * 86_400_000)
+    .sort((a, b) => b[1].at - a[1].at).slice(0, DRAFT_MAX);
+  store(DRAFTS_KEY, JSON.stringify(Object.fromEntries(keep)));
+}
+function saveDraft() {
+  clearTimeout(DR.timer);
+  if (!draftsOn() || !S.account || !S.project) return;
+  const o = readDrafts();
+  const k = draftKey();
+  const t = $('#prompt').value;
+  const had = !!o[k];
+  if (t.trim()) o[k] = { text: t.slice(0, DRAFT_CHARS), at: Date.now() };
+  else if (had) delete o[k];
+  else return;
+  writeDrafts(o);
+  if (had !== !!t.trim() && S.sessionId) markDraftInList(S.sessionId, !!t.trim());
+}
+function restoreDraft() {
+  const d = draftsOn() ? readDrafts()[draftKey()] : null;
+  $('#prompt').value = d ? d.text : '';
+  if (d) setStatus('Obnovena rozepsaná zpráva.');
+}
+const hasDraft = (id) => draftsOn() && !!readDrafts()[`${S.account}|${S.project}|${id}`];
+function markDraftInList(id, on) {
+  const meta = document.querySelector(`#sessions button[data-id="${CSS.escape(id)}"] .s-meta`);
+  if (!meta) return;
+  meta.textContent = meta.textContent.replace(/ • koncept$/, '') + (on ? ' • koncept' : '');
+}
+
+/* ---------- Po obnovení limitu automaticky pokračovat (jako Claude Code; vypnout jde v Nastavení) ---------- */
+const AUTO_KEY = 'acd.autocontinue';
+const autoOn = () => load(AUTO_KEY) !== '0';
+const CONTINUE_PROMPT = 'Pokračuj tam, kde jsi skončil – předtím tě zastavil limit účtu.';
+const AC_MAX_TRIES = 3;
+const AC = { timer: null, at: 0, ctx: null, attempts: {} };
+function fmtLeft(ms) {
+  if (ms <= 60_000) return 'chvíli';
+  const m = Math.round(ms / 60_000);
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`;
+}
+function scheduleContinue(run) {
+  cancelContinue();
+  const sid = run.sessionId || S.sessionId;
+  const lim = S.limits[run.account];
+  const resetsAt = run.limitResetsAt || (lim && lim.resetsAt);
+  if (!autoOn() || !resetsAt || !sid) return;
+  const tries = AC.attempts[sid] || 0;
+  if (tries >= AC_MAX_TRIES) { showBanner('err', [el('strong', null, 'Automatické pokračování vzdávám'),
+    document.createTextNode(` – limit trvá i po ${tries} pokusech. Pokračujte ručně.`)], []); return; }
+  AC.attempts[sid] = tries + 1;
+  AC.ctx = { account: run.account, project: S.project, sessionId: sid, mode: run.mode, model: run.model, effort: run.effort };
+  // Minuta rezervy po obnovení; čas v minulosti → za 5 minut.
+  AC.at = Math.max(resetsAt * 1000 + 60_000, Date.now() + (resetsAt * 1000 < Date.now() ? 300_000 : 0));
+  AC.timer = setInterval(tickContinue, 15_000);
+  showLimit(run.account, resetsAt);
+}
+function cancelContinue() {
+  if (!AC.timer) return;
+  clearInterval(AC.timer);
+  AC.timer = null;
+  AC.ctx = null;
+}
+function tickContinue() {
+  const left = $('#ac-left');
+  if (left) left.textContent = fmtLeft(AC.at - Date.now());
+  if (Date.now() < AC.at || S.run) return; // běží-li něco jiného, počkat
+  const c = AC.ctx;
+  cancelContinue();
+  if (!c || c.account !== S.account || c.project !== S.project || c.sessionId !== S.sessionId) return;
+  notify('Pokračuji po obnovení limitu', CONTINUE_PROMPT, 'ok');
+  announce('Limit účtu se obnovil – pokračuji.');
+  startRun(CONTINUE_PROMPT, c.mode, [], { model: c.model, effort: c.effort }, { auto: true });
 }
 
 /* ---------- Hledat v konverzaci (Ctrl+F) – bez diakritiky, zvýraznění přes CSS Highlight API ---------- */
@@ -2539,6 +3118,7 @@ async function main() {
     listKeydown(e);
   });
   $('#prompt').addEventListener('input', updateSlash);
+  $('#prompt').addEventListener('input', () => { clearTimeout(DR.timer); DR.timer = setTimeout(saveDraft, 400); });
   $('#prompt').addEventListener('click', updateSlash);
   $('#prompt').addEventListener('blur', closeSlash);
   $('#notify-toggle').addEventListener('click', toggleNotify);
@@ -2555,6 +3135,8 @@ async function main() {
   setupStats();
   setupFind();
   setupOverview();
+  setupProgress();
+  setupHistory();
   setupSessionSearch();
   $('#new-session').addEventListener('click', newSession);
   $('#project').addEventListener('change', (e) => switchProject(e.target.value));

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ClaudeRunner } from '../src/server/lib/claude.mjs';
+import { ClaudeRunner, PROGRESS_PROMPT } from '../src/server/lib/claude.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FAKE = path.join(root, 'tests', 'fixtures', 'fake-claude.mjs');
@@ -37,6 +37,10 @@ test('stejné sezení a nastavení → stejný proces; jiný režim, model nebo 
   assert.equal(r.isSessionBusy(t1.sessionId), false, 'čekající proces neblokuje sezení');
   const t2 = await turn(r, 'znovu', t1.sessionId);
   assert.equal(t2.run.warm, true);
+  // Cena: Claude Code posílá součet za proces (0,1 → 0,2); ven jde cena jen tohoto tahu.
+  const cost = (t) => t.events.find((e) => e.type === 'result');
+  assert.equal(cost(t1).costUsd, 0.1);
+  assert.ok(Math.abs(cost(t2).costUsd - 0.1) < 1e-9 && Math.abs(cost(t2).totalCostUsd - 0.2) < 1e-9);
   assert.equal(t2.pid, t1.pid);
   assert.equal(t2.turn, 2);
   const t3 = await turn(r, 'plán', t1.sessionId, 'plan');
@@ -99,4 +103,20 @@ test('closeProject zavře čekající procesy projektu', async () => {
   r.closeProject('p');
   await p.closed;
   assert.equal(r.idle.size, 0);
+});
+
+test('sledování průběhu: přidá pevný text k systémovému promptu a změna volby = nový proces', async () => {
+  const seen = [];
+  const r = new ClaudeRunner(cfg({ appendSystemPrompt: 'Vlastní.' }), () => {}, {
+    spawnFn: (exe, args, opts) => { seen.push(args); return spawn(process.execPath, [FAKE, ...args], opts); } });
+  const t1 = await turn(r, 'ahoj', null, 'auto', { progress: true });
+  const sys = (a) => a[a.indexOf('--append-system-prompt') + 1];
+  assert.equal(sys(seen[0]), `Vlastní.\n\n${PROGRESS_PROMPT}`);
+  const t2 = await turn(r, 'znovu', t1.sessionId, 'auto', { progress: true });
+  assert.equal(t2.pid, t1.pid);
+  const t3 = await turn(r, 'bez', t1.sessionId, 'auto', { progress: false });
+  assert.notEqual(t3.pid, t1.pid);
+  assert.equal(sys(seen[1]), 'Vlastní.');
+  r.stopAll();
+  await closed(r);
 });

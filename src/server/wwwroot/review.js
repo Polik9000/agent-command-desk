@@ -85,5 +85,101 @@
     return lines.join('\n');
   }
 
-  root.Review = { fold, findAll, diffLines, commentsMessage, inlineCode };
+  /* ---------- Průběh práce: značky [[plan: …]] a [[step: N|done]] (viz PROGRESS_PROMPT na serveru) ---------- */
+  const MARK_LINE_RX = /^[ \t]*\[\[(plan|step):[^\]\n]*\]\][ \t]*(\r?\n|$)/gm;
+  const MARK_RX = /\[\[(plan|step):\s*([^\]\n]*)\]\]/g;
+  const MAX_STEPS = 12;
+
+  /**
+   * Značky průběhu v textu odpovědi a text bez nich.
+   * @param {string} text @param {boolean} [partial] text se ještě píše → skrýt i rozepsanou značku na konci
+   * @returns {{clean:string, marks:Array<{type:'plan', steps:string[]}|{type:'step', step:number|'done'}>}}
+   */
+  function progressMarks(text, partial) {
+    const src = String(text || '');
+    const marks = [];
+    for (const m of src.matchAll(MARK_RX)) {
+      const body = m[2].trim();
+      if (m[1] === 'plan') {
+        const steps = body.split('|').map((s) => s.trim()).filter(Boolean).slice(0, MAX_STEPS).map((s) => s.slice(0, 160));
+        if (steps.length) marks.push({ type: 'plan', steps });
+      } else if (/^done$/i.test(body)) marks.push({ type: 'step', step: 'done' });
+      else if (/^\d{1,2}$/.test(body)) marks.push({ type: 'step', step: Number(body) });
+    }
+    let clean = src.replace(MARK_LINE_RX, '').replace(MARK_RX, '');
+    if (partial) clean = clean.replace(/\[\[?(?:[a-z]{0,4}(?::[^\]\n]{0,200})?\]?)?$/, ''); // „[[st…“ při psaní
+    return { clean: clean.replace(/^\s*\n/, ''), marks };
+  }
+
+  /** Nový stav průběhu. */
+  const newProgress = () => ({ steps: [], cur: 0, done: false, times: [], endAt: 0 });
+
+  /** Použije značku na stav (mění ho). `now` v ms; null = čas neznámý (historie). */
+  function applyMark(st, mark, now) {
+    if (mark.type === 'plan') {
+      const same = mark.steps.length === st.steps.length && mark.steps.every((s, i) => s === st.steps[i]);
+      if (!same) {
+        st.steps = mark.steps;
+        st.cur = Math.min(st.cur, st.steps.length);
+        st.times = st.times.slice(0, st.cur + 1);
+        st.done = false;
+      }
+    } else if (mark.step === 'done') {
+      if (!st.steps.length) return st;
+      st.done = true;
+      st.cur = st.steps.length;
+      st.endAt = now ?? 0;
+    } else if (mark.step >= 1 && mark.step <= st.steps.length) {
+      st.cur = mark.step;
+      st.done = false;
+      if (now != null && st.times[mark.step] == null) st.times[mark.step] = now;
+    }
+    return st;
+  }
+
+  /**
+   * Procenta a odhad zbývajícího času: průměrná délka hotových kroků × zbývající kroky − čas v aktuálním kroku.
+   * @returns {{total:number, cur:number, completed:number, percent:number, etaMs:number|null}}
+   */
+  function progressInfo(st, now) {
+    const total = st.steps.length;
+    if (!total) return { total: 0, cur: 0, completed: 0, percent: 0, etaMs: null };
+    if (st.done) return { total, cur: total, completed: total, percent: 100, etaMs: 0 };
+    const completed = Math.max(0, st.cur - 1);
+    const durations = [];
+    for (let i = 1; i < st.cur; i++) if (st.times[i] != null && st.times[i + 1] != null) durations.push(st.times[i + 1] - st.times[i]);
+    let etaMs = null;
+    if (durations.length && st.times[st.cur] != null) {
+      const avg = durations.reduce((a, b) => a + b, 0) / durations.length;
+      etaMs = Math.max(0, Math.round(avg * (total - completed) - (now - st.times[st.cur])));
+    }
+    return { total, cur: st.cur, completed, percent: Math.round((completed / total) * 100), etaMs };
+  }
+
+  /** „asi 3 min“ / „asi 40 s“ / „už brzy“. */
+  function fmtEta(ms) {
+    if (ms == null) return '';
+    if (ms < 15_000) return 'už brzy';
+    if (ms < 90_000) return `asi ${Math.round(ms / 10_000) * 10} s`;
+    if (ms < 3_600_000) return `asi ${Math.round(ms / 60_000)} min`;
+    return `asi ${(ms / 3_600_000).toLocaleString('cs-CZ', { maximumFractionDigits: 1 })} h`;
+  }
+
+  /* ---------- @ soubor v poli pro psaní ---------- */
+  /** Rozepsané „@něco“ těsně před kurzorem (na začátku nebo po mezeře). */
+  function atQuery(value, caret) {
+    const m = /(^|\s)@([^\s@"]{0,200})$/.exec(String(value).slice(0, caret));
+    return m ? { start: caret - m[2].length - 1, query: m[2] } : null;
+  }
+  /** Soubory podle dotazu: všechna slova (bez diakritiky), shoda v názvu souboru dřív; nejvýš `max`. */
+  function rankFiles(files, q, max = 12) {
+    const terms = fold(q).split(/[\s/\\]+/).filter(Boolean);
+    const name = (p) => fold(p.slice(p.lastIndexOf('/') + 1));
+    const hits = terms.length ? files.filter((p) => { const f = fold(p); return terms.every((t) => f.includes(t)); }) : files.slice(0, 200);
+    const score = (p) => (terms.length && name(p).startsWith(terms[terms.length - 1]) ? 0 : terms.length && name(p).includes(terms[terms.length - 1]) ? 1 : 2);
+    return hits.map((p, i) => [p, score(p), i]).sort((a, b) => a[1] - b[1] || a[0].length - b[0].length || a[2] - b[2]).slice(0, max).map((x) => x[0]);
+  }
+
+  root.Review = { fold, findAll, diffLines, commentsMessage, inlineCode, progressMarks, newProgress, applyMark, progressInfo, fmtEta,
+    atQuery, rankFiles };
 })(typeof window !== 'undefined' ? window : globalThis);

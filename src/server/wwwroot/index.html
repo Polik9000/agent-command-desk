@@ -82,7 +82,7 @@
         <div class="attach-list" id="attach-list" aria-label="Přílohy" hidden></div>
         <label for="prompt" class="sr-only">Zpráva pro Claude</label>
         <div class="prompt-wrap">
-          <textarea id="prompt" rows="3" placeholder="Napište zprávu… (Ctrl+Enter odešle, / nabídne příkazy)" autocomplete="off"
+          <textarea id="prompt" rows="3" placeholder="Napište zprávu… (Ctrl+Enter odešle, / nabídne příkazy, @ soubory)" autocomplete="off"
             aria-autocomplete="list" aria-controls="slash-list"></textarea>
           <ul class="slash-list" id="slash-list" role="listbox" aria-label="Příkazy a skilly" hidden></ul>
           <p class="sr-only" id="slash-status" aria-live="polite"></p>
@@ -101,6 +101,8 @@
               <div class="runopts-presets" id="runopts-presets"></div>
               <label class="field"><span class="eyebrow">Model</span><select id="model"></select></label>
               <label class="field"><span class="eyebrow">Effort</span><select id="effort"></select></label>
+              <label class="runopts-check"><input type="checkbox" id="progress-toggle"> Sledovat průběh – Claude napíše kroky a vpravo
+                uvidíte, kde je, procenta a odhad času (pár desítek tokenů navíc u každé zprávy)</label>
               <p class="runopts-hint">Platí od další zprávy, i v rozpracovaném sezení. Skutečně použitý model je v patičce.</p>
             </div>
           </details>
@@ -113,6 +115,17 @@
         </div>
       </form>
     </main>
+    <aside class="progress" id="progress" aria-labelledby="progress-title" hidden>
+      <div class="progress-head">
+        <h2 class="eyebrow" id="progress-title">Průběh</h2>
+        <button type="button" class="btn btn-ghost btn-small" id="progress-hide" title="Skrýt (znovu ho ukáže tlačítko v patičce)">Skrýt</button>
+      </div>
+      <p class="progress-sum"><strong id="progress-pct">0 %</strong> <span id="progress-eta"></span></p>
+      <div class="meter-bar progress-bar" id="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-labelledby="progress-title"><i></i></div>
+      <ol class="progress-steps" id="progress-steps"></ol>
+      <p class="progress-note" id="progress-note"></p>
+      <p class="sr-only" id="progress-status" role="status"></p>
+    </aside>
     <div class="drop-hint" id="drop-hint" aria-hidden="true" hidden><span>Pusťte soubory sem – přiloží se ke zprávě.</span></div>
   </div>
 
@@ -145,6 +158,16 @@
     <section class="set-section" aria-labelledby="set-perm-title">
       <h3 class="eyebrow" id="set-perm-title">Oprávnění</h3>
       <p class="set-hint" id="set-perm"></p>
+    </section>
+
+    <section class="set-section" aria-labelledby="set-work-title">
+      <h3 class="eyebrow" id="set-work-title">Zprávy a práce</h3>
+      <fieldset class="set-checks" id="set-work">
+        <legend class="sr-only">Zprávy a práce</legend>
+        <label><input type="checkbox" id="set-progress"> Sledovat průběh (kroky, procenta, odhad času; pár desítek tokenů navíc u každé zprávy)</label>
+        <label><input type="checkbox" id="set-autocontinue"> Po obnovení limitu účtu automaticky pokračovat (okno musí zůstat otevřené)</label>
+        <label><input type="checkbox" id="set-drafts"> Pamatovat rozepsané zprávy u každého sezení (jen v tomto prohlížeči, nejvýš 30 dní)</label>
+      </fieldset>
     </section>
 
     <section class="set-section" aria-labelledby="set-theme-title">
@@ -188,9 +211,30 @@
       <h2 class="dialog-title" id="stats-title">Statistiky</h2>
       <button type="button" class="btn btn-ghost btn-small" id="stats-close">Zavřít</button>
     </div>
-    <div id="stats-body"></div>
+    <div class="tabs" role="tablist" aria-label="Statistiky">
+      <button type="button" class="tab" role="tab" id="stats-tab-now" aria-selected="true" aria-controls="stats-body">Toto okno</button>
+      <button type="button" class="tab" role="tab" id="stats-tab-hist" aria-selected="false" aria-controls="stats-hist" tabindex="-1">Historie a grafy</button>
+    </div>
+    <div id="stats-body" role="tabpanel" aria-labelledby="stats-tab-now"></div>
+    <div id="stats-hist" role="tabpanel" aria-labelledby="stats-tab-hist" hidden>
+      <div class="hist-filters">
+        <fieldset class="seg" id="hist-range">
+          <legend class="sr-only">Období</legend>
+          <label class="seg-item"><input type="radio" name="hist-range" value="7"><span>7 dní</span></label>
+          <label class="seg-item"><input type="radio" name="hist-range" value="30" checked><span>30 dní</span></label>
+          <label class="seg-item"><input type="radio" name="hist-range" value="90"><span>90 dní</span></label>
+        </fieldset>
+        <label class="field"><span class="eyebrow">Ukazatel</span>
+          <select id="hist-metric"><option value="cost">Odhad ceny API</option><option value="tokens">Tokeny</option><option value="runs">Běhy</option><option value="minutes">Čas práce</option></select></label>
+        <label class="field"><span class="eyebrow">Podle</span>
+          <select id="hist-group"><option value="project">projektů</option><option value="model">modelů</option><option value="account">účtů</option></select></label>
+        <button type="button" class="btn btn-ghost btn-small" id="hist-csv">Stáhnout CSV</button>
+      </div>
+      <div id="hist-body" class="viz"></div>
+    </div>
     <p class="set-hint"><strong>Odhad ceny API</strong> = kolik by běh stál při placení za API (hlásí ho Claude Code). S předplatným
-      (Pro, Max, Team) se za běhy neplatí zvlášť – rozhoduje <strong>limit účtu</strong> (výše). Údaje jsou jen z tohoto okna.</p>
+      (Pro, Max, Team) se za běhy neplatí zvlášť – rozhoduje <strong>limit účtu</strong>. <em>Toto okno</em> je jen z paměti okna;
+      <em>Historie</em> ukládá jen čísla (žádné texty zpráv) do datové složky aplikace na 180 dní.</p>
   </dialog>
 
   <dialog class="dialog palette" id="palette" aria-label="Paleta příkazů">
@@ -269,6 +313,7 @@
 
   <footer class="foot" id="foot">
     <span id="foot-session">Nové sezení</span>
+    <button type="button" class="foot-btn foot-overview" id="foot-progress" aria-controls="progress" hidden></button>
     <button type="button" class="foot-btn foot-overview" id="foot-overview" aria-haspopup="dialog" title="Upravené soubory, úkoly, agenti a MCP servery tohoto sezení">Přehled sezení</button>
     <span id="foot-model"></span>
     <button type="button" class="foot-btn foot-stats" id="foot-cost" aria-haspopup="dialog" hidden title="Statistiky: tokeny, odhad ceny API a limit účtu"></button>

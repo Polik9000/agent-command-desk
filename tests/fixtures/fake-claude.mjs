@@ -22,5 +22,5 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     out({ type: 'assistant', message: { id: `m${turn}x`, content: [{ type: 'tool_use', id: `tu${turn}`, name: 'ExitPlanMode', input: {} }] } });
   out({ type: 'assistant', message: { id: `m${turn}`, content: [{ type: 'text', text: `pid ${process.pid} turn ${turn}` }] } });
   out({ type: 'result', subtype: text.includes('FAIL') ? 'error_during_execution' : 'success', is_error: text.includes('FAIL'),
-    result: `pid:${process.pid}:turn:${turn}`, session_id: sessionId });
+    result: `pid:${process.pid}:turn:${turn}`, session_id: sessionId, total_cost_usd: 0.1 * turn }); // jako Claude Code: součet za proces
 });

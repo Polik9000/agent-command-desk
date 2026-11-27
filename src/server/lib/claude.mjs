@@ -15,6 +15,15 @@ export { killTree };
 export const MODES = ['auto', 'plan'];
 /** Režim „Ručně“: Claude Code se ptá na každý zápis a příkaz. Jen s interactivePermissions – jinak by se vše zamítlo. */
 export const ASK_MODE = 'default';
+/**
+ * Volitelné sledování průběhu: Claude napíše plán a značky kroků, aplikace je skryje a ukáže z nich průběh.
+ * Pevný text (uživatel ho nemění); ověřeno naostro na 2.1.332 – Claude značky dodržel.
+ */
+export const PROGRESS_PROMPT = 'Aplikace sleduje průběh práce. Když úkol vyžaduje víc kroků (3 a víc), napiš hned na začátku '
+  + 'na samostatný řádek [[plan: první krok | druhý krok | …]] – 2 až 12 krátkých kroků v jazyce uživatele. Na začátku '
+  + 'každého kroku napiš na samostatný řádek [[step: N]] (N = číslo kroku od 1) a po dokončení všech kroků [[step: done]]. '
+  + 'Když se plán změní, napiš nový řádek [[plan: …]]. U jednoduchých otázek a krátkých odpovědí nic z toho nepiš. '
+  + 'Aplikace tyto řádky skryje a ukáže z nich průběh.';
 /** Povolené režimy podle configu (nikdy bypassPermissions, acceptEdits ani dontAsk). */
 export const allowedModes = (cfg) => (cfg.interactivePermissions === true ? [...MODES, ASK_MODE] : [...MODES]);
 const MAX_PLAN_BYTES = 512 * 1024;
@@ -171,19 +180,19 @@ export class ClaudeRunner {
    * Spustí tah; události emituje jako 'event', na konci 'end'.
    * @param {import('./config.mjs').Account} account @param {import('./config.mjs').Project} project
    * @param {string} mode @param {string} prompt @param {string|null} resume
-   * @param {{addDirs?: string[], model?: string, effort?: string}} [opts] addDirs = další složky (přílohy);
-   *   model/effort už ověřené proti allowlistu (server.mjs)
+   * @param {{addDirs?: string[], model?: string, effort?: string, progress?: boolean}} [opts] addDirs = další složky (přílohy);
+   *   model/effort už ověřené proti allowlistu (server.mjs); progress = přidat PROGRESS_PROMPT
    */
-  async start(account, project, mode, prompt, resume, { addDirs = [], model = '', effort = '' } = {}) {
+  async start(account, project, mode, prompt, resume, { addDirs = [], model = '', effort = '', progress = false } = {}) {
     if (!allowedModes(this.cfg).includes(mode)) throw new Error('Neplatný režim.');
     if (resume && this.busySessions.has(resume)) throw new Error('Toto sezení už běží.');
     if (resume) this.busySessions.add(resume); // hned, ať nikdo jiný sezení nepřevezme během čekání níže
-    const sig = JSON.stringify([account.id, project.id, mode, model, effort, addDirs]);
+    const sig = JSON.stringify([account.id, project.id, mode, model, effort, addDirs, progress === true]);
     let proc = resume ? this.idle.get(resume) : undefined;
     try {
       if (proc && (proc.sig !== sig || proc.exited)) { await this.#retire(proc); proc = undefined; }
       if (proc) this.#unpark(proc);
-      else proc = this.#spawn(account, project, mode, resume, { addDirs, model, effort }, sig);
+      else proc = this.#spawn(account, project, mode, resume, { addDirs, model, effort, progress: progress === true }, sig);
     } catch (e) {
       if (resume) this.busySessions.delete(resume);
       throw e;
@@ -197,7 +206,7 @@ export class ClaudeRunner {
     return run;
   }
 
-  #spawn(account, project, mode, resume, { addDirs, model, effort }, sig) {
+  #spawn(account, project, mode, resume, { addDirs, model, effort, progress }, sig) {
     // Vstup jako stream-json: stdin zůstává otevřený, takže lze poslat další zprávu do běžícího tahu
     // (Claude ji převezme na nejbližším předělu; --replay-user-messages to potvrdí) i další tah do stejného procesu.
     const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
@@ -206,7 +215,8 @@ export class ClaudeRunner {
     if (this.cfg.interactivePermissions === true) args.push('--permission-prompts', 'host', '--permission-prompt-tool', 'stdio');
     else args.push('--permission-prompts', 'none');
     if (resume) args.push('--resume', resume);
-    if (this.cfg.appendSystemPrompt) args.push('--append-system-prompt', this.cfg.appendSystemPrompt);
+    const system = [this.cfg.appendSystemPrompt, progress ? PROGRESS_PROMPT : ''].filter(Boolean).join('\n\n');
+    if (system) args.push('--append-system-prompt', system);
     if (this.cfg.disallowedTools.length) args.push('--disallowedTools', ...this.cfg.disallowedTools);
     for (const d of addDirs) args.push('--add-dir', d);
     if (model) args.push('--model', model);
@@ -336,6 +346,12 @@ export class ClaudeRunner {
         if (e.type === 'user_replay') {
           run.replayed++;
           clearTimeout(run.closeTimer);
+        }
+        if (e.type === 'result' && typeof e.costUsd === 'number') {
+          // Claude Code hlásí total_cost_usd jako součet za celý proces – pro statistiky jen tento tah.
+          e.totalCostUsd = e.costUsd;
+          e.costUsd = Math.max(0, e.costUsd - (proc.costSoFar ?? 0));
+          proc.costSoFar = e.totalCostUsd;
         }
         run.emit('event', e);
         if (e.type === 'result') {

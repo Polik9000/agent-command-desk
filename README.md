@@ -55,6 +55,21 @@ Runs on Windows and macOS (experimental). The UI is in Czech.
 - **Project files** (*Soubory*) – read-only file finder and viewer with syntax highlighting: search by name or path,
   insert the path into your message, copy the content. Lists what git tracks plus new files (nothing ignored by
   `.gitignore`), outside git it skips build and cache folders; key, certificate and `.env` files are never shown.
+- **Progress** (optional – *Model* panel or *Nastavení → Zprávy a práce*) – for tasks with several steps Claude writes a
+  short plan and marks each step; a panel on the right shows the steps, where Claude is now, the percentage and an
+  estimate of the time left (from how long the finished steps took). The markers are hidden from the chat. Costs a few
+  dozen tokens per message (an extra paragraph in the system prompt), so it is off by default.
+- **Continue after a usage limit** – when an account hits its limit and you do not switch to another one, the app
+  continues the same session automatically a minute after the limit resets (the window must stay open; cancel in the
+  banner; at most 3 attempts; can be turned off in *Nastavení*). The queue stays paused.
+- **Drafts** – an unsent message is kept per session (and per new session) when you switch sessions, projects or
+  accounts; sessions with a draft are marked *koncept*. Only in this browser, at most 30 drafts for 30 days; can be
+  turned off in *Nastavení*.
+- **Files with @** – type `@` and part of a name to insert a project file path; Claude Code reads the file right away
+  (verified in the headless mode the app uses).
+- **Statistics over time** (*Statistiky → Historie a grafy*) – API-price estimate, tokens, runs or working time per day,
+  split by project, model or account (stacked columns), totals, a table, account-limit usage over time (line chart) and
+  CSV export; 7 / 30 / 90 days. Only numbers are stored (no message texts), in the app's data folder, for 180 days.
 - **Comment on the diff** – in the git view (click the branch in the header) click a changed line, or press Enter on it
   (arrow keys move between lines), and write what Claude should change. *Vložit do zprávy* turns all comments into one
   message (file, line number, the code, your note) that you review and send. Comments live in the window's memory only.
@@ -95,6 +110,7 @@ Runs on Windows and macOS (experimental). The UI is in Czech.
 | Keys | Action |
 |---|---|
 | Ctrl+K | Command palette |
+| `/` · `@` at the start of a word | Suggest commands and skills · project files |
 | Ctrl+F | Find in the conversation (Enter / Shift+Enter or F3 / Shift+F3 = next / previous, Esc closes) |
 | Ctrl+Enter | Send; while Claude works: send now into the running turn |
 | Ctrl+Shift+Enter | While Claude works: add to the queue |
@@ -207,6 +223,9 @@ Tlačítko **Soubory** otevře hledání a náhled souborů projektu (jen pro č
 V přehledu změn jde kliknout na řádek a napsat k němu **komentář**; tlačítko *Vložit do zprávy* z komentářů složí zprávu
 pro Clauda. **Přehled sezení** v patičce ukáže upravené soubory, seznam úkolů, agenty a stav MCP serverů. Pod každou
 odpovědí je *Kopírovat*, Ctrl+F hledá v konverzaci (bez ohledu na diakritiku).
+Volitelné **sledování průběhu** (panel Model nebo Nastavení) ukáže vpravo kroky, kde Claude je, procenta a odhad času.
+Po **limitu účtu** aplikace sama pokračuje po jeho obnovení (vypnout jde v Nastavení). Rozepsané zprávy se pamatují
+u každého sezení, `@` nabídne soubory projektu a **Statistiky → Historie a grafy** ukážou spotřebu v čase.
 3. Vlastní název: `app.name` v configu. Vlastní vzhled: `local/theme.css` (vzor `src/server/wwwroot/theme.css`),
    ikona `local/favicon.svg`. Složka `local/` se nikdy necommituje. Světlý nebo tmavý motiv: **Nastavení → Vzhled**
    (barvy světlého motivu ve vlastním tématu: blok `:root[data-theme="light"]`).

@@ -141,6 +141,13 @@ test('běh: neexistující příloha nebo příloha z jiného projektu → 400 (
   assert.equal((await run(Array(11).fill(a.id))).status, 400);
 });
 
+test('běh: volba průběhu jen true/false', async () => {
+  const body = Buffer.from(JSON.stringify({ account: 'a', project: 'p', mode: 'auto', prompt: 'ahoj', progress: 'ano' }));
+  const r = await req('POST', '/api/runs', { ...origin(), 'Content-Type': 'application/json', 'Content-Length': body.length }, body);
+  assert.equal(r.status, 400);
+  assert.match(JSON.parse(r.body).error, /průběhu/);
+});
+
 test('zpráva do běhu: bez Origin 403, neexistující běh 404', async () => {
   const body = Buffer.from(JSON.stringify({ prompt: 'ahoj' }));
   const h = { 'Content-Type': 'application/json', 'Content-Length': body.length };
@@ -221,6 +228,15 @@ test('hledání v sezeních: 2–100 znaků, jen ověřený účet a známý pro
   assert.equal((await s(`account=a&project=p&q=${'x'.repeat(101)}`)).status, 400);
   assert.equal((await s('account=nic&project=p&q=abc')).status, 400);
   assert.equal((await s('account=a&project=p&q=abc')).status, 409); // účet v testu není ověřen
+});
+
+test('statistiky v čase: jen s tokenem, jen čísla', async () => {
+  assert.equal((await req('GET', '/api/stats/history?days=7')).status, 401);
+  const r = await req('GET', '/api/stats/history?days=9999', { 'X-ACD-Token': TOKEN });
+  assert.equal(r.status, 200);
+  const d = JSON.parse(r.body);
+  assert.equal(d.days, 180);
+  assert.ok(Array.isArray(d.runs) && Array.isArray(d.limits));
 });
 
 test('přehled sezení: jen s tokenem, ověřený účet a známý projekt', async () => {
