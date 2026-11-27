@@ -36,6 +36,7 @@
       </label>
 
       <button type="button" class="git" id="git" title="Větev a změněné soubory – kliknutím zobrazíte změny (jen pro čtení)" aria-haspopup="dialog"></button>
+      <button type="button" class="btn btn-ghost btn-small" id="files-open" aria-haspopup="dialog" title="Soubory projektu – hledání a náhled (jen pro čtení)">Soubory</button>
       <button type="button" class="btn btn-ghost btn-small" id="palette-open" aria-haspopup="dialog" aria-keyshortcuts="Control+K" title="Příkazy, skilly, akce a nedávné zprávy (Ctrl+K)">Příkazy</button>
       <button type="button" class="btn btn-ghost btn-small" id="settings-open" aria-haspopup="dialog">Nastavení</button>
     </div>
@@ -210,6 +211,29 @@
   </dialog>
 
   <div class="sr-only" id="announce" aria-live="assertive" aria-atomic="true"></div>
+
+  <dialog class="dialog dialog--wide" id="filesdlg" aria-labelledby="files-title">
+    <div class="dialog-head">
+      <div>
+        <h2 class="dialog-title" id="files-title">Soubory projektu</h2>
+        <p class="git-sub" id="files-sub"></p>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" class="btn btn-ghost btn-small" id="files-refresh">Obnovit</button>
+        <button type="button" class="btn btn-ghost btn-small" id="files-close">Zavřít</button>
+      </div>
+    </div>
+    <div class="git-body">
+      <div class="files-side">
+        <label for="files-filter" class="sr-only">Hledat soubor podle názvu nebo cesty</label>
+        <input type="search" id="files-filter" class="files-filter" maxlength="200" autocomplete="off" spellcheck="false" placeholder="Hledat soubor…">
+        <nav class="git-files files-list" id="files-list" aria-label="Soubory"></nav>
+      </div>
+      <section class="git-diff files-view" id="files-view" aria-label="Obsah souboru"></section>
+      <p class="sr-only" id="files-status" role="status"></p>
+    </div>
+    <p class="set-hint">Jen pro čtení. Soubory ignorované gitem, build a cache složky ani soubory s klíči a hesly se nezobrazují.</p>
+  </dialog>
 
   <footer class="foot" id="foot">
     <span id="foot-session">Nové sezení</span>

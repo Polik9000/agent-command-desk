@@ -231,3 +231,15 @@ test('svolení: jen s tokenem a Origin, neznámý běh 404', async () => {
   const st = JSON.parse((await req('GET', '/api/state', { 'X-ACD-Token': TOKEN })).body);
   assert.equal(st.interactivePermissions, false);
 });
+
+test('soubory projektu: jen s tokenem, traversal 400, mimo seznam 404, neznámý projekt 404', async () => {
+  const get = (p, h = { 'X-ACD-Token': TOKEN }) => req('GET', p, h);
+  assert.equal((await get('/api/projects/p/files', {})).status, 401);
+  const list = JSON.parse((await get('/api/projects/p/files')).body);
+  assert.ok(list.files.includes('package.json'));
+  assert.equal(list.files.some((f) => f.startsWith('.test-state/') || f.startsWith('local/') || f.startsWith('node_modules/')), false);
+  assert.equal((await get('/api/projects/p/file?path=' + encodeURIComponent('../package.json'))).status, 400);
+  assert.equal((await get('/api/projects/p/file?path=' + encodeURIComponent('local/config.json'))).status, 404);
+  assert.equal((await get('/api/projects/nic/files')).status, 404);
+  assert.match(JSON.parse((await get('/api/projects/p/file?path=package.json')).body).content, /agent-command-desk/);
+});

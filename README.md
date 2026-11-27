@@ -51,6 +51,10 @@ Runs on Windows and macOS (experimental). The UI is in Czech.
 - **Command palette** (Ctrl+K or *Příkazy*) – your custom commands and skills (learned from the first run in a project),
   app actions (new session, Auto/Plan, model presets, git changes, settings, full screen) and recent messages; type to
   filter (diacritics ignored), Enter inserts `/command ` into the message. Recent messages are kept in memory only.
+  Typing `/` at the start of a message suggests the same commands and skills right in the text box.
+- **Project files** (*Soubory*) – read-only file finder and viewer with syntax highlighting: search by name or path,
+  insert the path into your message, copy the content. Lists what git tracks plus new files (nothing ignored by
+  `.gitignore`), outside git it skips build and cache folders; key, certificate and `.env` files are never shown.
 - **Comfortable typing** – Enter after `1. item`, `- item` or `- [ ] item` continues the list, Enter on an empty item ends
   it, Shift+Enter is a plain new line.
 - **Settings** (*Nastavení* in the header) – add, rename and remove projects without editing JSON (the folder must
@@ -154,7 +158,7 @@ Only create files inside local/, do not change anything else and do not commit. 
 
 ## Development
 ```
-npm test        # 80 tests: stream parser, config (incl. model allowlist), settings writes, git view, account guard, queue, list editing, attachments, 401/403/CSP
+npm test        # ~100 tests: stream parser, config, settings writes, git view, project files, session processes (fake claude), permissions, account guard, queue, list editing, attachments, 401/403/CSP
 npm run check   # syntax check
 ACD_OPEN_BROWSER=0 node src/server/server.mjs   # prints the URL with token on an interactive console
 ```
@@ -189,6 +193,7 @@ do fronty; přikládat jde screenshoty (Ctrl+V), PDF a textové soubory. Rozhran
    v configu.
 
 Kliknutím na větev a počet změn v hlavičce se otevře **přehled změn v gitu** (soubory a diff, jen pro čtení).
+Tlačítko **Soubory** otevře hledání a náhled souborů projektu (jen pro čtení; soubory s klíči a hesly se neukazují).
 3. Vlastní název: `app.name` v configu. Vlastní vzhled: `local/theme.css` (vzor `src/server/wwwroot/theme.css`),
    ikona `local/favicon.svg`. Složka `local/` se nikdy necommituje. Světlý nebo tmavý motiv: **Nastavení → Vzhled**
    (barvy světlého motivu ve vlastním tématu: blok `:root[data-theme="light"]`).

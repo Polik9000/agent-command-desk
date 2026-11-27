@@ -69,3 +69,10 @@ Claude Code login and never reads, copies or stores credentials.
     not use `ExitPlanMode`/`EnterPlanMode`; a reused process reporting another mode is stopped and its output dropped.
     A waiting process gets no input; a permission request arriving without a run is denied. Removing a project,
     closing the app or the window timeout closes waiting processes; if the server dies, stdin closes and `claude` exits.
+21. **Project files are read-only.** `GET /api/projects/:id/files` lists `git ls-files --cached --others
+    --exclude-standard` (nothing ignored by `.gitignore`); outside git (or when the folder is ignored by a parent repo)
+    a breadth-first walk without symlinks, skipping `.git`, `node_modules`, build and cache folders (max 20 000 files,
+    depth 12). `GET /api/projects/:id/file?path=` reads a file only if the relative path is in the current list
+    (no `..`, no absolute paths), its real path (symlinks resolved) is inside the project, it is at most 512 kB and has
+    no NUL bytes. Names that look like secrets (`.env*` except examples, `*.pem`, `*.key`, `id_rsa`, `.npmrc`,
+    `.credentials.json`, `secrets.*` …) are never returned. Nothing is written.

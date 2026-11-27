@@ -90,6 +90,15 @@ export async function gitFiles(cfg, repo) {
   return out === null ? null : parsePorcelainV2(out);
 }
 
+/**
+ * Soubory projektu pro průzkumník: sledované + nové, bez ignorovaných (.gitignore). Relativně k `repo`.
+ * @returns {Promise<string[]|null>} null = není to git repo
+ */
+export async function gitLsFiles(cfg, repo) {
+  const out = await git(cfg, repo, ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], { maxBuffer: 16 * 1024 * 1024 });
+  return out === null ? null : out.split('\0').filter(Boolean);
+}
+
 const bad = (msg) => Object.assign(new Error(msg), { status: 400 });
 
 /** Nesledovaný soubor jako „vše přidáno“ (bez spuštění gitu; symbolický odkaz se nesleduje). */

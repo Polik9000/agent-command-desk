@@ -642,6 +642,7 @@ function paletteActions() {
       .map((p) => ({ label: `Model: ${p.label}`, meta: `${modelLabel(p.model)} · ${p.effort || 'výchozí'}`, run: () => setRunOpts(p.model, p.effort) })),
     { label: 'Přiložit soubory', run: () => $('#file-input').click() },
     { label: 'Změny v gitu', run: () => openGit() },
+    { label: 'Soubory projektu', meta: 'hledání a náhled', run: () => openFiles() },
     { label: 'Nastavení', run: () => openSettings() },
     { label: 'Statistiky a limit účtu', run: () => openStats() },
     { label: document.fullscreenElement ? 'Ukončit celou obrazovku' : 'Celá obrazovka', run: () => toggleFullscreen() },
@@ -849,6 +850,118 @@ function setupGit() {
   $('#git-refresh').addEventListener('click', loadGitFiles);
   $('#git-close').addEventListener('click', () => $('#gitdlg').close());
   $('#gitdlg').addEventListener('close', () => { if (!S.run) loadGit(); });
+}
+
+/* ---------- Soubory projektu (jen pro čtení) ---------- */
+const F = { files: [], sel: null, seq: 0, timer: null, project: null };
+const FILES_SHOWN = 300;
+const HL_EXT = { js: 'javascript', mjs: 'javascript', cjs: 'javascript', ts: 'typescript', tsx: 'typescript', jsx: 'javascript',
+  json: 'json', css: 'css', scss: 'scss', html: 'xml', htm: 'xml', xml: 'xml', svg: 'xml', md: 'markdown', py: 'python',
+  cs: 'csharp', ps1: 'powershell', sh: 'bash', yml: 'yaml', yaml: 'yaml', sql: 'sql', astro: 'xml', vue: 'xml', php: 'php',
+  java: 'java', go: 'go', rs: 'rust', rb: 'ruby', toml: 'ini', ini: 'ini', c: 'c', h: 'c', cpp: 'cpp', kt: 'kotlin', swift: 'swift' };
+
+async function openFiles() {
+  const d = $('#filesdlg');
+  if (F.project !== S.project) { F.project = S.project; F.sel = null; $('#files-filter').value = ''; $('#files-view').textContent = ''; }
+  if (!d.open) d.showModal();
+  $('#files-filter').focus();
+  await loadFiles(false);
+}
+
+async function loadFiles(fresh) {
+  $('#files-sub').textContent = 'Načítám…';
+  try {
+    const r = await apiJson(`/api/projects/${encodeURIComponent(S.project)}/files${fresh ? '?fresh=1' : ''}`);
+    F.files = r.files;
+    $('#files-sub').textContent = `${r.files.length} ${plural(r.files.length, 'soubor', 'soubory', 'souborů')}`
+      + (r.truncated ? ' (zkráceno)' : '') + (r.source === 'git' ? ' • podle gitu, bez ignorovaných' : ' • bez build a cache složek');
+  } catch (e) { F.files = []; $('#files-sub').textContent = e.message; }
+  renderFiles();
+}
+
+function renderFiles() {
+  const nav = $('#files-list');
+  const q = fold($('#files-filter').value.trim());
+  const terms = q.split(/\s+/).filter(Boolean);
+  const hits = terms.length ? F.files.filter((p) => { const f = fold(p); return terms.every((t) => f.includes(t)); }) : F.files;
+  // Shoda v názvu souboru před shodou jen ve složce.
+  const name = (p) => fold(p.slice(p.lastIndexOf('/') + 1));
+  const sorted = terms.length ? hits.slice().sort((x, y) => (name(x).includes(terms[0]) ? 0 : 1) - (name(y).includes(terms[0]) ? 0 : 1)) : hits;
+  nav.textContent = '';
+  for (const p of sorted.slice(0, FILES_SHOWN)) {
+    const b = el('button', 'git-file');
+    b.type = 'button';
+    const slash = p.lastIndexOf('/');
+    const sp = el('span', 'git-path', p.slice(slash + 1));
+    if (slash > 0) sp.appendChild(el('small', null, p.slice(0, slash)));
+    b.appendChild(sp);
+    b.setAttribute('aria-label', p);
+    if (p === F.sel) b.setAttribute('aria-current', 'true');
+    b.addEventListener('click', () => showFile(b, p));
+    nav.appendChild(b);
+  }
+  if (!sorted.length) nav.appendChild(el('p', 'git-note', terms.length ? 'Nic nenalezeno.' : 'Žádné soubory.'));
+  else if (sorted.length > FILES_SHOWN) nav.appendChild(el('p', 'git-note', `Zobrazeno ${FILES_SHOWN} z ${sorted.length} – zpřesněte hledání.`));
+  $('#files-status').textContent = terms.length ? `${sorted.length} ${plural(sorted.length, 'soubor', 'soubory', 'souborů')}` : '';
+}
+
+async function showFile(btn, p) {
+  for (const b of $('#files-list').querySelectorAll('.git-file')) b.setAttribute('aria-current', b === btn ? 'true' : 'false');
+  F.sel = p;
+  const seq = ++F.seq;
+  const view = $('#files-view');
+  view.textContent = '';
+  view.appendChild(el('p', 'git-note', 'Načítám…'));
+  let r;
+  try { r = await apiJson(`/api/projects/${encodeURIComponent(S.project)}/file?path=${encodeURIComponent(p)}`); }
+  catch (e) { if (seq === F.seq) { view.textContent = ''; view.appendChild(el('p', 'git-note', e.message)); $('#files-status').textContent = e.message; } return; }
+  if (seq !== F.seq) return;
+  view.textContent = '';
+  const head = el('div', 'files-head');
+  head.appendChild(el('h3', null, p));
+  head.appendChild(button('Vložit cestu do zprávy', 'btn-ghost btn-small', () => {
+    $('#filesdlg').close();
+    insertIntoPrompt(p.includes(' ') ? `"${p}" ` : `${p} `, { replaceEmpty: false });
+  }));
+  if (r.content != null) head.appendChild(button('Kopírovat obsah', 'btn-ghost btn-small', async (e) => {
+    try { await navigator.clipboard.writeText(r.content); e.target.textContent = 'Zkopírováno'; } catch { e.target.textContent = 'Kopírování selhalo'; }
+  }));
+  view.appendChild(head);
+  if (r.note) { view.appendChild(el('p', 'git-note', r.note)); $('#files-status').textContent = `${p}: ${r.note}`; return; }
+  const pre = el('pre', 'files-code');
+  pre.tabIndex = 0; // posouvání klávesnicí
+  pre.setAttribute('aria-label', `Obsah ${p}`);
+  const code = el('code', null, r.content);
+  const lang = HL_EXT[(p.split('.').pop() || '').toLowerCase()];
+  if (lang && window.hljs && hljs.getLanguage(lang) && r.content.length <= 200_000) {
+    try { code.innerHTML = hljs.highlight(r.content, { language: lang, ignoreIllegals: true }).value; code.classList.add('hljs'); } catch { code.textContent = r.content; }
+  }
+  pre.appendChild(code);
+  view.appendChild(pre);
+  const lines = r.content ? r.content.split('\n').length : 0;
+  $('#files-status').textContent = `${p}: ${lines} ${plural(lines, 'řádek', 'řádky', 'řádků')}`;
+}
+
+function setupFiles() {
+  $('#files-open').addEventListener('click', openFiles);
+  $('#files-refresh').addEventListener('click', () => loadFiles(true));
+  $('#files-close').addEventListener('click', () => $('#filesdlg').close());
+  $('#filesdlg').addEventListener('click', (e) => { if (e.target === e.currentTarget) e.currentTarget.close(); });
+  $('#files-filter').addEventListener('input', () => { clearTimeout(F.timer); F.timer = setTimeout(renderFiles, 120); });
+  $('#files-filter').addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown') { const b = $('#files-list .git-file'); if (b) { e.preventDefault(); b.focus(); } }
+    else if (e.key === 'Enter') { const b = $('#files-list .git-file'); if (b) { e.preventDefault(); b.click(); } }
+  });
+  // Šipky v seznamu souborů.
+  $('#files-list').addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    const all = [...$('#files-list').querySelectorAll('.git-file')];
+    const i = all.indexOf(document.activeElement);
+    if (i < 0) return;
+    e.preventDefault();
+    if (e.key === 'ArrowUp' && i === 0) { $('#files-filter').focus(); return; }
+    all[Math.min(all.length - 1, Math.max(0, i + (e.key === 'ArrowDown' ? 1 : -1)))].focus();
+  });
 }
 
 /* ---------- Nastavení ---------- */
@@ -1972,6 +2085,7 @@ async function main() {
   setupRunOpts();
   setupSettings();
   setupGit();
+  setupFiles();
   setupPalette();
   setupStats();
   setupSessionSearch();

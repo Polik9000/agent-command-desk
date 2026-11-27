@@ -15,6 +15,7 @@ import { AttachmentStore, attachmentsPrompt, MAX_PER_RUN as MAX_ATTACHMENTS } fr
 import { openWindow, createHeartbeat } from './lib/window.mjs';
 import { changeProjects, settingsView } from './lib/settings.mjs';
 import { DECISIONS } from './lib/permissions.mjs';
+import { listFiles, readProjectFile, clearFilesCache } from './lib/files.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..', '..');
@@ -201,6 +202,20 @@ async function handleApi(req, res, url) {
     catch (e) { return problem(res, e.status ?? 500, e.status ? e.message : 'Diff selhal.'); }
   }
 
+  // Průzkumník souborů jen pro čtení: seznam a obsah jednoho souboru ze seznamu.
+  if (req.method === 'GET' && (m = /^\/api\/projects\/([^/]+)\/(files|file)$/.exec(p))) {
+    const project = findProject(cfg, decodeURIComponent(m[1]));
+    if (!project) return problem(res, 404, 'Neznámý projekt.');
+    if (!existsSync(project.pathFull)) return problem(res, 409, 'Složka projektu neexistuje.');
+    try {
+      if (m[2] === 'files') {
+        const f = await listFiles(cfg, project, q.get('fresh') === '1');
+        return sendJson(res, 200, { files: f.list, truncated: f.truncated, source: f.source });
+      }
+      return sendJson(res, 200, await readProjectFile(cfg, project, q.get('path') ?? ''));
+    } catch (e) { return problem(res, e.status ?? 500, e.status ? e.message : 'Čtení souboru selhalo.'); }
+  }
+
   if (req.method === 'GET' && p === '/api/sessions') {
     const r = await resolveAccountProject(res, q.get('account'), q.get('project'));
     if (!r) return;
@@ -259,6 +274,7 @@ async function handleApi(req, res, url) {
       const r = changeProjects(CONFIG_FILE, cfg, /** @type {any} */ (change), { isBusy: (x) => runner.isProjectBusy(x) });
       log(`Nastavení: projekt ${r.id} – ${change.op}`);
       if (change.op === 'remove') runner.closeProject(r.id); // čekající procesy odebraného projektu
+      clearFilesCache();
       return sendJson(res, 200, { ...settingsView(cfg), changed: r.id });
     } catch (e) {
       if (!e.status) log(`Nastavení: zápis selhal: ${e.message}`);
