@@ -7,10 +7,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadConfig, configPath, findAccount, findProject, EFFORTS } from './lib/config.mjs';
 import { createSecret, setSecurityHeaders, checkRequest } from './lib/guard.mjs';
-import { AccountGuard, ClaudeRunner, allowedModes } from './lib/claude.mjs';
+import { AccountGuard, ClaudeRunner, allowedModes, activeSessions } from './lib/claude.mjs';
 import { UsageLog } from './lib/usage.mjs';
 import { ev } from './lib/parser.mjs';
-import { listSessions, history, transcriptPath, searchSessions, overview } from './lib/sessions.mjs';
+import { listSessions, history, transcriptPath, searchSessions, overview, isValidId } from './lib/sessions.mjs';
 import { gitStatus, gitFiles, gitDiff } from './lib/git.mjs';
 import { AttachmentStore, attachmentsPrompt, MAX_PER_RUN as MAX_ATTACHMENTS } from './lib/attachments.mjs';
 import { openWindow, createHeartbeat } from './lib/window.mjs';
@@ -237,6 +237,45 @@ async function handleApi(req, res, url) {
       .map((s) => ({ ...s, busy: runner.isSessionBusy(s.id) })));
   }
 
+  // Řízení sezení přes Claude Code: zaplnění kontextu (/context), návrat souborů (/rewind), název (/rename).
+  if ((m = /^\/api\/sessions\/([^/]+)\/(context|rewind|title)$/.exec(p)) && ((req.method === 'GET' && m[2] === 'context') || (req.method === 'POST' && m[2] !== 'context'))) {
+    let body = {};
+    if (req.method === 'POST') { try { body = await readJson(req); } catch (e) { return problem(res, e.status ?? 400, e.message); } }
+    const r = await resolveAccountProject(res, q.get('account'), q.get('project'));
+    if (!r) return;
+    const id = decodeURIComponent(m[1]);
+    if (!transcriptPath(r.status.projectsDirectory, r.project.pathFull, id)) return problem(res, 404, 'Sezení neexistuje.');
+    try {
+      if (m[2] === 'context') {
+        const c = await runner.sessionControl(r.account, r.project, id, 'get_context_usage');
+        return sendJson(res, 200, contextView(c));
+      }
+      if (m[2] === 'rewind') {
+        if (!isValidId(body?.messageId)) return problem(res, 400, 'Neplatná zpráva.');
+        const dry = body.dryRun !== false;
+        const c = await runner.sessionControl(r.account, r.project, id, 'rewind_files', { user_message_id: body.messageId, dry_run: dry }, { exclusive: true });
+        const root = r.project.pathFull;
+        const rel = (f) => (typeof f === 'string' ? (path.relative(root, f).startsWith('..') ? f : path.relative(root, f).replaceAll('\\', '/')) : '');
+        if (!dry) log(`Sezení ${id}: návrat souborů (${(c?.filesChanged ?? []).length} souborů)`);
+        return sendJson(res, 200, { canRewind: c?.canRewind === true, error: typeof c?.error === 'string' ? c.error : undefined,
+          files: (Array.isArray(c?.filesChanged) ? c.filesChanged : []).slice(0, 500).map(rel), insertions: c?.insertions ?? 0, deletions: c?.deletions ?? 0, done: !dry });
+      }
+      const title = typeof body?.title === 'string' ? body.title.replace(/\s+/g, ' ').trim() : '';
+      if (!title || title.length > 80 || /^[/!#@]/.test(title)) return problem(res, 400, 'Název: 1–80 znaků, nesmí začínat / ! # @.');
+      return sendJson(res, 200, await runner.renameSession(r.account, r.project, id, title));
+    } catch (e) { return problem(res, e.status ?? 502, e.message); }
+  }
+
+  // Sezení, která běží jinde (terminál, pozadí) – `claude agents --json` ověřeného účtu, jen pro složku projektu.
+  if (req.method === 'GET' && p === '/api/sessions/active') {
+    const r = await resolveAccountProject(res, q.get('account'), q.get('project'));
+    if (!r) return;
+    const list = await activeSessions(cfg, r.account);
+    const mine = new Set(runner.ownSessionIds());
+    return sendJson(res, 200, list.filter((s) => s.cwd && path.resolve(s.cwd).toLowerCase() === path.resolve(r.project.pathFull).toLowerCase())
+      .filter((s) => !mine.has(s.sessionId)).map(({ sessionId, kind, status, name }) => ({ sessionId, kind, status, name })));
+  }
+
   // Přehled sezení: upravené soubory, agenti, úkoly, nástroje (jen čtení z transkriptu).
   if (req.method === 'GET' && (m = /^\/api\/sessions\/([^/]+)\/overview$/.exec(p))) {
     const r = await resolveAccountProject(res, q.get('account'), q.get('project'));
@@ -322,20 +361,66 @@ async function handleApi(req, res, url) {
     try { body = await readJson(req); } catch (e) { return problem(res, e.status ?? 400, e.message); }
     const run = runner.find(m[1]);
     if (!run) return problem(res, 404, 'Běh neexistuje.');
-    if (!body || typeof body.requestId !== 'string' || !DECISIONS.includes(body.decision)) return problem(res, 400, 'Neplatná odpověď.');
-    if (!run.answerPermission(body.requestId, body.decision)) return problem(res, 409, 'Žádost už není aktivní.');
+    if (!body || typeof body.requestId !== 'string' || !(DECISIONS.includes(body.decision) || body.decision === 'answer'))
+      return problem(res, 400, 'Neplatná odpověď.');
+    let answers;
+    if (body.decision === 'answer') {
+      // Odpověď na otázku od Clauda: jen otázky z původního vstupu, text odpovědi nejvýš 2000 znaků.
+      const input = run.permissionInput(body.requestId);
+      const qs = Array.isArray(input?.questions) ? input.questions.map((q) => q?.question).filter((q) => typeof q === 'string') : [];
+      const a = body.answers;
+      if (!qs.length) return problem(res, 400, 'Tahle žádost není otázka.');
+      if (!a || typeof a !== 'object' || Array.isArray(a) || !Object.entries(a).every(([k, v]) => qs.includes(k) && typeof v === 'string' && v.trim() && v.length <= 2000))
+        return problem(res, 400, 'Neplatná odpověď na otázku.');
+      answers = Object.fromEntries(Object.entries(a).map(([k, v]) => [k, v.trim()]));
+    }
+    if (!run.answerPermission(body.requestId, body.decision, answers)) return problem(res, 409, 'Žádost už není aktivní.');
     log(`Běh ${run.id}: svolení ${body.decision}`);
     return sendJson(res, 200, { ok: true });
   }
 
+  // Zastavit = přerušit jako Esc (proces a sezení zůstanou připravené); ?hard=1 ukončí proces.
   if (req.method === 'POST' && (m = /^\/api\/runs\/([0-9a-f]+)\/stop$/.exec(p))) {
     const run = runner.find(m[1]);
     if (!run) return problem(res, 404, 'Běh neexistuje.');
-    run.stop();
+    if (q.get('hard') === '1') run.stop(); else run.interrupt();
     return sendJson(res, 200, { stopped: true });
   }
 
+  // Za běhu: režim (jako Shift+Tab), model (jako /model), zastavení úlohy na pozadí.
+  if (req.method === 'POST' && (m = /^\/api\/runs\/([0-9a-f]+)\/(mode|model|task-stop)$/.exec(p))) {
+    let body;
+    try { body = await readJson(req); } catch (e) { return problem(res, e.status ?? 400, e.message); }
+    const run = runner.find(m[1]);
+    if (!run) return problem(res, 404, 'Běh neexistuje.');
+    try {
+      if (m[2] === 'mode') {
+        if (!allowedModes(cfg).includes(body?.mode)) return problem(res, 400, 'Neplatný režim.');
+        await runner.setRunMode(run, body.mode);
+      } else if (m[2] === 'model') {
+        if (typeof body?.model !== 'string' || !cfg.models.some((x) => x.id === body.model)) return problem(res, 400, 'Neznámý model.');
+        await runner.setRunModel(run, body.model);
+      } else {
+        if (typeof body?.taskId !== 'string' || !/^[\w-]{1,80}$/.test(body.taskId)) return problem(res, 400, 'Neplatná úloha.');
+        await runner.stopTask(run, body.taskId);
+      }
+    } catch (e) { return problem(res, e.status ?? 409, e.message); }
+    return sendJson(res, 200, { ok: true });
+  }
+
   return problem(res, 404, 'Neznámá adresa.');
+}
+
+/** Zaplnění kontextu z `get_context_usage` – jen čísla a názvy kategorií. */
+function contextView(c) {
+  const n = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0);
+  return {
+    percentage: n(c?.percentage), totalTokens: n(c?.totalTokens), maxTokens: n(c?.maxTokens),
+    autoCompactThreshold: n(c?.autoCompactThreshold), autoCompact: c?.isAutoCompactEnabled === true,
+    model: typeof c?.model === 'string' ? c.model.slice(0, 80) : '',
+    categories: (Array.isArray(c?.categories) ? c.categories : []).slice(0, 20)
+      .map((x) => ({ name: typeof x?.name === 'string' ? x.name.slice(0, 60) : '?', tokens: n(x?.tokens), deferred: x?.isDeferred === true || x?.kind === 'deferred' })),
+  };
 }
 
 /** POST /api/runs → text/event-stream s normalizovanými událostmi. */
@@ -349,13 +434,19 @@ async function startRun(req, res) {
   if (!account) return problem(res, 400, 'Neznámý účet.');
   if (!project) return problem(res, 400, 'Neznámý projekt.');
   if (!allowedModes(cfg).includes(body.mode))
-    return problem(res, 400, cfg.interactivePermissions === true ? 'Režim musí být auto, plan nebo default.' : 'Režim musí být auto nebo plan.');
+    return problem(res, 400, `Režim musí být ${allowedModes(cfg).join(', ').replace(/, ([^,]*)$/, ' nebo $1')}.`);
   const model = body.model ?? '';
   const effort = body.effort ?? '';
   if (typeof model !== 'string' || !cfg.models.some((x) => x.id === model)) return problem(res, 400, 'Neznámý model.');
   if (!EFFORTS.includes(effort)) return problem(res, 400, 'Neplatný effort.');
-  if (body.progress != null && typeof body.progress !== 'boolean') return problem(res, 400, 'Neplatná volba průběhu.');
-  const progress = body.progress === true;
+  for (const k of ['fork', 'side', 'chrome'])
+    if (body[k] != null && typeof body[k] !== 'boolean') return problem(res, 400, 'Neplatná volba běhu.');
+  const fork = body.fork === true, side = body.side === true;
+  const chrome = body.chrome === true;
+  if (chrome && cfg.interactivePermissions !== true)
+    return problem(res, 400, 'Claude in Chrome jde jen se zapnutými žádostmi o svolení (interactivePermissions).');
+  if ((fork || side) && !body.resume) return problem(res, 400, 'Kopie jde jen z existujícího sezení.');
+  if (side && body.mode !== 'plan') return problem(res, 400, 'Otázka bokem běží jen v režimu Plán.');
   if (typeof body.prompt !== 'string' || !body.prompt.trim() || body.prompt.length > MAX_PROMPT)
     return problem(res, 400, 'Prázdná nebo příliš dlouhá zpráva.');
   if (!existsSync(project.pathFull)) return problem(res, 400, 'Složka projektu neexistuje.');
@@ -383,18 +474,18 @@ async function startRun(req, res) {
     // Jen sezení existující v adresáři zvoleného účtu a projektu → nikdy cross-account.
     if (!transcriptPath(status.projectsDirectory, project.pathFull, body.resume))
       return problem(res, 404, 'Sezení v tomto účtu a projektu neexistuje.');
-    if (runner.isSessionBusy(body.resume)) return problem(res, 409, 'Toto sezení právě běží.');
+    if (!fork && !side && runner.isSessionBusy(body.resume)) return problem(res, 409, 'Toto sezení právě běží.');
     resume = body.resume;
   }
 
   let run;
-  try { run = await runner.start(account, project, body.mode, prompt, resume, { addDirs, model, effort, progress }); }
+  try { run = await runner.start(account, project, body.mode, prompt, resume, { addDirs, model, effort, fork, side, chrome }); }
   catch (e) { return problem(res, 409, e.message); }
 
   res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'X-Accel-Buffering': 'no' });
   const send = (e) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(e)}\n\n`); };
   send(ev('run', { runId: run.id, account: account.id, project: project.id, mode: body.mode, model, effort,
-    warm: run.warm || undefined, progress: progress || undefined }));
+    warm: run.warm || undefined, fork: fork || undefined, side: side || undefined, chrome: chrome || undefined }));
   run.on('event', send);
   run.on('event', usage.observer(account.id, project.id, { model, effort }));
   run.once('end', () => res.end());

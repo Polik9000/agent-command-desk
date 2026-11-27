@@ -55,10 +55,26 @@ Runs on Windows and macOS (experimental). The UI is in Czech.
 - **Project files** (*Soubory*) – read-only file finder and viewer with syntax highlighting: search by name or path,
   insert the path into your message, copy the content. Lists what git tracks plus new files (nothing ignored by
   `.gitignore`), outside git it skips build and cache folders; key, certificate and `.env` files are never shown.
-- **Progress** (optional – *Model* panel or *Nastavení → Zprávy a práce*) – for tasks with several steps Claude writes a
-  short plan and marks each step; a panel on the right shows the steps, where Claude is now, the percentage and an
-  estimate of the time left (from how long the finished steps took). The markers are hidden from the chat. Costs a few
-  dozen tokens per message (an extra paragraph in the system prompt), so it is off by default.
+- **Progress** – for bigger tasks Claude Code keeps its own task list (like Ctrl+T in the terminal); a panel on the right
+  shows the steps, where Claude is now, the percentage and an estimate of the time left (from how long the finished
+  steps took). No extra tokens.
+- **Agents and background work** – every agent Claude starts gets one card: task, type, state, tools used, tokens and
+  time; expand it to watch live what the agent reads, searches and runs, and what it writes. Commands and agents running
+  in the background are listed under *Na pozadí* with a *Stop* button.
+- **Like the terminal** – *Zastavit* interrupts like Esc (the session stays ready for the next message); the mode (Auto,
+  Plán, **Úpravy** = file edits without asking, Ručně) and the model can be switched while Claude works (like Shift+Tab
+  and /model); the footer shows how full the **context** is (like /context) with a breakdown and *Zhustit* (/compact);
+  **questions with options** from Claude appear as a card you answer in the window (needs `interactivePermissions`);
+  ↶ next to your message **rewinds the project files** to the state before it (like Esc Esc, with a list of files to
+  confirm); ⑂ **continues in a copy** of a session; ✎ renames the session in Claude Code itself (shown in the terminal
+  too); *Bokem* asks a **side question** answered from the session's context in Plan mode and never saved (like /btw,
+  which Claude Code does not offer in this mode); commands and skills come with descriptions and argument hints,
+  your agents are in the palette; sessions open in the terminal or running in the background are marked in the list.
+- **Review** – edits waiting for permission show a coloured diff; *Připomínkovat* on a plan lets you comment on its lines
+  and sends the comments back; a queued message can be returned to the text box (↩); images from tools (screenshots,
+  read images) are shown in the tool card; *Exportovat* in the session overview saves the conversation as Markdown.
+- **Claude in Chrome** (optional, only with `interactivePermissions`) – a checkbox in the *Model* panel lets Claude
+  control your Chrome through the Claude in Chrome extension; every browser action needs your approval in the window.
 - **Continue after a usage limit** – when an account hits its limit and you do not switch to another one, the app
   continues the same session automatically a minute after the limit resets (the window must stay open; cancel in the
   banner; at most 3 attempts; can be turned off in *Nastavení*). The queue stays paused.
@@ -103,8 +119,8 @@ Runs on Windows and macOS (experimental). The UI is in Czech.
   a permission card never steals focus while you type. Checked with axe-core (WCAG 2.2 AA) in both themes.
 - **Light or dark** – *Nastavení → Vzhled*: dark (default), light, or follow the system. Remembered per browser.
 - **Your own name and look** – one config value and one CSS file (see *Customize*).
-- **Security** – loopback only, per-launch token, Host/Origin checks, strict CSP, permission mode only `auto` or `plan`
-  (plus `default` with permission requests on; never `bypassPermissions`). Details in [docs/security.md](docs/security.md).
+- **Security** – loopback only, per-launch token, Host/Origin checks, strict CSP, permission modes `auto`, `plan`,
+  `acceptEdits` (plus `default` with permission requests on; never `bypassPermissions` or `dontAsk`). Details in [docs/security.md](docs/security.md).
 
 ### Keyboard
 | Keys | Action |

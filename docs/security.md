@@ -88,10 +88,20 @@ Claude Code login and never reads, copies or stores credentials.
     turn count, error flag – never prompts, replies or file names. Account-limit samples (window, utilization, reset time)
     at most every 10 minutes per window. Records older than 180 days are removed at start-up. `GET /api/stats/history`
     (token required like every API call) returns at most 180 days.
-24. **Progress tracking (optional, off by default)** adds a fixed paragraph to `--append-system-prompt` asking Claude to
-    write `[[plan: …]]` / `[[step: N]]` markers; the request only carries a boolean, the text cannot be changed from the
-    browser. A process waiting for the next message is reused only with the same setting.
+24. **Progress tracking** uses Claude Code's own task list (`CLAUDE_CODE_ENABLE_TODO_TOOLS=1`); file checkpoints are on
+    (`CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=1`) so files can be rewound. Nothing is added to the prompt.
 25. **Automatic continue after a limit** sends one fixed message ("continue where you stopped") to the same account,
     project, session, mode and model after the reported reset time; only while the window is open, at most 3 attempts per
     session, cancelled by switching session, account or project, or in the banner; can be turned off in Settings.
     **Drafts** of unsent messages live only in the browser's localStorage (max 30, 30 days), can be turned off.
+26. **Control requests.** While a session's process runs or waits, the app sends Claude Code's own control requests on
+    stdin: `interrupt`, `set_permission_mode` (only modes from the allowlist), `set_model` (only configured models),
+    `stop_task`, `get_context_usage`, `rewind_files`, `initialize` (only command/skill/agent names and descriptions are
+    passed on; account data in the response is dropped). Context, rewind and rename of a session that has no process
+    start a short `claude -p --resume <id> --permission-mode plan --permission-prompts none` process that gets no message
+    for the model. Rewind and rename are refused while the session runs; rewind always shows the file list first.
+    `claude agents --json` (no model call) marks sessions open elsewhere. Copies (`--fork-session`) and side questions
+    (`--fork-session --no-session-persistence`, Plan mode only) never change the original session.
+27. **Questions and Chrome.** Answers to Claude's AskUserQuestion are accepted only for the questions in the pending
+    request (≤ 2000 characters each). Claude in Chrome needs `interactivePermissions`; it adds `--chrome` and a
+    `permissions.ask` rule for every `mcp__claude-in-chrome` tool, so each browser action asks in the window.

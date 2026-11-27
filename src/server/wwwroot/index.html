@@ -80,6 +80,8 @@
       <form class="composer" id="composer">
         <section class="queue" id="queue" aria-label="Fronta zpráv" hidden></section>
         <div class="attach-list" id="attach-list" aria-label="Přílohy" hidden></div>
+        <div class="fork-note" id="fork-note" hidden><span id="fork-note-text"></span>
+          <button type="button" class="btn btn-ghost btn-small" id="fork-cancel">Zrušit</button></div>
         <label for="prompt" class="sr-only">Zpráva pro Claude</label>
         <div class="prompt-wrap">
           <textarea id="prompt" rows="3" placeholder="Napište zprávu… (Ctrl+Enter odešle, / nabídne příkazy, @ soubory)" autocomplete="off"
@@ -92,6 +94,7 @@
             <legend class="sr-only">Režim</legend>
             <label class="seg-item"><input type="radio" name="mode" value="auto" checked><span>Auto</span></label>
             <label class="seg-item"><input type="radio" name="mode" value="plan"><span>Plán</span></label>
+            <label class="seg-item" title="Úpravy souborů v projektu bez ptaní, příkazy v terminálu se ptají"><input type="radio" name="mode" value="acceptEdits"><span>Úpravy</span></label>
             <label class="seg-item" id="mode-ask" hidden title="Claude Code se zeptá na každý zápis a příkaz"><input type="radio" name="mode" value="default"><span>Ručně</span></label>
           </fieldset>
           <details class="runopts" id="runopts">
@@ -101,12 +104,13 @@
               <div class="runopts-presets" id="runopts-presets"></div>
               <label class="field"><span class="eyebrow">Model</span><select id="model"></select></label>
               <label class="field"><span class="eyebrow">Effort</span><select id="effort"></select></label>
-              <label class="runopts-check"><input type="checkbox" id="progress-toggle"> Sledovat průběh – Claude napíše kroky a vpravo
-                uvidíte, kde je, procenta a odhad času (pár desítek tokenů navíc u každé zprávy)</label>
-              <p class="runopts-hint">Platí od další zprávy, i v rozpracovaném sezení. Skutečně použitý model je v patičce.</p>
+              <label class="runopts-check" id="chrome-row" hidden><input type="checkbox" id="chrome-toggle"> Claude in Chrome – Claude smí ovládat
+                váš Chrome (rozšíření Claude in Chrome); každou akci v prohlížeči schvalujete v okně</label>
+              <p class="runopts-hint">Model jde přepnout i za běhu (platí od dalšího kroku), effort a Chrome od další zprávy. Skutečně použitý model je v patičce.</p>
             </div>
           </details>
           <span class="status" id="status" role="status" aria-live="polite"></span>
+          <button type="button" class="btn btn-ghost btn-pill" id="side-open" title="Otázka bokem – Claude odpoví z kontextu sezení, nic se do něj nezapíše (jako /btw)">Bokem</button>
           <button type="button" class="btn btn-ghost btn-pill" id="attach" title="Přiložit soubory (nebo je přetáhněte do okna, obrázek vložte Ctrl+V)">Přiložit</button>
           <input type="file" id="file-input" multiple hidden accept=".png,.jpg,.jpeg,.gif,.webp,.pdf,.txt,.md,.csv,.json,.log">
           <button type="button" class="btn btn-ghost" id="stop" hidden>Zastavit</button>
@@ -120,10 +124,16 @@
         <h2 class="eyebrow" id="progress-title">Průběh</h2>
         <button type="button" class="btn btn-ghost btn-small" id="progress-hide" title="Skrýt (znovu ho ukáže tlačítko v patičce)">Skrýt</button>
       </div>
-      <p class="progress-sum"><strong id="progress-pct">0 %</strong> <span id="progress-eta"></span></p>
-      <div class="meter-bar progress-bar" id="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-labelledby="progress-title"><i></i></div>
-      <ol class="progress-steps" id="progress-steps"></ol>
-      <p class="progress-note" id="progress-note"></p>
+      <div id="progress-main">
+        <p class="progress-sum"><strong id="progress-pct">0 %</strong> <span id="progress-eta"></span></p>
+        <div class="meter-bar progress-bar" id="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-labelledby="progress-title"><i></i></div>
+        <ol class="progress-steps" id="progress-steps"></ol>
+        <p class="progress-note" id="progress-note"></p>
+      </div>
+      <section class="bg-section" id="bg-section" aria-labelledby="bg-title" hidden>
+        <h2 class="eyebrow" id="bg-title">Na pozadí</h2>
+        <ul class="bg-list" id="bg-list"></ul>
+      </section>
       <p class="sr-only" id="progress-status" role="status"></p>
     </aside>
     <div class="drop-hint" id="drop-hint" aria-hidden="true" hidden><span>Pusťte soubory sem – přiloží se ke zprávě.</span></div>
@@ -164,7 +174,6 @@
       <h3 class="eyebrow" id="set-work-title">Zprávy a práce</h3>
       <fieldset class="set-checks" id="set-work">
         <legend class="sr-only">Zprávy a práce</legend>
-        <label><input type="checkbox" id="set-progress"> Sledovat průběh (kroky, procenta, odhad času; pár desítek tokenů navíc u každé zprávy)</label>
         <label><input type="checkbox" id="set-autocontinue"> Po obnovení limitu účtu automaticky pokračovat (okno musí zůstat otevřené)</label>
         <label><input type="checkbox" id="set-drafts"> Pamatovat rozepsané zprávy u každého sezení (jen v tomto prohlížeči, nejvýš 30 dní)</label>
       </fieldset>
@@ -277,6 +286,7 @@
         <p class="git-sub" id="overview-sub"></p>
       </div>
       <div class="dialog-actions">
+        <button type="button" class="btn btn-ghost btn-small" id="overview-export" title="Uložit konverzaci jako Markdown">Exportovat</button>
         <button type="button" class="btn btn-ghost btn-small" id="overview-refresh">Obnovit</button>
         <button type="button" class="btn btn-ghost btn-small" id="overview-close">Zavřít</button>
       </div>
@@ -284,6 +294,34 @@
     <div id="overview-body"></div>
     <p class="set-hint">Podle přepisu sezení, který ukládá Claude Code (jen čtení). Soubory změněné příkazy v terminálu (Bash, PowerShell)
       tu nejsou – všechny změny ukazuje přehled gitu. Stav MCP serverů hlásí Claude Code při každém spuštění; aplikace nečte jejich nastavení.</p>
+  </dialog>
+
+  <dialog class="dialog stats" id="contextdlg" aria-labelledby="context-title">
+    <div class="dialog-head">
+      <h2 class="dialog-title" id="context-title">Kontext sezení</h2>
+      <div class="dialog-actions">
+        <button type="button" class="btn btn-ghost btn-small" id="context-compact" title="Shrne dosavadní konverzaci a uvolní místo (/compact)">Zhustit</button>
+        <button type="button" class="btn btn-ghost btn-small" id="context-close">Zavřít</button>
+      </div>
+    </div>
+    <div id="context-body"></div>
+    <p class="set-hint">Údaje hlásí Claude Code (jako <code>/context</code>). <strong>Zhustit</strong> shrne dosavadní konverzaci – Claude si
+      pamatuje podstatné, podrobnosti se ztratí; stojí to jeden dotaz na model.</p>
+  </dialog>
+
+  <dialog class="dialog sidedlg" id="sidedlg" aria-labelledby="side-title">
+    <div class="dialog-head">
+      <h2 class="dialog-title" id="side-title">Otázka bokem</h2>
+      <button type="button" class="btn btn-ghost btn-small" id="side-close">Zavřít</button>
+    </div>
+    <form id="side-form" class="side-form">
+      <label for="side-input" class="sr-only">Otázka bokem</label>
+      <textarea id="side-input" rows="2" maxlength="4000" placeholder="Na co se chcete zeptat? (Ctrl+Enter odešle)"></textarea>
+      <button type="submit" class="btn btn-accent btn-small" id="side-send">Zeptat se</button>
+    </form>
+    <div class="side-answer" id="side-answer" aria-live="polite"></div>
+    <p class="set-hint" id="side-status" role="status"></p>
+    <p class="set-hint">Claude odpoví z kontextu otevřeného sezení v režimu Plán (nic nemění). Otázka ani odpověď se do sezení nezapíšou.</p>
   </dialog>
 
   <div class="sr-only" id="announce" aria-live="assertive" aria-atomic="true"></div>
@@ -314,6 +352,7 @@
   <footer class="foot" id="foot">
     <span id="foot-session">Nové sezení</span>
     <button type="button" class="foot-btn foot-overview" id="foot-progress" aria-controls="progress" hidden></button>
+    <button type="button" class="foot-btn foot-overview foot-context" id="foot-context" aria-haspopup="dialog" hidden title="Zaplnění kontextu – co zabírá místo (jako /context)"></button>
     <button type="button" class="foot-btn foot-overview" id="foot-overview" aria-haspopup="dialog" title="Upravené soubory, úkoly, agenti a MCP servery tohoto sezení">Přehled sezení</button>
     <span id="foot-model"></span>
     <button type="button" class="foot-btn foot-stats" id="foot-cost" aria-haspopup="dialog" hidden title="Statistiky: tokeny, odhad ceny API a limit účtu"></button>

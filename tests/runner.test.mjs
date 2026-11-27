@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ClaudeRunner, PROGRESS_PROMPT } from '../src/server/lib/claude.mjs';
+import { ClaudeRunner, commandsInfo } from '../src/server/lib/claude.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FAKE = path.join(root, 'tests', 'fixtures', 'fake-claude.mjs');
@@ -28,7 +28,7 @@ async function turn(runner, prompt, resume = null, mode = 'auto', opts = {}) {
 }
 const closed = (runner) => Promise.all([...runner.idle.values()].map((p) => p.closed));
 
-test('stejné sezení a nastavení → stejný proces; jiný režim, model nebo effort → nový proces s --resume', async () => {
+test('stejné sezení → stejný proces; čekající proces nedrží sezení', async () => {
   const r = mk();
   const t1 = await turn(r, 'ahoj');
   assert.equal(t1.exit.kept, true);
@@ -44,9 +44,9 @@ test('stejné sezení a nastavení → stejný proces; jiný režim, model nebo 
   assert.equal(t2.pid, t1.pid);
   assert.equal(t2.turn, 2);
   const t3 = await turn(r, 'plán', t1.sessionId, 'plan');
-  assert.notEqual(t3.pid, t1.pid);
+  assert.equal(t3.pid, t1.pid, 'jiný režim = řídicí příkaz, ne nový proces');
   assert.equal(t3.sessionId, t1.sessionId);
-  const t4 = await turn(r, 'model', t1.sessionId, 'plan', { model: 'sonnet' });
+  const t4 = await turn(r, 'model', t1.sessionId, 'plan', { model: 'sonnet', effort: 'high' });
   assert.notEqual(t4.pid, t3.pid);
   assert.equal(r.idle.size, 1, 'na sezení nejvýš jeden čekající proces');
   r.stopAll();
@@ -105,18 +105,63 @@ test('closeProject zavře čekající procesy projektu', async () => {
   assert.equal(r.idle.size, 0);
 });
 
-test('sledování průběhu: přidá pevný text k systémovému promptu a změna volby = nový proces', async () => {
-  const seen = [];
-  const r = new ClaudeRunner(cfg({ appendSystemPrompt: 'Vlastní.' }), () => {}, {
-    spawnFn: (exe, args, opts) => { seen.push(args); return spawn(process.execPath, [FAKE, ...args], opts); } });
-  const t1 = await turn(r, 'ahoj', null, 'auto', { progress: true });
-  const sys = (a) => a[a.indexOf('--append-system-prompt') + 1];
-  assert.equal(sys(seen[0]), `Vlastní.\n\n${PROGRESS_PROMPT}`);
-  const t2 = await turn(r, 'znovu', t1.sessionId, 'auto', { progress: true });
-  assert.equal(t2.pid, t1.pid);
-  const t3 = await turn(r, 'bez', t1.sessionId, 'auto', { progress: false });
+test('převzatý proces: jiný režim a model přes řídicí příkaz (stejný proces), effort = nový proces', async () => {
+  const r = mk();
+  const t1 = await turn(r, 'ahoj', null, 'plan');
+  const cmds = t1.events.find((e) => e.type === 'commands');
+  assert.deepEqual(cmds.commands.map((c) => c.name), ['review']); // jen rozumné názvy
+  assert.equal(cmds.commands[0].argumentHint, '[větev]');
+  assert.deepEqual(cmds.agents, [{ name: 'Explore', description: 'Hledá v kódu' }]);
+  const t2 = await turn(r, 'auto', t1.sessionId, 'auto', { model: 'sonnet' });
+  assert.equal(t2.pid, t1.pid, 'režim a model se změní bez nového procesu');
+  assert.equal(t2.events.find((e) => e.type === 'init').permissionMode, 'auto');
+  assert.match(t2.events.find((e) => e.type === 'text').text, /model sonnet/);
+  assert.equal(t2.exit.kept, true);
+  const t3 = await turn(r, 'effort', t1.sessionId, 'auto', { model: 'sonnet', effort: 'low' });
   assert.notEqual(t3.pid, t1.pid);
-  assert.equal(sys(seen[1]), 'Vlastní.');
+  const t4 = await turn(r, 'výchozí model', t1.sessionId, 'auto', { effort: 'low' });
+  assert.notEqual(t4.pid, t3.pid, 'zpět na výchozí model jen novým procesem');
   r.stopAll();
   await closed(r);
+});
+
+test('přerušení: tah skončí, proces zůstane připravený; kontext ze sezení', async () => {
+  const r = mk();
+  const run = await r.start(account, project, 'auto', 'SLOW', null, { addDirs: [] });
+  const events = [];
+  run.on('event', (e) => events.push(e));
+  await new Promise((res) => setTimeout(res, 400));
+  run.interrupt();
+  await new Promise((res) => run.once('end', res));
+  const result = events.find((e) => e.type === 'result');
+  assert.equal(result.interrupted, true);
+  const exit = events.find((e) => e.type === 'exit');
+  assert.equal(exit.kept, true);
+  assert.equal(exit.stopped, true);
+  const t2 = await turn(r, 'dál', run.sessionId);
+  assert.equal(t2.run.warm, true);
+  const c = await r.sessionControl(account, project, run.sessionId, 'get_context_usage');
+  assert.equal(c.percentage, 12);
+  r.stopAll();
+  await closed(r);
+});
+
+test('kopie sezení: nové id, původní sezení neblokuje', async () => {
+  const r = mk();
+  const t1 = await turn(r, 'ahoj');
+  const copy = await r.start(account, project, 'plan', 'bokem', t1.sessionId, { addDirs: [], side: true });
+  assert.equal(r.isSessionBusy(t1.sessionId), false);
+  const ev2 = [];
+  copy.on('event', (e) => ev2.push(e));
+  await new Promise((res) => copy.once('end', res));
+  assert.notEqual(copy.sessionId, t1.sessionId);
+  assert.equal(ev2.find((e) => e.type === 'exit').kept, undefined, 'otázka bokem se neodkládá');
+  r.stopAll();
+  await closed(r);
+});
+
+test('commandsInfo: popisy zkrácené, účet a nic dalšího se nepředá', () => {
+  const c = commandsInfo({ commands: [{ name: 'x', description: 'a\n  b', argumentHint: 1 }], account: { email: 'tajne@example.com' }, agents: ['Plan'] });
+  assert.deepEqual(c, { commands: [{ name: 'x', description: 'a b', argumentHint: '' }], agents: [{ name: 'Plan', description: '' }] });
+  assert.deepEqual(commandsInfo(null), { commands: [], agents: [] });
 });

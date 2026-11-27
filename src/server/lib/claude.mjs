@@ -9,28 +9,32 @@ import path from 'node:path';
 import { isUnder, samePath, norm } from './config.mjs';
 import { checkClaudeExe, childSpawnOptions, killTree } from './platform.mjs';
 import { StreamParser, ev } from './parser.mjs';
-import { alwaysUpdates, ruleLabel, inputPreview, controlResponse, controlError, PERMISSION_TIMEOUT_MS } from './permissions.mjs';
+import { alwaysUpdates, ruleLabel, inputPreview, editPreview, questionsPreview, controlResponse, controlError, PERMISSION_TIMEOUT_MS } from './permissions.mjs';
 
 export { killTree };
-export const MODES = ['auto', 'plan'];
+/** Režimy: Auto, Plán, Úpravy (acceptEdits – úpravy souborů bez ptaní, příkazy se ptají; schváleno 2026-11-27). */
+export const MODES = ['auto', 'plan', 'acceptEdits'];
 /** Režim „Ručně“: Claude Code se ptá na každý zápis a příkaz. Jen s interactivePermissions – jinak by se vše zamítlo. */
 export const ASK_MODE = 'default';
-/**
- * Volitelné sledování průběhu: Claude napíše plán a značky kroků, aplikace je skryje a ukáže z nich průběh.
- * Pevný text (uživatel ho nemění); ověřeno naostro na 2.1.332 – Claude značky dodržel.
- */
-export const PROGRESS_PROMPT = 'Aplikace sleduje průběh práce. Když úkol vyžaduje víc kroků (3 a víc), napiš hned na začátku '
-  + 'na samostatný řádek [[plan: první krok | druhý krok | …]] – 2 až 12 krátkých kroků v jazyce uživatele. Na začátku '
-  + 'každého kroku napiš na samostatný řádek [[step: N]] (N = číslo kroku od 1) a po dokončení všech kroků [[step: done]]. '
-  + 'Když se plán změní, napiš nový řádek [[plan: …]]. U jednoduchých otázek a krátkých odpovědí nic z toho nepiš. '
-  + 'Aplikace tyto řádky skryje a ukáže z nich průběh.';
-/** Povolené režimy podle configu (nikdy bypassPermissions, acceptEdits ani dontAsk). */
+/** Povolené režimy podle configu (nikdy bypassPermissions ani dontAsk). */
 export const allowedModes = (cfg) => (cfg.interactivePermissions === true ? [...MODES, ASK_MODE] : [...MODES]);
+/** Claude in Chrome: každá akce prohlížeče se musí schválit (pravidlo „ask“ pro celý MCP server). */
+export const CHROME_SETTINGS = JSON.stringify({ permissions: { ask: ['mcp__claude-in-chrome'] } });
+const CONTROL_TIMEOUT_MS = 15_000;
+const INTERRUPT_KILL_MS = 8_000;
 const MAX_PLAN_BYTES = 512 * 1024;
 const ACCOUNT_MAX_AGE_MS = 10 * 60 * 1000;
 
 /** Jeden řádek vstupu --input-format stream-json se zprávou uživatele. */
 export const userLine = (text) => JSON.stringify({ type: 'user', message: { role: 'user', content: text } }) + '\n';
+
+/**
+ * Prostředí procesu běhu: seznam úkolů Claude Code (TaskCreate/TaskUpdate → panel Průběh, ověřeno na 2.1.332)
+ * a kontrolní body souborů (návrat souborů k dřívější zprávě).
+ */
+export function runEnv(account) {
+  return { ...claudeEnv(account), CLAUDE_CODE_ENABLE_TODO_TOOLS: '1', CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: '1' };
+}
 
 /** Prostředí potomka: bez CLAUDE*, ANTHROPIC_*; CLAUDE_CONFIG_DIR z allowlistu. */
 export function claudeEnv(account) {
@@ -61,6 +65,31 @@ function runAuthStatus(cfg, account) {
       { cwd: account.configDirFull, env: claudeEnv(account), windowsHide: true, timeout: 30_000, maxBuffer: 1024 * 1024 },
       (err, stdout) => resolve({ stdout: String(stdout ?? ''), timedOut: !!err?.killed }));
   });
+}
+
+/* ---------------- Sezení běžící jinde ---------------- */
+const activeCache = new Map();
+/**
+ * `claude agents --json` účtu: sezení běžící v terminálu nebo na pozadí (bez dotazu na model). Cache 15 s.
+ * @returns {Promise<Array<{sessionId:string, cwd:string, kind:string, status:string, name:string}>>}
+ */
+export function activeSessions(cfg, account) {
+  const c = activeCache.get(account.id);
+  if (c && Date.now() - c.at < 15_000) return c.p;
+  const p = new Promise((resolve) => {
+    let exe;
+    try { exe = claudeExePath(cfg); } catch { resolve([]); return; }
+    execFile(exe, ['agents', '--json'], { cwd: account.configDirFull, env: claudeEnv(account), windowsHide: true, timeout: 20_000, maxBuffer: 1024 * 1024 },
+      (err, stdout) => {
+        let list = [];
+        try { list = JSON.parse(String(stdout || '[]')); } catch { /* starší verze */ }
+        const s = (v) => (typeof v === 'string' ? v.slice(0, 200) : '');
+        resolve((Array.isArray(list) ? list : []).filter((x) => x && typeof x.sessionId === 'string').slice(0, 50)
+          .map((x) => ({ sessionId: x.sessionId, cwd: s(x.cwd), kind: s(x.kind), status: s(x.status), name: s(x.name) })));
+      });
+  });
+  activeCache.set(account.id, { at: Date.now(), p });
+  return p;
 }
 
 /* ---------------- Ověření účtů ---------------- */
@@ -141,6 +170,18 @@ export class AccountGuard {
 // Bezpečnost: proces se k dalšímu použití odloží jen tehdy, když poslední init hlásil očekávaný režim a v tahu
 // nebyl nástroj, který režim mění (ExitPlanMode/EnterPlanMode); u převzatého procesu se režim kontroluje znovu.
 
+/** Z odpovědi `initialize`: příkazy a skilly s popisem, agenti – jen texty pro nabídku, nic dalšího (účet ne). */
+export function commandsInfo(r) {
+  const s = (v, n) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, n) : '');
+  const NAME = /^[A-Za-z0-9][\w:.-]{0,99}$/;
+  const commands = (Array.isArray(r?.commands) ? r.commands : []).filter((c) => c && NAME.test(c.name)).slice(0, 300)
+    .map((c) => ({ name: c.name, description: s(c.description, 240), argumentHint: s(c.argumentHint, 80) }));
+  const agents = (Array.isArray(r?.agents) ? r.agents : []).slice(0, 100)
+    .map((a) => (typeof a === 'string' ? { name: a, description: '' } : { name: s(a?.name ?? a?.agentType, 80), description: s(a?.description ?? a?.whenToUse, 240) }))
+    .filter((a) => NAME.test(a.name));
+  return { commands, agents };
+}
+
 const MAX_IDLE = 3;
 const MODE_TOOLS = new Set(['ExitPlanMode', 'EnterPlanMode']);
 const RETIRE_WAIT_MS = 5000;
@@ -166,6 +207,8 @@ export class ClaudeRunner {
   get idleMs() { return this.idleMsOverride ?? (this.cfg.sessionProcessMinutes ?? 10) * 60_000; }
   get hasActiveRuns() { return this.runs.size > 0; }
   isSessionBusy(id) { return this.busySessions.has(id); }
+  /** Sezení, která drží procesy této aplikace (běžící i čekající) – v `claude agents` se nemají hlásit jako „jinde“. */
+  ownSessionIds() { return [...this.busySessions, ...this.idle.keys()]; }
   find(id) { return this.runs.get(id); }
   /** Běží v projektu nějaký claude? (takový projekt nejde odebrat v Nastavení) */
   isProjectBusy(projectId) { for (const r of this.runs.values()) if (r.projectId === projectId) return true; return false; }
@@ -180,25 +223,39 @@ export class ClaudeRunner {
    * Spustí tah; události emituje jako 'event', na konci 'end'.
    * @param {import('./config.mjs').Account} account @param {import('./config.mjs').Project} project
    * @param {string} mode @param {string} prompt @param {string|null} resume
-   * @param {{addDirs?: string[], model?: string, effort?: string, progress?: boolean}} [opts] addDirs = další složky (přílohy);
-   *   model/effort už ověřené proti allowlistu (server.mjs); progress = přidat PROGRESS_PROMPT
+   * @param {{addDirs?: string[], model?: string, effort?: string, fork?: boolean, side?: boolean, chrome?: boolean}} [opts]
+   *   addDirs = další složky (přílohy); model/effort už ověřené proti allowlistu (server.mjs);
+   *   fork = pokračovat v kopii sezení (--fork-session); side = otázka bokem (kopie bez uložení, jen čtení);
+   *   chrome = Claude in Chrome (každá akce prohlížeče se schvaluje)
    */
-  async start(account, project, mode, prompt, resume, { addDirs = [], model = '', effort = '', progress = false } = {}) {
+  async start(account, project, mode, prompt, resume, { addDirs = [], model = '', effort = '', fork = false, side = false, chrome = false } = {}) {
     if (!allowedModes(this.cfg).includes(mode)) throw new Error('Neplatný režim.');
-    if (resume && this.busySessions.has(resume)) throw new Error('Toto sezení už běží.');
-    if (resume) this.busySessions.add(resume); // hned, ať nikdo jiný sezení nepřevezme během čekání níže
-    const sig = JSON.stringify([account.id, project.id, mode, model, effort, addDirs, progress === true]);
-    let proc = resume ? this.idle.get(resume) : undefined;
+    const copy = !!resume && (fork || side); // kopie původní sezení neblokuje ani nemění
+    if (resume && !copy && this.busySessions.has(resume)) throw new Error('Toto sezení už běží.');
+    if (resume && !copy) this.busySessions.add(resume); // hned, ať nikdo jiný sezení nepřevezme během čekání níže
+    // Režim a model jde převzatému procesu změnit řídicím příkazem (jako Shift+Tab a /model); ostatní = nový proces.
+    const sig = JSON.stringify([account.id, project.id, effort, addDirs, chrome === true]);
+    let proc = resume && !copy ? this.idle.get(resume) : undefined;
     try {
-      if (proc && (proc.sig !== sig || proc.exited)) { await this.#retire(proc); proc = undefined; }
-      if (proc) this.#unpark(proc);
-      else proc = this.#spawn(account, project, mode, resume, { addDirs, model, effort, progress: progress === true }, sig);
+      if (proc && (proc.sig !== sig || proc.exited || (proc.model && !model))) { await this.#retire(proc); proc = undefined; }
+      if (proc) {
+        this.#unpark(proc);
+        try {
+          if (proc.mode !== mode) { await this.#control(proc, 'set_permission_mode', { mode }); proc.mode = mode; }
+          if (proc.model !== model) { await this.#control(proc, 'set_model', { model }); proc.model = model; }
+        } catch (e) {
+          this.log(`Proces ${proc.id}: změna režimu/modelu selhala (${e.message}) – nový proces`);
+          await this.#retire(proc);
+          proc = undefined;
+        }
+      }
+      if (!proc) proc = this.#spawn(account, project, mode, resume, { addDirs, model, effort, fork: copy, side, chrome: chrome === true }, sig);
     } catch (e) {
-      if (resume) this.busySessions.delete(resume);
+      if (resume && !copy) this.busySessions.delete(resume);
       throw e;
     }
     const warm = proc.turns > 0;
-    const run = this.#newRun(proc, account, project, resume, warm);
+    const run = this.#newRun(proc, account, project, copy ? null : resume, warm);
     this.log(`Běh ${run.id} spuštěn: účet ${account.id}, projekt ${project.id}, režim ${mode}, resume ${!!resume}`
       + `, model ${model || 'výchozí'}, effort ${effort || 'výchozí'}${warm ? `, proces ${proc.id} převzat` : ''}`);
     proc.turns++;
@@ -206,7 +263,7 @@ export class ClaudeRunner {
     return run;
   }
 
-  #spawn(account, project, mode, resume, { addDirs, model, effort, progress }, sig) {
+  #spawn(account, project, mode, resume, { addDirs, model, effort, fork, side, chrome }, sig) {
     // Vstup jako stream-json: stdin zůstává otevřený, takže lze poslat další zprávu do běžícího tahu
     // (Claude ji převezme na nejbližším předělu; --replay-user-messages to potvrdí) i další tah do stejného procesu.
     const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
@@ -215,20 +272,25 @@ export class ClaudeRunner {
     if (this.cfg.interactivePermissions === true) args.push('--permission-prompts', 'host', '--permission-prompt-tool', 'stdio');
     else args.push('--permission-prompts', 'none');
     if (resume) args.push('--resume', resume);
-    const system = [this.cfg.appendSystemPrompt, progress ? PROGRESS_PROMPT : ''].filter(Boolean).join('\n\n');
-    if (system) args.push('--append-system-prompt', system);
+    if (resume && fork) args.push('--fork-session');
+    if (side) args.push('--no-session-persistence');
+    if (this.cfg.appendSystemPrompt) args.push('--append-system-prompt', this.cfg.appendSystemPrompt);
+    args.push('--forward-subagent-text'); // co píší agenti → karta agenta
+    if (chrome) args.push('--chrome', '--settings', CHROME_SETTINGS);
     if (this.cfg.disallowedTools.length) args.push('--disallowedTools', ...this.cfg.disallowedTools);
     for (const d of addDirs) args.push('--add-dir', d);
     if (model) args.push('--model', model);
     if (effort) args.push('--effort', effort);
 
     const child = this.spawnFn(claudeExePath(this.cfg), args, {
-      cwd: project.pathFull, env: claudeEnv(account), shell: false, stdio: ['pipe', 'pipe', 'pipe'], ...childSpawnOptions(),
+      cwd: project.pathFull, env: runEnv(account), shell: false, stdio: ['pipe', 'pipe', 'pipe'], ...childSpawnOptions(),
     });
     let closedResolve;
     const proc = {
-      id: randomUUID().slice(0, 8), child, sig, mode, accountId: account.id, projectId: project.id,
-      sessionId: resume ?? null, run: /** @type {any} */ (null), turns: 0, exited: false, stdinOpen: true,
+      id: randomUUID().slice(0, 8), child, sig, mode, model, accountId: account.id, projectId: project.id, side: !!side,
+      sessionId: fork || side ? null : resume ?? null, run: /** @type {any} */ (null), turns: 0, exited: false, stdinOpen: true,
+      /** @type {Map<string, {resolve:Function, reject:Function, t:any}>} řídicí požadavky čekající na odpověď */
+      pending: new Map(),
       lastMode: /** @type {string|undefined} */ (undefined), turnTools: new Set(), idleTimer: /** @type {any} */ (null),
       parser: new StreamParser(path.join(account.configDirFull, 'plans')), stderr: '', spawnError: /** @type {any} */ (null),
       closed: new Promise((r) => { closedResolve = r; }),
@@ -239,7 +301,107 @@ export class ClaudeRunner {
       },
     };
     this.#pump(proc, /** @type {any} */ (closedResolve));
+    // Seznam příkazů a skillů s popisy, agenti (jako nabídka / v terminálu) → událost pro paletu.
+    this.#control(proc, 'initialize').then((r) => {
+      const c = commandsInfo(r);
+      if (proc.run && !proc.run.ended) proc.run.emit('event', ev('commands', c));
+      else proc.commandsInfo = c;
+    }).catch(() => { /* starší Claude Code – nevadí */ });
     return proc;
+  }
+
+  /**
+   * Řídicí požadavek na proces (stdin stream-json) → odpověď Claude Code.
+   * @returns {Promise<any>}
+   */
+  #control(proc, subtype, payload = {}, timeoutMs = CONTROL_TIMEOUT_MS) {
+    return new Promise((resolve, reject) => {
+      if (proc.exited || !proc.stdinOpen) { reject(new Error('Proces Claude Code už neběží.')); return; }
+      const id = `acd-${randomUUID()}`;
+      const t = setTimeout(() => { proc.pending.delete(id); reject(new Error('Claude Code neodpověděl.')); }, timeoutMs);
+      t.unref?.();
+      proc.pending.set(id, { resolve, reject, t });
+      try { proc.child.stdin.write(JSON.stringify({ type: 'control_request', request_id: id, request: { subtype, ...payload } }) + '\n', 'utf8'); }
+      catch (e) { clearTimeout(t); proc.pending.delete(id); reject(e); }
+    });
+  }
+
+  /** Změna režimu běžícího tahu (jako Shift+Tab). */
+  async setRunMode(run, mode) {
+    if (!allowedModes(this.cfg).includes(mode)) throw Object.assign(new Error('Neplatný režim.'), { status: 400 });
+    const proc = run.proc;
+    if (run.ended || !proc) throw Object.assign(new Error('Běh už skončil.'), { status: 409 });
+    await this.#control(proc, 'set_permission_mode', { mode });
+    proc.mode = mode;
+    this.log(`Běh ${run.id}: režim → ${mode}`);
+  }
+
+  /** Změna modelu běžícího tahu (jako /model); platí od dalšího kroku. */
+  async setRunModel(run, model) {
+    const proc = run.proc;
+    if (run.ended || !proc) throw Object.assign(new Error('Běh už skončil.'), { status: 409 });
+    if (!model) throw Object.assign(new Error('Za běhu jde přepnout jen na konkrétní model.'), { status: 400 });
+    await this.#control(proc, 'set_model', { model });
+    proc.model = model;
+    this.log(`Běh ${run.id}: model → ${model}`);
+  }
+
+  /** Zastaví úlohu na pozadí (příkaz nebo agenta) běžícího tahu. */
+  async stopTask(run, taskId) {
+    if (run.ended || !run.proc) throw Object.assign(new Error('Běh už skončil.'), { status: 409 });
+    await this.#control(run.proc, 'stop_task', { task_id: taskId });
+  }
+
+  /**
+   * Řídicí požadavek na sezení: použije běžící nebo čekající proces; jinak spustí krátký proces s --resume
+   * (bez zprávy pro model, tedy bez tokenů) a po odpovědi ho zavře.
+   * @param {{exclusive?: boolean}} [o] exclusive = sezení nesmí běžet (návrat souborů, přejmenování)
+   */
+  async sessionControl(account, project, sessionId, subtype, payload = {}, { exclusive = false } = {}) {
+    const running = [...this.runs.values()].find((r) => r.sessionId === sessionId && !r.ended && r.proc && !r.proc.side);
+    if (running) {
+      if (exclusive) throw Object.assign(new Error('Sezení právě běží – počkejte, až Claude doběhne.'), { status: 409 });
+      return this.#control(running.proc, subtype, payload);
+    }
+    const idle = this.idle.get(sessionId);
+    if (idle && !exclusive) return this.#control(idle, subtype, payload);
+    if (idle) await this.#retire(idle);
+    return this.#withTempProcess(account, project, sessionId, (proc) => this.#control(proc, subtype, payload));
+  }
+
+  /** Přejmenuje sezení v Claude Code (/rename – lokální příkaz bez dotazu na model). */
+  async renameSession(account, project, sessionId, title) {
+    if (this.busySessions.has(sessionId)) throw Object.assign(new Error('Sezení právě běží – přejmenujte ho po doběhnutí.'), { status: 409 });
+    const idle = this.idle.get(sessionId);
+    if (idle) await this.#retire(idle);
+    return this.#withTempProcess(account, project, sessionId, (proc) => new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error('Claude Code neodpověděl.')), CONTROL_TIMEOUT_MS);
+      proc.onLocal = (e) => {
+        if (e.type === 'title') { clearTimeout(t); resolve({ title: e.title }); }
+        else if (e.type === 'result') { clearTimeout(t); resolve({ title }); }
+      };
+      try { proc.child.stdin.write(userLine(`/rename ${title}`), 'utf8'); } catch (e) { clearTimeout(t); reject(e); }
+    }));
+  }
+
+  async #withTempProcess(account, project, sessionId, fn) {
+    const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'plan',
+      '--permission-prompts', 'none', '--resume', sessionId];
+    const child = this.spawnFn(claudeExePath(this.cfg), args, {
+      cwd: project.pathFull, env: runEnv(account), shell: false, stdio: ['pipe', 'pipe', 'pipe'], ...childSpawnOptions(),
+    });
+    let closedResolve;
+    const proc = { id: `tmp-${randomUUID().slice(0, 6)}`, child, exited: false, stdinOpen: true, pending: new Map(), run: null,
+      parser: new StreamParser(path.join(account.configDirFull, 'plans')), stderr: '', turnTools: new Set(), mode: 'plan',
+      onLocal: /** @type {any} */ (null), closed: new Promise((r) => { closedResolve = r; }),
+      endInput() { if (!proc.stdinOpen) return; proc.stdinOpen = false; try { child.stdin.end(); } catch { } } };
+    this.#pump(proc, /** @type {any} */ (closedResolve));
+    try { return await fn(proc); }
+    finally {
+      proc.endInput();
+      const t = setTimeout(() => killTree(child.pid), RETIRE_WAIT_MS);
+      proc.closed.then(() => clearTimeout(t));
+    }
   }
 
   #newRun(proc, account, project, resume, warm) {
@@ -257,12 +419,29 @@ export class ClaudeRunner {
       injected: 0,          // zprávy poslané do běžícího tahu
       replayed: 0,          // potvrzení převzetí od claude (včetně úvodního promptu)
       closeTimer: /** @type {any} */ (null),
+      proc,
+      interrupted: false,
+      /** Tvrdé zastavení: konec procesu. */
       stop() {
         if (run.ended) return;
         run.stopped = true;
         run.acceptingInput = false;
         proc.endInput();
         killTree(proc.child.pid);
+      },
+      /**
+       * Přerušení jako Esc v terminálu: Claude přestane, proces i sezení zůstanou připravené na další zprávu.
+       * Když Claude Code do chvíle neodpoví výsledkem, proces se ukončí.
+       */
+      interrupt() {
+        if (run.ended) return;
+        if (run.interrupted || proc.exited || !proc.stdinOpen) { run.stop(); return; }
+        run.interrupted = true;
+        run.stopped = true;
+        for (const id of [...run.permissions.keys()]) run.answerPermission(id, 'deny');
+        runner.#control(proc, 'interrupt').catch(() => run.stop());
+        const t = setTimeout(() => { if (!run.ended) { run.interrupted = false; run.stop(); } }, INTERRUPT_KILL_MS);
+        t.unref?.();
       },
       /** Pošle zprávu do běžícího tahu. @returns {boolean} false, pokud už běh vstup nepřijímá */
       inject(text) {
@@ -277,18 +456,24 @@ export class ClaudeRunner {
        * Odpověď uživatele na žádost o svolení. @param {string} requestId @param {'once'|'always'|'deny'|'timeout'} decision
        * @returns {boolean} false = žádost neexistuje (už vyřízená, nebo cizí)
        */
-      answerPermission(requestId, decision) {
+      answerPermission(requestId, decision, answers) {
         const p = run.permissions.get(requestId);
         if (!p || run.ended) return false;
         run.permissions.delete(requestId);
         clearTimeout(p.timer);
-        try { proc.child.stdin.write(controlResponse(requestId, decision, p.input, p.suggestions), 'utf8'); } catch { /* proces skončil */ }
+        // Otázka od Clauda (AskUserQuestion): odpověď jde jako upravený vstup nástroje s mapou otázka → odpověď.
+        const input = decision === 'answer' ? { ...p.input, answers } : p.input;
+        const d = decision === 'answer' ? 'once' : decision;
+        try { proc.child.stdin.write(controlResponse(requestId, d, input, p.suggestions), 'utf8'); } catch { /* proces skončil */ }
         const always = decision === 'always' ? alwaysUpdates(p.suggestions).flatMap((u) => u.rules.map(ruleLabel)) : [];
         run.emit('event', ev('permission_resolved', { requestId, decision: decision === 'always' && !always.length ? 'once' : decision, rules: always }));
         return true;
       },
+      /** Vstup otázky (kvůli ověření odpovědi). */
+      permissionInput(requestId) { return run.permissions.get(requestId)?.input; },
     });
     proc.run = run;
+    if (proc.commandsInfo) { const c = proc.commandsInfo; proc.commandsInfo = null; queueMicrotask(() => run.emit('event', ev('commands', c))); }
     proc.turnTools.clear();
     runner.runs.set(run.id, run);
     return run;
@@ -304,6 +489,7 @@ export class ClaudeRunner {
     this.log(`Běh ${run.id}: žádost o svolení (${e.toolName})`);
     run.emit('event', ev('permission_request', { requestId: e.requestId, toolName: e.toolName, displayName: e.displayName,
       description: e.description, blockedPath: e.blockedPath, toolUseId: e.toolUseId, preview: inputPreview(e.toolName, e.input),
+      edit: editPreview(e.toolName, e.input), questions: e.toolName === 'AskUserQuestion' ? questionsPreview(e.input) : undefined,
       alwaysRules: always, timeoutMs: PERMISSION_TIMEOUT_MS }));
   }
 
@@ -318,6 +504,13 @@ export class ClaudeRunner {
     rl.on('line', (line) => {
       for (const e of parser.parse(line)) {
         const run = proc.run;
+        if (e.type === 'control_response') {
+          const w = proc.pending.get(e.requestId);
+          if (w) { proc.pending.delete(e.requestId); clearTimeout(w.t); if (e.ok) w.resolve(e.data ?? {}); else w.reject(new Error(e.error || 'Chyba Claude Code.')); }
+          continue;
+        }
+        if (e.type === 'status' && e.permissionMode) proc.lastMode = e.permissionMode; // po změně režimu za běhu
+        if (proc.onLocal) { proc.onLocal(e); continue; } // krátký proces (přejmenování)
         if (e.type === 'control_other') { try { child.stdin.write(controlError(e.requestId), 'utf8'); } catch { } continue; }
         if (run?.blocked) continue; // tah zastavený pojistkou režimu: nic dalšího z něj nepředat
         if (!run || run.ended) {
@@ -347,6 +540,7 @@ export class ClaudeRunner {
           run.replayed++;
           clearTimeout(run.closeTimer);
         }
+        if (e.type === 'result' && run.interrupted) e.interrupted = true; // přerušení není chyba
         if (e.type === 'result' && typeof e.costUsd === 'number') {
           // Claude Code hlásí total_cost_usd jako součet za celý proces – pro statistiky jen tento tah.
           e.totalCostUsd = e.costUsd;
@@ -369,6 +563,8 @@ export class ClaudeRunner {
     Promise.all([rlClosed, exited]).then(([, code]) => {
       proc.exited = true;
       proc.stdinOpen = false;
+      for (const w of proc.pending.values()) { clearTimeout(w.t); w.reject(new Error('Proces Claude Code skončil.')); }
+      proc.pending.clear();
       if (this.idle.get(proc.sessionId) === proc) this.#unpark(proc);
       const run = proc.run;
       if (!run || run.ended) { this.log(`Proces ${proc.id} skončil kódem ${code}`); return; }
@@ -386,11 +582,13 @@ export class ClaudeRunner {
   #finishTurn(proc, run, result) {
     if (run.ended) return;
     run.acceptingInput = false;
-    const reusable = this.idleMs > 0 && !!result && !result.isError && !run.stopped && !proc.exited && proc.stdinOpen
+    // Přerušený tah (interrupt) skončí chybovým výsledkem, ale proces je v pořádku – smí se odložit.
+    const okResult = !!result && (!result.isError || run.interrupted);
+    const reusable = this.idleMs > 0 && okResult && (!run.stopped || run.interrupted) && !proc.exited && proc.stdinOpen && !proc.side
       && !!proc.sessionId && proc.lastMode === proc.mode && ![...proc.turnTools].some((t) => MODE_TOOLS.has(t));
     if (!reusable) { proc.endInput(); return; }
     this.#emitPlans(proc, run);
-    run.emit('event', ev('exit', { code: 0, stopped: false, sessionId: run.sessionId, kept: true }));
+    run.emit('event', ev('exit', { code: 0, stopped: run.interrupted, sessionId: run.sessionId, kept: true }));
     this.log(`Běh ${run.id} hotov, proces ${proc.id} čeká na další zprávu`);
     this.#endRun(run);
     proc.run = null;

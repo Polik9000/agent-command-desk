@@ -50,6 +50,29 @@ export function inputPreview(toolName, input) {
   };
 }
 
+/** Úprava souboru pro kartu svolení (barevný rozdíl): Edit, MultiEdit, Write; texty omezené. */
+export function editPreview(toolName, input) {
+  const i = input && typeof input === 'object' ? /** @type {any} */ (input) : {};
+  const file = cut(i.file_path, 1000);
+  if (!file) return undefined;
+  if (toolName === 'Edit') return { file, edits: [{ old: cut(i.old_string, 20000) ?? '', new: cut(i.new_string, 20000) ?? '' }] };
+  if (toolName === 'MultiEdit' && Array.isArray(i.edits))
+    return { file, edits: i.edits.slice(0, 20).map((e) => ({ old: cut(e?.old_string, 10000) ?? '', new: cut(e?.new_string, 10000) ?? '' })) };
+  if (toolName === 'Write') return { file, edits: [{ old: '', new: cut(i.content, 40000) ?? '' }] };
+  return undefined;
+}
+
+/** Otázka od Clauda (AskUserQuestion): otázky a možnosti, nic jiného. */
+export function questionsPreview(input) {
+  const qs = Array.isArray(/** @type {any} */ (input)?.questions) ? /** @type {any} */ (input).questions : [];
+  const out = qs.slice(0, 4).filter((q) => typeof q?.question === 'string').map((q) => ({
+    question: cut(q.question, 500), header: cut(q.header, 60), multiSelect: q.multiSelect === true,
+    options: (Array.isArray(q.options) ? q.options : []).slice(0, 6).filter((o) => typeof o?.label === 'string')
+      .map((o) => ({ label: cut(o.label, 200), description: cut(o.description, 400) })),
+  }));
+  return out.length ? out : undefined;
+}
+
 /**
  * Odpověď pro stdin claude.
  * @param {string} requestId @param {'once'|'always'|'deny'|'timeout'} decision

@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sandbox = { window: {} };
 vm.runInNewContext(readFileSync(path.join(root, 'src', 'server', 'wwwroot', 'review.js'), 'utf8'), sandbox);
-const { findAll, diffLines, commentsMessage, inlineCode, progressMarks, newProgress, applyMark, progressInfo, fmtEta, atQuery, rankFiles } = sandbox.window.Review;
+const { findAll, diffLines, commentsMessage, inlineCode, progressMarks, taskProgress, fmtEta, atQuery, rankFiles } = sandbox.window.Review;
 const plain = (v) => JSON.parse(JSON.stringify(v)); // pole z jiného kontextu vm
 
 test('findAll: bez diakritiky a velikosti písmen, pozice v původním textu', () => {
@@ -84,23 +84,16 @@ test('progressMarks: značky ze skutečné odpovědi se skryjí a přečtou', ()
   assert.equal(progressMarks('pole a[1]').clean, 'pole a[1]'); // běžný text beze změny
 });
 
-test('applyMark + progressInfo: procenta a odhad podle délky hotových kroků', () => {
-  const st = newProgress();
-  applyMark(st, { type: 'step', step: 1 }, 0); // krok bez plánu se ignoruje
-  assert.equal(st.cur, 0);
-  applyMark(st, { type: 'plan', steps: ['a', 'b', 'c', 'd'] }, 0);
-  applyMark(st, { type: 'step', step: 1 }, 0);
-  assert.deepEqual(plain(progressInfo(st, 5_000)), { total: 4, cur: 1, completed: 0, percent: 0, etaMs: null });
-  applyMark(st, { type: 'step', step: 2 }, 60_000);
-  applyMark(st, { type: 'step', step: 3 }, 100_000); // průměr 50 s
-  // zbývá 2 kroky × 50 s − 10 s v aktuálním
-  assert.deepEqual(plain(progressInfo(st, 110_000)), { total: 4, cur: 3, completed: 2, percent: 50, etaMs: 90_000 });
-  applyMark(st, { type: 'plan', steps: ['a', 'b', 'c', 'd'] }, 120_000); // stejný plán nic nemění
-  assert.equal(st.cur, 3);
-  applyMark(st, { type: 'plan', steps: ['a', 'b'] }, 120_000); // kratší plán
-  assert.equal(st.cur, 2);
-  applyMark(st, { type: 'step', step: 'done' }, 130_000);
-  assert.deepEqual(plain(progressInfo(st, 130_000)), { total: 2, cur: 2, completed: 2, percent: 100, etaMs: 0 });
+test('taskProgress: procenta, aktuální krok a odhad z hotových úkolů', () => {
+  assert.deepEqual(plain(taskProgress([], 0)), { total: 0, completed: 0, current: -1, done: false, percent: 0, etaMs: null });
+  const tasks = [{ status: 'completed', start: 0, end: 60_000 }, { status: 'completed', start: 60_000, end: 100_000 },
+    { status: 'in_progress', start: 100_000 }, { status: 'pending' }];
+  // průměr 50 s × 2 zbývající − 10 s v aktuálním
+  assert.deepEqual(plain(taskProgress(tasks, 110_000)), { total: 4, completed: 2, current: 2, done: false, percent: 50, etaMs: 90_000 });
+  // dlouho v aktuálním kroku: odečte se nejvýš jeden průměr
+  assert.equal(taskProgress(tasks, 500_000).etaMs, 50_000);
+  assert.equal(taskProgress([{ status: 'in_progress', start: 1 }, { status: 'pending' }], 5).etaMs, null);
+  assert.deepEqual(plain(taskProgress([{ status: 'completed' }], 0)), { total: 1, completed: 1, current: -1, done: true, percent: 100, etaMs: 0 });
 });
 
 test('fmtEta', () => {

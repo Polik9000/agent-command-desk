@@ -6,6 +6,19 @@ import { randomUUID } from 'node:crypto';
 import { isUnder } from './config.mjs';
 
 const MAX_TOOL_OUTPUT = 20_000;
+const MAX_IMAGE_B64 = 2_000_000; // ~1,5 MB obrázku
+const MAX_IMAGES = 3;
+const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+/** Obrázky z výsledku nástroje (snímek obrazovky, přečtený obrázek) – jen base64 známých typů, omezeně. */
+function images(content) {
+  if (!Array.isArray(content)) return undefined;
+  const out = content.filter((b) => b?.type === 'image' && b.source?.type === 'base64' && IMAGE_TYPES.has(b.source.media_type)
+    && typeof b.source.data === 'string' && b.source.data.length <= MAX_IMAGE_B64 && /^[A-Za-z0-9+/=\s]+$/.test(b.source.data.slice(0, 200)))
+    .slice(0, MAX_IMAGES).map((b) => ({ mediaType: b.source.media_type, data: b.source.data.replace(/\s+/g, '') }));
+  return out.length ? out : undefined;
+}
+const short = (v, n) => (typeof v === 'string' ? v.slice(0, n) : undefined);
+const TASK_STATUS = new Set(['running', 'completed', 'failed', 'stopped', 'killed', 'pending']);
 const str = (v) => (typeof v === 'string' ? v : undefined);
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : undefined);
 /** Tokeny z result.usage (vstup, výstup, čtení a zápis cache). */
@@ -81,6 +94,22 @@ export class StreamParser {
             mcpServers: mcpServers(e.mcp_servers) }));
         } else if (e.subtype === 'api_retry') {
           out.push(ev('retry', { attempt: e.attempt, maxRetries: e.max_retries, error: str(e.error), errorStatus: e.error_status }));
+        } else if (e.subtype === 'status' && typeof e.permissionMode === 'string') {
+          out.push(ev('status', { permissionMode: e.permissionMode }));
+        } else if (e.subtype === 'session_title_changed') {
+          out.push(ev('title', { title: short(e.title, 200) }));
+        } else if (e.subtype === 'task_started' || e.subtype === 'task_progress' || e.subtype === 'task_updated' || e.subtype === 'task_notification') {
+          // Agenti a příkazy na pozadí: začal / průběh / změna stavu / hotovo.
+          const u = e.usage && typeof e.usage === 'object' ? e.usage : {};
+          const status = str(e.patch?.status) ?? str(e.status);
+          out.push(ev('task', { phase: e.subtype.slice(5), taskId: short(e.task_id, 80), toolUseId: str(e.tool_use_id),
+            description: short(e.description, 300), taskType: short(e.task_type, 40), subagentType: short(e.subagent_type, 80),
+            background: e.is_backgrounded === true ? true : undefined, status: status && TASK_STATUS.has(status) ? status : undefined,
+            lastTool: short(e.last_tool_name, 80), tokens: num(u.total_tokens), toolUses: num(u.tool_uses), ms: num(u.duration_ms),
+            summary: short(e.summary, 500) }));
+        } else if (e.subtype === 'background_tasks_changed') {
+          out.push(ev('bg_tasks', { tasks: (Array.isArray(e.tasks) ? e.tasks : []).slice(0, 30)
+            .map((t) => ({ taskId: short(t?.task_id, 80), taskType: short(t?.task_type, 40), description: short(t?.description, 300) })) }));
         }
         break;
 
@@ -106,7 +135,7 @@ export class StreamParser {
           const c = e.message?.content;
           const text = typeof c === 'string' ? c
             : Array.isArray(c) ? c.filter((b) => b?.type === 'text').map((b) => b.text ?? '').join('\n') : '';
-          if (text) out.push(ev('user_replay', { text: text.slice(0, 200) }));
+          if (text) out.push(ev('user_replay', { text: text.slice(0, 200), uuid: str(e.uuid) }));
           break;
         }
         /** @type {Map<string, any>} */
@@ -122,6 +151,7 @@ export class StreamParser {
             id,
             isError: b.is_error === true,
             content: truncate(resultText(b.content)),
+            images: images(b.content),
             decision,
             denied: decision !== undefined && decision !== 'accept',
             decisionSource: str(d?.source),
@@ -129,6 +159,14 @@ export class StreamParser {
             parent,
           }));
         }
+        break;
+      }
+
+      // Odpověď Claude Code na řídicí požadavek aplikace (initialize, interrupt, set_permission_mode…).
+      case 'control_response': {
+        const r = e.response ?? {};
+        const requestId = str(r.request_id);
+        if (requestId) out.push(ev('control_response', { requestId, ok: r.subtype === 'success', data: r.response, error: str(r.error) }));
         break;
       }
 

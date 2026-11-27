@@ -111,49 +111,24 @@
     return { clean: clean.replace(/^\s*\n/, ''), marks };
   }
 
-  /** Nový stav průběhu. */
-  const newProgress = () => ({ steps: [], cur: 0, done: false, times: [], endAt: 0 });
-
-  /** Použije značku na stav (mění ho). `now` v ms; null = čas neznámý (historie). */
-  function applyMark(st, mark, now) {
-    if (mark.type === 'plan') {
-      const same = mark.steps.length === st.steps.length && mark.steps.every((s, i) => s === st.steps[i]);
-      if (!same) {
-        st.steps = mark.steps;
-        st.cur = Math.min(st.cur, st.steps.length);
-        st.times = st.times.slice(0, st.cur + 1);
-        st.done = false;
-      }
-    } else if (mark.step === 'done') {
-      if (!st.steps.length) return st;
-      st.done = true;
-      st.cur = st.steps.length;
-      st.endAt = now ?? 0;
-    } else if (mark.step >= 1 && mark.step <= st.steps.length) {
-      st.cur = mark.step;
-      st.done = false;
-      if (now != null && st.times[mark.step] == null) st.times[mark.step] = now;
-    }
-    return st;
-  }
-
   /**
-   * Procenta a odhad zbývajícího času: průměrná délka hotových kroků × zbývající kroky − čas v aktuálním kroku.
-   * @returns {{total:number, cur:number, completed:number, percent:number, etaMs:number|null}}
+   * Průběh ze seznamu úkolů Claude Code: hotové / celkem, aktuální (první rozpracovaný) a odhad zbývajícího času
+   * = průměrná délka hotových úkolů s časy × zbývající úkoly − čas strávený v aktuálním.
+   * @param {Array<{status:string, start?:number, end?:number}>} tasks
    */
-  function progressInfo(st, now) {
-    const total = st.steps.length;
-    if (!total) return { total: 0, cur: 0, completed: 0, percent: 0, etaMs: null };
-    if (st.done) return { total, cur: total, completed: total, percent: 100, etaMs: 0 };
-    const completed = Math.max(0, st.cur - 1);
-    const durations = [];
-    for (let i = 1; i < st.cur; i++) if (st.times[i] != null && st.times[i + 1] != null) durations.push(st.times[i + 1] - st.times[i]);
+  function taskProgress(tasks, now) {
+    const total = tasks.length;
+    const completed = tasks.filter((t) => t.status === 'completed').length;
+    const current = tasks.findIndex((t) => t.status === 'in_progress');
+    const done = total > 0 && completed === total;
+    const durations = tasks.filter((t) => t.status === 'completed' && t.start != null && t.end != null).map((t) => t.end - t.start);
     let etaMs = null;
-    if (durations.length && st.times[st.cur] != null) {
+    if (!done && durations.length) {
       const avg = durations.reduce((a, b) => a + b, 0) / durations.length;
-      etaMs = Math.max(0, Math.round(avg * (total - completed) - (now - st.times[st.cur])));
+      const inCur = current >= 0 && tasks[current].start != null ? now - tasks[current].start : 0;
+      etaMs = Math.max(0, Math.round(avg * (total - completed) - Math.min(inCur, avg)));
     }
-    return { total, cur: st.cur, completed, percent: Math.round((completed / total) * 100), etaMs };
+    return { total, completed, current, done, percent: total ? Math.round((completed / total) * 100) : 0, etaMs: done ? 0 : etaMs };
   }
 
   /** „asi 3 min“ / „asi 40 s“ / „už brzy“. */
@@ -180,6 +155,6 @@
     return hits.map((p, i) => [p, score(p), i]).sort((a, b) => a[1] - b[1] || a[0].length - b[0].length || a[2] - b[2]).slice(0, max).map((x) => x[0]);
   }
 
-  root.Review = { fold, findAll, diffLines, commentsMessage, inlineCode, progressMarks, newProgress, applyMark, progressInfo, fmtEta,
+  root.Review = { fold, findAll, diffLines, commentsMessage, inlineCode, progressMarks, taskProgress, fmtEta,
     atQuery, rankFiles };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -3,7 +3,7 @@
   "port": 0,
   "openBrowser": true,
   "disallowedTools": [],
-  "appendSystemPrompt": "Běžíš v lokální aplikaci {appName} (headless). Interaktivní otázky ani Shift+Tab nejsou k dispozici: otázky polož běžným textem. V režimu plánu ulož plán jako .md do složky plans a ukonči tah; uživatel ho schválí tlačítkem „Schválit plán“ a pak běh pokračuje v režimu auto.",
+  "appendSystemPrompt": "Běžíš v lokální aplikaci {appName}. Otázku s možnostmi polož nástrojem AskUserQuestion, pokud je k dispozici (uživatel odpoví v okně), jinak běžným textem. V režimu plánu ulož plán jako .md do složky plans a ukonči tah; uživatel ho schválí tlačítkem „Schválit plán“ a pak běh pokračuje v režimu auto.",
   "defaultAccount": "work",
   "accounts": [
     {

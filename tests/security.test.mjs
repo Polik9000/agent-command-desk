@@ -141,11 +141,29 @@ test('běh: neexistující příloha nebo příloha z jiného projektu → 400 (
   assert.equal((await run(Array(11).fill(a.id))).status, 400);
 });
 
-test('běh: volba průběhu jen true/false', async () => {
-  const body = Buffer.from(JSON.stringify({ account: 'a', project: 'p', mode: 'auto', prompt: 'ahoj', progress: 'ano' }));
-  const r = await req('POST', '/api/runs', { ...origin(), 'Content-Type': 'application/json', 'Content-Length': body.length }, body);
-  assert.equal(r.status, 400);
-  assert.match(JSON.parse(r.body).error, /průběhu/);
+test('běh: volby kopie, otázky bokem a Chrome', async () => {
+  const run = (extra) => {
+    const body = Buffer.from(JSON.stringify({ account: 'a', project: 'p', mode: 'auto', prompt: 'ahoj', ...extra }));
+    return req('POST', '/api/runs', { ...origin(), 'Content-Type': 'application/json', 'Content-Length': body.length }, body);
+  };
+  assert.equal((await run({ fork: 'ano' })).status, 400);
+  assert.match(JSON.parse((await run({ fork: true })).body).error, /Kopie/);
+  assert.match(JSON.parse((await run({ side: true, resume: '11111111-1111-4111-8111-111111111111' })).body).error, /Plán/);
+  assert.match(JSON.parse((await run({ chrome: true })).body).error, /Chrome/); // test běží bez interactivePermissions
+});
+
+test('za běhu a řízení sezení: token, Origin, neznámý běh', async () => {
+  const body = Buffer.from(JSON.stringify({ mode: 'plan' }));
+  const h = { 'Content-Type': 'application/json', 'Content-Length': body.length };
+  for (const what of ['mode', 'model', 'task-stop']) {
+    assert.equal((await req('POST', `/api/runs/abc123/${what}`, { 'X-ACD-Token': TOKEN, ...h }, body)).status, 403);
+    assert.equal((await req('POST', `/api/runs/abc123/${what}`, { ...origin(), ...h }, body)).status, 404);
+  }
+  const id = '11111111-1111-4111-8111-111111111111';
+  assert.equal((await req('GET', `/api/sessions/${id}/context?account=a&project=p`)).status, 401);
+  assert.equal((await req('GET', `/api/sessions/${id}/context?account=a&project=p`, { 'X-ACD-Token': TOKEN })).status, 409);
+  assert.equal((await req('POST', `/api/sessions/${id}/rewind?account=a&project=p`, { 'X-ACD-Token': TOKEN, ...h }, body)).status, 403);
+  assert.equal((await req('GET', '/api/sessions/active?account=a&project=p', { 'X-ACD-Token': TOKEN })).status, 409);
 });
 
 test('zpráva do běhu: bez Origin 403, neexistující běh 404', async () => {
@@ -166,8 +184,9 @@ test('běh: model mimo allowlist a neplatný effort → 400 (claude se nespustí
   assert.equal((await run({ model: 42 })).status, 400);
   assert.match(JSON.parse((await run({ effort: 'ultra' })).body).error, /effort/i);
   // režim Ručně (default) jen s interactivePermissions; ostatní režimy nikdy
-  for (const mode of ['default', 'bypassPermissions', 'acceptEdits', 'dontAsk'])
-    assert.match(JSON.parse((await run({ mode })).body).error, /Režim musí být auto nebo plan/);
+  for (const mode of ['default', 'bypassPermissions', 'dontAsk', 'manual'])
+    assert.match(JSON.parse((await run({ mode })).body).error, /Režim musí být auto, plan nebo acceptEdits/);
+  assert.equal((await run({ mode: 'acceptEdits' })).status, 409); // povoleno → až neověřený účet
   // povolené hodnoty projdou validací (pak skončí na neověřeném účtu → 409)
   assert.equal((await run({ model: 'opus', effort: 'high' })).status, 409);
 });
@@ -175,7 +194,7 @@ test('/api/state: seznam modelů a effortů', async () => {
   const st = JSON.parse((await req('GET', '/api/state', { 'X-ACD-Token': TOKEN })).body);
   assert.ok(st.models.some((m) => m.id === '' ) && st.models.some((m) => m.id === 'opus'));
   assert.deepEqual(st.efforts, ['', 'low', 'medium', 'high', 'xhigh', 'max']);
-  assert.deepEqual(st.modes, ['auto', 'plan']);
+  assert.deepEqual(st.modes, ['auto', 'plan', 'acceptEdits']);
 });
 
 test('Nastavení: jen s tokenem a Origin, neplatná cesta 400, přidání/přejmenování/odebrání projektu', async () => {

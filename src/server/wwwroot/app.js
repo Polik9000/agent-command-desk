@@ -105,7 +105,17 @@ function append(node, force) {
 function clearChat() {
   chat().querySelectorAll(':scope > :not(#empty)').forEach((n) => n.remove());
   tools.clear(); // karty nástrojů odstraněné z chatu
+  if (typeof AG !== 'undefined') AG.clear();
   $('#empty').hidden = false;
+}
+/** Při přepnutí sezení: úlohy na pozadí, kopie, kontext. */
+function resetSessionUi() {
+  BG.tasks.clear();
+  renderBackground();
+  S.forkNext = false;
+  renderForkNote();
+  CTX.data = null;
+  $('#foot-context').hidden = true;
 }
 /** Důležité hlášení pro čtečku obrazovky (přeruší čtení). Stav běhu hlásí #status zdvořile. */
 function announce(text) {
@@ -149,6 +159,8 @@ async function loadState() {
   S.interactivePermissions = st.interactivePermissions === true;
   S.modes = Array.isArray(st.modes) ? st.modes : ['auto', 'plan'];
   $('#mode-ask').hidden = !S.modes.includes('default');
+  $('#chrome-row').hidden = !S.interactivePermissions;
+  $('#chrome-toggle').checked = chromeOn();
   if (!S.modes.includes(S.mode)) setMode('auto');
   S.accounts = st.accounts;
   S.projects = st.projects;
@@ -222,13 +234,41 @@ function setRunOpts(model, effort) {
   S.effort = S.efforts.includes(effort) ? effort : '';
   localStorage.setItem(RUNOPTS_KEY(S.account), JSON.stringify({ model: S.model, effort: S.effort }));
   renderRunOpts();
+  liveModel();
+}
+/** Za běhu: model se přepne hned (jako /model); effort platí od další zprávy. */
+async function liveModel() {
+  const run = S.run;
+  if (!run || !run.runId || run.side || S.model === run.model) return;
+  if (!S.model) { setStatus('Výchozí model platí od další zprávy.'); return; }
+  try {
+    await apiJson(`/api/runs/${run.runId}/model`, { method: 'POST', body: { model: S.model } });
+    run.model = S.model;
+    announce(`Model přepnut na ${modelLabel(S.model)} – platí od dalšího kroku.`);
+  } catch (e) { setStatus(`Model platí od další zprávy (${e.message}).`); }
+}
+/** Za běhu: režim se přepne hned (jako Shift+Tab v terminálu). */
+async function liveMode(m) {
+  const run = S.run;
+  if (!run || !run.runId || run.side || run.mode === m) return;
+  try {
+    await apiJson(`/api/runs/${run.runId}/mode`, { method: 'POST', body: { mode: m } });
+    run.mode = m;
+    announce(`Režim přepnut na ${MODE_LABELS[m] || m}.`);
+  } catch (e) { showError('Režim nejde přepnout za běhu', e.message); }
+}
+function setChrome(on) {
+  store(CHROME_KEY, on ? '1' : '0');
+  $('#chrome-toggle').checked = on;
+  renderRunOpts();
+  announce(on ? 'Claude in Chrome zapnuto – od další zprávy, každá akce v prohlížeči se schvaluje.' : 'Claude in Chrome vypnuto.');
 }
 
 function renderRunOpts() {
   const sum = $('#runopts-summary');
   if (!sum) return;
   const custom = S.model || S.effort;
-  sum.textContent = (custom ? `${modelLabel(S.model)} · ${S.effort || 'výchozí'}` : 'Model: výchozí') + (progressOn() ? ' · průběh' : '');
+  sum.textContent = (custom ? `${modelLabel(S.model)} · ${S.effort || 'výchozí'}` : 'Model: výchozí') + (chromeOn() ? ' · Chrome' : '');
   sum.classList.toggle('is-custom', !!custom);
   const ms = $('#model'), es = $('#effort'), box = $('#runopts-presets');
   // Volby a předvolby se staví jen jednou: přestavění by zrušilo fokus a klik by vypadal jako klik mimo panel.
@@ -367,12 +407,19 @@ async function loadSessions() {
     li.appendChild(b);
     const r = el('button', 's-rename', '✎');
     r.type = 'button';
-    r.title = 'Přejmenovat (jen v této aplikaci)';
+    r.title = 'Přejmenovat (název uvidíte i v Claude Code v terminálu)';
     r.setAttribute('aria-label', `Přejmenovat sezení ${title}`);
     r.addEventListener('click', () => renameSession(li, s, title));
     li.appendChild(r);
+    const f = el('button', 's-rename s-fork', '⑂');
+    f.type = 'button';
+    f.title = 'Pokračovat v kopii (původní sezení zůstane beze změny)';
+    f.setAttribute('aria-label', `Pokračovat v kopii sezení ${title}`);
+    f.addEventListener('click', () => forkSession(s.id));
+    li.appendChild(f);
     ul.appendChild(li);
   }
+  loadElsewhere();
 }
 
 /** Úryvek s vyznačenou shodou (bez innerHTML). */
@@ -399,8 +446,14 @@ function renameSession(li, s, current) {
   const finish = (save) => {
     if (done) return;
     done = true;
-    if (save) setCustomTitle(s.id, input.value.trim() === s.title ? '' : input.value);
-    loadSessions();
+    const v = input.value.replace(/\s+/g, ' ').trim();
+    if (!save || v === current) { loadSessions(); return; }
+    if (!v) { setCustomTitle(s.id, ''); loadSessions(); return; } // prázdný = zpět na název z Claude Code
+    apiJson(`/api/sessions/${encodeURIComponent(s.id)}/title?account=${encodeURIComponent(S.account)}&project=${encodeURIComponent(S.project)}`,
+      { method: 'POST', body: { title: v } })
+      .then(() => { setCustomTitle(s.id, ''); announce('Sezení přejmenováno.'); })
+      .catch((e) => { setCustomTitle(s.id, v); setStatus(`Název uložen jen v aplikaci: ${e.message}`); })
+      .finally(loadSessions);
   };
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); finish(true); }
@@ -449,6 +502,7 @@ function newSession() {
   cancelContinue();
   S.sessionId = null;
   restoreDraft();
+  resetSessionUi();
   resetProgress();
   P.sessionPrompts = [];
   clearChat();
@@ -463,6 +517,9 @@ async function openSession(id) {
   cancelContinue();
   S.sessionId = id;
   restoreDraft();
+  resetSessionUi();
+  $('#foot-context').hidden = false;
+  $('#foot-context').textContent = 'Kontext';
   resetProgress();
   markCurrentSession();
   clearChat();
@@ -480,17 +537,15 @@ async function openSession(id) {
         continue;
       }
       tools = null;
-      if (it.role === 'user') append(userBubble(it.text));
+      if (it.role === 'user') attachUuid(append(userBubble(it.text)), it.uuid);
       else {
         const m = claudeBubble();
         append(m.node);
         setClaudeText(m, it.text, true);
-        for (const mk of Review.progressMarks(it.text).marks) Review.applyMark(PR.st, mk, null); // bez časů
       }
     }
     append(el('div', 'msg msg--note', 'Pokračujte další zprávou.'), true);
-    if (PR.st.steps.length) { PR.hidden = PR.st.done; if (!PR.st.done) PR.stopped = 'Rozpracovaný plán z dřívějška.'; }
-    renderProgress();
+    restoreProgress(id);
     setStatus('');
   } catch (e) {
     setStatus('');
@@ -959,7 +1014,7 @@ function rememberPrompt(text) {
   P.recent = [t, ...P.recent.filter((x) => x !== t)].slice(0, 20);
 }
 
-const MODE_LABELS = { auto: 'Auto', plan: 'Plán', default: 'Ručně' };
+const MODE_LABELS = { auto: 'Auto', plan: 'Plán', acceptEdits: 'Úpravy', default: 'Ručně' };
 const fold = (s) => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase(); // bez diakritiky a velikosti písmen
 
 function paletteActions() {
@@ -978,8 +1033,15 @@ function paletteActions() {
     { label: 'Přiložit soubory', run: () => $('#file-input').click() },
     { label: 'Změny v gitu', meta: 'komentáře k řádkům', run: () => openGit() },
     { label: 'Přehled sezení', meta: 'soubory, úkoly, agenti, MCP', run: () => openOverview() },
-    { label: progressOn() ? 'Vypnout sledování průběhu' : 'Zapnout sledování průběhu', meta: 'kroky, procenta, odhad času', run: () => setProgressOn(!progressOn()) },
-    ...(PR.st.steps.length ? [{ label: PR.hidden ? 'Ukázat průběh' : 'Skrýt průběh', run: () => { PR.hidden = !PR.hidden; renderProgress(); } }] : []),
+    { label: 'Režim Úpravy', meta: 'úpravy souborů bez ptaní, příkazy se ptají', run: () => setMode('acceptEdits') },
+    { label: 'Otázka bokem', meta: 'nezapíše se do sezení', run: () => openSide() },
+    ...(S.sessionId && !S.run ? [{ label: 'Pokračovat v kopii sezení', meta: 'původní zůstane beze změny', run: () => forkSession(S.sessionId) },
+      { label: 'Kontext sezení', meta: 'co zabírá místo', run: () => { renderContext(); $('#contextdlg').showModal(); loadContext(); } },
+      { label: 'Zhustit konverzaci', meta: '/compact – uvolní kontext', run: () => startRun('/compact', S.mode) },
+      { label: 'Exportovat konverzaci', meta: 'Markdown', run: () => exportSession() }] : []),
+    ...(S.interactivePermissions ? [{ label: chromeOn() ? 'Vypnout Claude in Chrome' : 'Zapnout Claude in Chrome', meta: 'ovládání prohlížeče, každá akce se schvaluje',
+      run: () => setChrome(!chromeOn()) }] : []),
+    ...(PR.tasks.length || BG.tasks.size ? [{ label: PR.hidden ? 'Ukázat průběh' : 'Skrýt průběh', run: () => { PR.hidden = !PR.hidden; renderProgress(); } }] : []),
     { label: 'Hledat v konverzaci', meta: 'Ctrl+F', run: () => openFind() },
     { label: 'Soubory projektu', meta: 'hledání a náhled', run: () => openFiles() },
     { label: 'Nastavení', run: () => openSettings() },
@@ -1009,8 +1071,13 @@ function buildPalette(q) {
   const match = (label) => !f || fold(label).includes(f);
   const score = (label) => (f && fold(label).startsWith(f) ? 0 : 1);
   const groups = [];
-  const cmds = commandEntries().map((c) => ({ kind: 'cmd', label: `/${c.name}`, meta: c.kind === 'skill' ? 'skill' : '', run: () => insertIntoPrompt(`/${c.name} `) }))
-    .filter((x) => match(x.label) || match(x.label.slice(1)));
+  const ci = commandInfo();
+  const cmds = commandEntries().map((c) => {
+    const [desc, hint] = ci.info[c.name] || ['', ''];
+    return { kind: 'cmd', label: `/${c.name}${hint ? ` ${hint}` : ''}`, meta: desc ? desc.slice(0, 70) : c.kind === 'skill' ? 'skill' : '', run: () => insertIntoPrompt(`/${c.name} `) };
+  }).filter((x) => match(x.label) || match(x.label.slice(1)) || match(x.meta));
+  const agents = ci.agents.map((a) => ({ kind: 'cmd', label: `Agent ${a.name}`, meta: (a.description || '').slice(0, 70),
+    run: () => insertIntoPrompt(`Použij agenta ${a.name}: `) })).filter((x) => match(x.label) || match(x.meta));
   const acts = paletteActions().map((a) => ({ kind: 'act', ...a })).filter((x) => match(x.label));
   const seen = new Set();
   const recent = [...P.recent, ...P.sessionPrompts.slice().reverse()].filter((t) => !seen.has(t) && seen.add(t)).slice(0, 30)
@@ -1019,7 +1086,7 @@ function buildPalette(q) {
   const sort = (a) => a.sort((x, y) => score(x.label) - score(y.label));
   // Lomítko na začátku = hledám příkaz.
   if (q.trim().startsWith('/')) groups.push(['Příkazy a skilly', sort(cmds)]);
-  else groups.push(['Akce', sort(acts)], ['Příkazy a skilly', sort(cmds)], ['Nedávné zprávy', recent]);
+  else groups.push(['Akce', sort(acts)], ['Příkazy a skilly', sort(cmds)], ['Agenti', sort(agents)], ['Nedávné zprávy', recent]);
   return groups.filter(([, items]) => items.length);
 }
 
@@ -1471,7 +1538,6 @@ async function openSettings() {
   renderFullscreenButton();
   renderThemeChoice();
   renderNotifyToggle();
-  $('#set-progress').checked = progressOn();
   $('#set-autocontinue').checked = autoOn();
   $('#set-drafts').checked = draftsOn();
   if (!d.open) d.showModal();
@@ -1602,7 +1668,6 @@ function setupSettings() {
   $('#set-theme').addEventListener('change', (e) => { if (window.acdTheme) window.acdTheme.set(e.target.value); });
   document.addEventListener('fullscreenchange', renderFullscreenButton);
   $('#set-notify').addEventListener('click', toggleNotify);
-  $('#set-progress').addEventListener('change', (e) => setProgressOn(e.target.checked));
   $('#set-autocontinue').addEventListener('change', (e) => { store(AUTO_KEY, e.target.checked ? '1' : '0'); if (!e.target.checked) cancelContinue(); });
   $('#set-drafts').addEventListener('change', (e) => {
     store(DRAFTS_ON_KEY, e.target.checked ? '1' : '0');
@@ -1808,11 +1873,20 @@ function fillToolResult(t, ev) {
     t.body.appendChild(el('div', 'eyebrow', 'Výsledek'));
     t.body.appendChild(el('pre', null, ev.content));
   }
+  for (const im of ev.images || []) {
+    if (!/^image\/(png|jpeg|gif|webp)$/.test(im.mediaType)) continue;
+    const img = el('img', 'tool-img');
+    img.src = `data:${im.mediaType};base64,${im.data}`;
+    img.alt = `Obrázek z nástroje ${t.name || ''}`.trim();
+    img.loading = 'lazy';
+    t.body.appendChild(img);
+    t.d.open = true;
+  }
   if (state === 'error' && !ev.denied) t.d.open = true;
 }
 
 /* ---------- Plán ---------- */
-function showPlanCard(markdown, title) {
+function showPlanCard(markdown, title, raw) {
   const box = el('div', 'plan');
   box.setAttribute('role', 'group'); // skupina, ne orientační bod – karet může být víc
   box.setAttribute('aria-label', title || 'Plán');
@@ -1824,7 +1898,9 @@ function showPlanCard(markdown, title) {
   }
   const actions = el('div', 'plan-actions');
   const approve = button('Schválit plán', 'btn-accent', () => approvePlan(approve));
-  actions.append(approve, el('span', 'hint', 'Spustí se v režimu Auto ve stejném sezení. Úpravy plánu napište jako další zprávu.'));
+  const review = button('Připomínkovat', 'btn-ghost', () => planComments(box, markdown || raw));
+  review.title = 'Napsat připomínky k jednotlivým řádkům plánu';
+  actions.append(approve, review, el('span', 'hint', 'Schválení spustí plán v režimu Auto ve stejném sezení.'));
   box.appendChild(actions);
   append(box, true);
   announce(`${title || 'Plán'} – tlačítko Schválit plán je pod ním.`);
@@ -1837,6 +1913,7 @@ const PERM_RESULT = {
 };
 
 function showPermissionCard(ev, run) {
+  if (ev.toolName === 'AskUserQuestion' && Array.isArray(ev.questions) && ev.questions.length) { showQuestionCard(ev, run); return; }
   const box = el('div', 'perm');
   box.dataset.requestId = ev.requestId;
   box.setAttribute('role', 'group');
@@ -1846,7 +1923,8 @@ function showPermissionCard(ev, run) {
   if (ev.description) box.appendChild(el('p', 'perm-desc', ev.description));
   const pv = ev.preview || {};
   const detail = pv.command || pv.path || pv.url || pv.json;
-  if (detail) box.appendChild(el('pre', null, detail));
+  if (ev.edit && Array.isArray(ev.edit.edits)) box.appendChild(diffView(ev.edit.edits, toolSummary('Edit', { file_path: ev.edit.file }, run.cwd)));
+  else if (detail) box.appendChild(el('pre', null, detail));
   if (ev.blockedPath && ev.blockedPath !== pv.path) box.appendChild(el('p', 'perm-desc', `Cesta: ${ev.blockedPath}`));
   const actions = el('div', 'perm-actions');
   const answer = async (decision, btn) => {
@@ -1911,6 +1989,7 @@ function approvePlan(btn) {
 function setMode(m) {
   S.mode = m;
   document.querySelectorAll('input[name="mode"]').forEach((i) => { i.checked = i.value === m; });
+  liveMode(m);
 }
 
 /* ---------- Běh ---------- */
@@ -2010,12 +2089,14 @@ async function startRun(prompt, mode, files = [], opts = { model: S.model, effor
   if (!auto) cancelContinue();
   hideBanner();
   S.lastPrompt = prompt;
-  append(userBubble(prompt, files), true);
+  const bubble = append(userBubble(prompt, files), true);
 
   const controller = new AbortController();
   const run = { runId: null, controller, mode, account: S.account, prompt, sawPlan: false, resultText: null,
     resultError: false, hadError: false, cwd: null, limitShown: false, outcome: null, sessionId: S.sessionId,
-    replays: 0, injectedBubbles: [], model: opts.model || '', effort: opts.effort || '', auto, progress: progressOn() };
+    replays: 0, injectedBubbles: [], model: opts.model || '', effort: opts.effort || '', auto, bubble,
+    fork: !!(S.forkNext && S.sessionId), chrome: chromeOn() };
+  if (S.forkNext) { S.forkNext = false; renderForkNote(); }
   S.run = run;
   PR.stopped = null;
   setRunning(true);
@@ -2027,7 +2108,7 @@ async function startRun(prompt, mode, files = [], opts = { model: S.model, effor
     const res = await api('/api/runs', {
       method: 'POST',
       signal: controller.signal,
-      body: { account: S.account, project: S.project, mode, prompt, resume: S.sessionId, attachments: files.map((f) => f.id), model: run.model, effort: run.effort, progress: run.progress },
+      body: { account: S.account, project: S.project, mode, prompt, resume: S.sessionId, attachments: files.map((f) => f.id), model: run.model, effort: run.effort, ...runFlags(run) },
     });
     if (!res.ok) {
       let msg = `HTTP ${res.status}`;
@@ -2253,7 +2334,7 @@ function updateSlash() {
     const f = fold(q);
     items = commandEntries().filter((c) => fold(c.name).includes(f))
       .sort((x, y) => (fold(x.name).startsWith(f) ? 0 : 1) - (fold(y.name).startsWith(f) ? 0 : 1)).slice(0, 50)
-      .map((c) => ({ ...c, label: `/${c.name}`, meta: c.kind === 'skill' ? 'skill' : '' }));
+      .map((c) => { const [d, h] = commandInfo().info[c.name] || ['', '']; return { ...c, label: `/${c.name}${h ? ` ${h}` : ''}`, meta: d ? d.slice(0, 60) : c.kind === 'skill' ? 'skill' : '' }; });
   } else {
     at = ta.selectionStart === ta.selectionEnd ? Review.atQuery(ta.value, ta.selectionStart) : null;
     if (!at) { closeSlash(); return; }
@@ -2461,6 +2542,18 @@ function renderQueue() {
       tool('↑', 'up', `Posunout zprávu ${idx + 1} výš`, () => { q.move(it.id, -1); renderQueue(); }, idx === 0),
       tool('↓', 'down', `Posunout zprávu ${idx + 1} níž`, () => { q.move(it.id, 1); renderQueue(); }, idx === q.length - 1),
       tool('✎', 'edit', `Upravit zprávu ${idx + 1}`, () => { S.queueEdit = it.id; renderQueue(); }),
+      tool('↩', 'back', `Vrátit zprávu ${idx + 1} do pole pro psaní`, () => {
+        const ta = $('#prompt');
+        ta.value = ta.value.trim() ? `${ta.value.replace(/\s+$/, '')}\n\n${it.prompt}` : it.prompt;
+        for (const f of it.attachments) if (!S.pending.some((x) => x.id === f.id)) S.pending.push({ ...f, status: 'ok' });
+        S.queueFocus = null;
+        q.remove(it.id);
+        renderQueue();
+        renderAttachments();
+        ta.focus();
+        saveDraft();
+        announce('Zpráva vrácena do pole pro psaní.');
+      }),
       tool('✕', 'remove', `Odebrat zprávu ${idx + 1}`, () => {
         // Po smazání zůstat na sousední zprávě (další, jinak předchozí).
         const neighbour = q.items[idx + 1] ?? q.items[idx - 1];
@@ -2510,7 +2603,6 @@ function handleEvent(ev, run, state) {
     case 'run':
       run.runId = ev.runId;
       run.warm = ev.warm === true; // navázáno na čekající proces claude (bez startu)
-      run.progress = ev.progress === true;
       break;
     case 'init':
       S.sessionId = ev.sessionId;
@@ -2533,8 +2625,25 @@ function handleEvent(ev, run, state) {
       setStatus('Claude píše…', true);
       break;
     }
+    case 'commands':
+      rememberCommandInfo(ev);
+      break;
+    case 'task':
+      taskEvent(ev, run);
+      break;
+    case 'bg_tasks': {
+      // Aktuální seznam úloh na pozadí: co v něm není a „běží“, už skončilo.
+      const live = new Set((ev.tasks || []).map((t) => t.taskId));
+      for (const [id, t] of BG.tasks) if (t.status === 'running' && !live.has(id)) { t.status = 'completed'; t.end = Date.now(); }
+      renderBackground();
+      renderProgress();
+      break;
+    }
+    case 'title':
+      setTimeout(loadSessions, 300);
+      break;
     case 'text': {
-      if (ev.parent) break;
+      if (ev.parent) { agentEvent(ev); break; }
       // Najdi první nefinalizovaný blok této zprávy, jinak vytvoř nový.
       let target = null;
       for (const [key, b] of state.msgBlocks) {
@@ -2552,22 +2661,35 @@ function handleEvent(ev, run, state) {
       state.finalized.add(key);
       b.raw = ev.text || '';
       setClaudeText(b, b.raw, true);
-      progressFromText(b.raw, Date.now());
       scrollDown();
       break;
     }
     case 'tool_start': {
+      if (ev.parent && agentEvent(ev)) break;
+      if (TASK_TOOLS.has(ev.name)) break;
+      if (!ev.parent && AGENT_TOOLS.has(ev.name)) { agentCard(ev.id); setStatus('Claude spouští agenta…', true); break; }
       const t = toolCard(ev.id, ev.name, ev.parent);
       t.nm.textContent = ev.name;
       setStatus(`Nástroj ${ev.name}…`, true);
       break;
     }
     case 'tool_use': {
+      if (ev.parent && agentEvent(ev)) break;
+      if (!ev.parent && TASK_TOOLS.has(ev.name)) { progressToolUse(ev.name, ev.id, ev.input); break; }
+      if (!ev.parent && AGENT_TOOLS.has(ev.name)) {
+        const a = agentCard(ev.id, ev.input);
+        const desc = (ev.input && ev.input.description) || '';
+        a.t.nm.textContent = desc ? `Agent · ${desc}` : 'Agent';
+        a.t.sm.textContent = '';
+        break;
+      }
       const t = toolCard(ev.id, ev.name, ev.parent);
       fillToolInput(t, ev.name, ev.input, run.cwd);
       break;
     }
     case 'tool_result': {
+      if (ev.parent && agentEvent(ev)) break;
+      if (progressToolResult(ev.id, ev.content, ev.isError)) break;
       const t = tools.get(ev.id);
       if (t) { fillToolResult(t, ev); tools.delete(ev.id); } // výsledek přijde jen jednou
       setStatus('Claude pracuje…', true);
@@ -2586,9 +2708,10 @@ function handleEvent(ev, run, state) {
     case 'user_replay':
       // První potvrzení je úvodní prompt; další = zprávy poslané do běžícího tahu, v pořadí odeslání.
       run.replays++;
+      if (run.replays === 1) attachUuid(run.bubble, ev.uuid);
       if (run.replays > 1) {
         const st = run.injectedBubbles.shift();
-        if (st) st.textContent = 'Claude si zprávu přečetl';
+        if (st) { st.textContent = 'Claude si zprávu přečetl'; attachUuid(st.closest('.msg'), ev.uuid); }
       }
       break;
     case 'retry':
@@ -2600,14 +2723,14 @@ function handleEvent(ev, run, state) {
       break;
     case 'result': {
       run.resultText = ev.result;
-      run.resultError = !!ev.isError;
+      run.resultError = !!ev.isError && !ev.interrupted;
       if (ev.sessionId) { S.sessionId = ev.sessionId; S.queue.bindSession(run, ev.sessionId); markCurrentSession(); }
       if (typeof ev.costUsd === 'number') S.totalCost += ev.costUsd;
       addRunStats(ev, run);
       if ($('#overviewdlg').open) loadOverview();
       const looksLikeLimit = ev.isError && (ev.apiErrorStatus === 429 || /limit|rate.?limit|usage/i.test(ev.result || ''));
       if (looksLikeLimit && !run.limitShown) { run.limitShown = true; showLimit(run.account, null, ev.result); }
-      else if (ev.isError && !run.limitShown) showError(`Claude skončil s chybou (${ev.subtype || 'error'})`, ev.result || '');
+      else if (ev.isError && !run.limitShown && !ev.interrupted) showError(`Claude skončil s chybou (${ev.subtype || 'error'})`, ev.result || '');
       if (ev.denials && ev.denials.length) {
         const names = [...new Set(ev.denials.map((d) => d.toolName))].join(', ');
         append(el('div', 'msg msg--note', `Zamítnuto ${ev.denials.length}× (${names}) – ${run.mode === 'plan' ? 'režim Plán nic nemění' : 'oprávnění'}.`));
@@ -2632,11 +2755,12 @@ function handleEvent(ev, run, state) {
       if (ev.stopped) { append(el('div', 'msg msg--note', 'Zastaveno.')); setStatus('Zastaveno.'); }
       else if (ev.code !== 0 && ev.stderr && !run.limitShown) showError(`claude skončil kódem ${ev.code}`, ev.stderr);
       else setStatus('Hotovo.');
-      if (PR.st.steps.length && !PR.st.done)
-        PR.stopped = ev.stopped ? 'Zastaveno.' : run.limitShown ? 'Přerušeno limitem účtu.' : 'Claude skončil před koncem plánu – pokračujte další zprávou.';
+      if (PR.tasks.length && !PR.tasks.every((t) => t.status === 'completed'))
+        PR.stopped = ev.stopped ? 'Zastaveno.' : run.limitShown ? 'Přerušeno limitem účtu.' : 'Claude skončil před koncem seznamu – pokračujte další zprávou.';
       renderProgress();
       // Plan bez souboru plánu → plán je text odpovědi.
-      if (run.mode === 'plan' && !run.sawPlan && !ev.stopped && !run.resultError && run.resultText) showPlanCard(null, 'Plán je výše – schválit?');
+      if (run.mode === 'plan' && !run.sawPlan && !ev.stopped && !run.resultError && run.resultText) showPlanCard(null, 'Plán je výše – schválit?', run.resultText);
+      if (ev.kept) setTimeout(loadContext, 300);
       break;
     case 'error':
       run.hadError = true;
@@ -2658,82 +2782,112 @@ async function stop() {
 const load = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
 const store = (k, v) => { try { localStorage.setItem(k, v); } catch { /* nevadí */ } };
 
-/* ---------- Průběh práce (volitelné): Claude píše [[plan: …]] a [[step: N]], vpravo kroky, procenta, odhad ---------- */
-const PROGRESS_KEY = 'acd.progress';
-const progressOn = () => load(PROGRESS_KEY) === '1';
-const PR = { st: Review.newProgress(), hidden: false, timer: null, stopped: null, said: '' };
+/* ---------- Průběh práce: seznam úkolů Claude Code (TaskCreate/TaskUpdate, jako Ctrl+T v terminálu) ---------- */
+// Claude si u větších úkolů sám vede seznam kroků; aplikace z něj ukazuje vpravo kroky, procenta a odhad času.
+const PR = { tasks: [], pending: new Map(), hidden: false, timer: null, stopped: null, said: '' };
+const TASK_TOOLS = new Set(['TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet']); // v chatu jako karty nástrojů nic neříkají
 
-function setProgressOn(on) {
-  store(PROGRESS_KEY, on ? '1' : '0');
-  $('#progress-toggle').checked = on;
-  $('#set-progress').checked = on;
-  renderRunOpts();
-  announce(on ? 'Sledování průběhu zapnuto – platí od další zprávy.' : 'Sledování průběhu vypnuto.');
-}
 function resetProgress() {
-  PR.st = Review.newProgress();
+  PR.tasks = [];
+  PR.pending.clear();
   PR.hidden = false;
   PR.stopped = null;
   renderProgress();
 }
-function progressFromText(text, now) {
-  const { marks } = Review.progressMarks(text);
-  if (!marks.length) return;
-  for (const m of marks) {
-    if (m.type === 'plan' && PR.st.done) { PR.st = Review.newProgress(); PR.hidden = false; } // nový úkol po dokončeném
-    Review.applyMark(PR.st, m, now);
+/** tool_use TaskCreate / TaskUpdate (hlavní Claude, ne agenti). */
+function progressToolUse(name, id, input) {
+  const i = input && typeof input === 'object' ? input : {};
+  if (name === 'TaskCreate') {
+    // Nový seznam, když je předchozí celý hotový.
+    if (PR.tasks.length && PR.tasks.every((t) => t.status === 'completed')) { PR.tasks = []; PR.hidden = false; }
+    PR.pending.set(id, String(i.subject || i.description || 'Krok').slice(0, 200));
+  } else if (name === 'TaskUpdate') {
+    const t = PR.tasks.find((x) => x.id === String(i.taskId));
+    if (!t) return;
+    const now = Date.now();
+    if (i.status === 'deleted') PR.tasks = PR.tasks.filter((x) => x !== t);
+    else if (i.status === 'in_progress') { t.status = 'in_progress'; t.start ??= now; }
+    else if (i.status === 'completed') { t.status = 'completed'; t.start ??= now; t.end = now; }
+    else if (i.status === 'pending') t.status = 'pending';
+    if (typeof i.subject === 'string' && i.subject) t.text = i.subject.slice(0, 200);
+    PR.stopped = null;
+    renderProgress();
   }
-  PR.stopped = null;
-  renderProgress();
+}
+/** tool_result TaskCreate: „Task #3 created successfully: …“ → id úkolu. */
+function progressToolResult(id, content, isError) {
+  if (!PR.pending.has(id)) return false;
+  const text = PR.pending.get(id);
+  PR.pending.delete(id);
+  const m = /#(\d+)/.exec(String(content || ''));
+  if (m && !isError && !PR.tasks.some((t) => t.id === m[1])) { PR.tasks.push({ id: m[1], text, status: 'pending' }); PR.stopped = null; renderProgress(); }
+  return true;
 }
 const fmtDur = (ms) => (ms < 60_000 ? `${Math.max(1, Math.round(ms / 1000))} s` : `${Math.round(ms / 60_000)} min`);
 
 function renderProgress() {
-  const st = PR.st, panel = $('#progress'), foot = $('#foot-progress');
-  const info = Review.progressInfo(st, Date.now());
+  const panel = $('#progress'), foot = $('#foot-progress');
+  const info = Review.taskProgress(PR.tasks, Date.now());
   const has = info.total > 0;
-  panel.hidden = !has || PR.hidden;
+  $('#progress-main').hidden = !has;
+  const bgCount = BG.tasks.size;
+  panel.hidden = (!has && !bgCount) || PR.hidden;
   $('.layout').classList.toggle('has-progress', !panel.hidden);
-  foot.hidden = !has;
-  const running = !!S.run && !st.done && !PR.stopped;
-  if (running && !PR.timer) PR.timer = setInterval(renderProgress, 5000);
-  if (!running && PR.timer) { clearInterval(PR.timer); PR.timer = null; }
-  if (!has) return;
-  const label = st.done ? 'hotovo' : info.cur ? `krok ${info.cur} z ${info.total}` : `${info.total} ${plural(info.total, 'krok', 'kroky', 'kroků')}`;
-  foot.textContent = `Průběh: ${label} · ${info.percent} %`;
+  foot.hidden = !has && !bgCount;
+  const running = !!S.run && !info.done && !PR.stopped;
+  const tick = (running && has) || bgCount > 0;
+  if (tick && !PR.timer) PR.timer = setInterval(() => { renderProgress(); renderBackground(); }, 5000);
+  if (!tick && PR.timer) { clearInterval(PR.timer); PR.timer = null; }
+  const label = !has ? '' : info.done ? 'hotovo' : info.current >= 0 ? `krok ${info.current + 1} z ${info.total}` : `${info.completed} z ${info.total}`;
+  foot.textContent = has ? `Průběh: ${label} · ${info.percent} %${bgCount ? ` · na pozadí ${bgCount}` : ''}` : `Na pozadí: ${bgCount}`;
   foot.setAttribute('aria-expanded', String(!panel.hidden));
   foot.title = panel.hidden ? 'Ukázat průběh' : 'Skrýt průběh';
+  if (!has) return;
   $('#progress-pct').textContent = `${info.percent} %`;
-  $('#progress-eta').textContent = st.done ? `hotovo${st.endAt && st.times[1] ? ` za ${fmtDur(st.endAt - st.times[1])}` : ''}`
-    : !running ? '' : info.etaMs != null ? `zbývá ${Review.fmtEta(info.etaMs)}` : info.cur ? 'odhad po prvním kroku' : '';
+  const first = PR.tasks.find((t) => t.start)?.start;
+  const last = Math.max(0, ...PR.tasks.map((t) => t.end || 0));
+  $('#progress-eta').textContent = info.done ? `hotovo${first && last ? ` za ${fmtDur(last - first)}` : ''}`
+    : !running ? '' : info.etaMs != null ? `zbývá ${Review.fmtEta(info.etaMs)}` : 'odhad po prvním kroku';
   const bar = $('#progress-bar');
   bar.setAttribute('aria-valuenow', String(info.percent));
   bar.setAttribute('aria-valuetext', `${label}, ${info.percent} %`);
   bar.firstElementChild.style.width = `${info.percent}%`;
   const ol = $('#progress-steps');
   ol.textContent = '';
-  st.steps.forEach((text, i) => {
+  PR.tasks.forEach((t, i) => {
     const n = i + 1;
-    const state = st.done || n < info.cur ? 'done' : n === info.cur ? 'current' : 'todo';
+    const state = t.status === 'completed' ? 'done' : t.status === 'in_progress' ? 'current' : 'todo';
     const li = el('li');
     li.dataset.state = state;
     if (state === 'current') li.setAttribute('aria-current', 'step');
     const num = el('span', 'progress-num', state === 'done' ? '✓' : String(n));
     num.setAttribute('aria-hidden', 'true');
     li.append(num, el('span', 'sr-only', state === 'done' ? `${n}, hotovo: ` : state === 'current' ? `${n}, právě teď: ` : `${n}: `),
-      el('span', 'progress-text', text));
-    const end = st.times[n + 1] ?? (st.done && n === info.total ? st.endAt : null);
-    if (st.times[n] != null && end) li.appendChild(el('span', 'progress-time', fmtDur(end - st.times[n])));
+      el('span', 'progress-text', t.text));
+    if (t.start && t.end) li.appendChild(el('span', 'progress-time', fmtDur(t.end - t.start)));
+    else if (t.start && state === 'current' && running) li.appendChild(el('span', 'progress-time', fmtDur(Date.now() - t.start)));
     ol.appendChild(li);
   });
-  $('#progress-note').textContent = st.done ? '' : PR.stopped || '';
-  const say = st.done ? 'Průběh: hotovo.' : info.cur ? `Krok ${info.cur} z ${info.total}: ${st.steps[info.cur - 1]}` : '';
+  $('#progress-note').textContent = info.done ? '' : PR.stopped || '';
+  const cur = info.current >= 0 ? PR.tasks[info.current] : null;
+  const say = info.done ? 'Průběh: hotovo.' : cur ? `Krok ${info.current + 1} z ${info.total}: ${cur.text}` : '';
   if (say && say !== PR.said) { PR.said = say; $('#progress-status').textContent = say; }
 }
 
+/** Seznam úkolů otevřeného sezení z přepisu (bez časů) – rozpracovaný se ukáže, hotový zůstane skrytý. */
+async function restoreProgress(id) {
+  try {
+    const o = await apiJson(`/api/sessions/${encodeURIComponent(id)}/overview?account=${encodeURIComponent(S.account)}&project=${encodeURIComponent(S.project)}`);
+    if (S.sessionId !== id || S.run || !Array.isArray(o.todos) || !o.todos.length) return;
+    PR.tasks = o.todos.map((t, i) => ({ id: `h${i}`, text: t.content, status: t.status }));
+    const done = PR.tasks.every((t) => t.status === 'completed');
+    PR.hidden = done;
+    PR.stopped = done ? null : 'Rozpracovaný seznam z dřívějška.';
+    renderProgress();
+  } catch { /* přehled nejde načíst – nevadí */ }
+}
+
 function setupProgress() {
-  $('#progress-toggle').checked = progressOn();
-  $('#progress-toggle').addEventListener('change', (e) => setProgressOn(e.target.checked));
   $('#progress-hide').addEventListener('click', () => { PR.hidden = true; renderProgress(); $('#foot-progress').focus(); });
   $('#foot-progress').addEventListener('click', () => { PR.hidden = !PR.hidden; renderProgress(); });
 }
@@ -2822,6 +2976,483 @@ function tickContinue() {
   notify('Pokračuji po obnovení limitu', CONTINUE_PROMPT, 'ok');
   announce('Limit účtu se obnovil – pokračuji.');
   startRun(CONTINUE_PROMPT, c.mode, [], { model: c.model, effort: c.effort }, { auto: true });
+}
+
+/* ---------- Volby běhu: kopie sezení, otázka bokem, Claude in Chrome ---------- */
+const CHROME_KEY = 'acd.chrome';
+const chromeOn = () => S.interactivePermissions && load(CHROME_KEY) === '1';
+/** Příznaky pro POST /api/runs podle běhu. */
+function runFlags(run) {
+  const f = {};
+  if (run.fork) f.fork = true;
+  if (run.side) f.side = true;
+  if (run.chrome) f.chrome = true;
+  return f;
+}
+function renderForkNote() {
+  const n = $('#fork-note');
+  n.hidden = !S.forkNext;
+  if (S.forkNext) $('#fork-note-text').textContent = 'Další zpráva pokračuje v kopii tohoto sezení – původní zůstane beze změny.';
+}
+function forkSession(id) {
+  if (S.run) return;
+  const go = () => { S.forkNext = true; renderForkNote(); $('#prompt').focus(); announce('Další zpráva vytvoří kopii sezení.'); };
+  if (id && id !== S.sessionId) openSession(id).then(go); else if (S.sessionId) go();
+}
+
+/* ---------- Agenti (subagenti) a práce na pozadí ---------- */
+// Karta agenta: popis úkolu, typ, stav, nástroje a tokeny; po rozbalení živý záznam, co agent dělá (jen sledovat).
+const AG = new Map(); // tool_use id nástroje Agent/Task → {card, log, meta, info}
+const BG = { tasks: new Map() }; // taskId → {description, type, start, status, toolUseId}
+const AGENT_TOOLS = new Set(['Agent', 'Task']);
+
+function agentCard(id, input) {
+  let a = AG.get(id);
+  if (a) {
+    if (input && input.prompt && !a.t.body.querySelector('.agent-prompt')) {
+      if (input.subagent_type) { a.info.type = input.subagent_type; renderAgentMeta(a); }
+      const p = el('details', 'agent-prompt');
+      p.appendChild(el('summary', null, 'Zadání agenta'));
+      p.appendChild(el('pre', null, String(input.prompt).slice(0, 4000)));
+      a.t.body.insertBefore(p, a.log);
+    }
+    return a;
+  }
+  const t = toolCard(id, 'Agent');
+  t.d.classList.add('agent');
+  const meta = el('span', 'agent-meta');
+  t.d.querySelector('summary').insertBefore(meta, t.badge);
+  const log = el('ol', 'agent-log');
+  log.setAttribute('aria-label', 'Co agent dělá');
+  t.body.textContent = '';
+  if (input && input.prompt) {
+    const p = el('details', 'agent-prompt');
+    p.appendChild(el('summary', null, 'Zadání agenta'));
+    p.appendChild(el('pre', null, String(input.prompt).slice(0, 4000)));
+    t.body.appendChild(p);
+  }
+  t.body.appendChild(log);
+  a = { t, log, meta, info: { tools: 0, tokens: 0, ms: 0, type: (input && input.subagent_type) || '', start: Date.now() }, lines: new Map() };
+  AG.set(id, a);
+  renderAgentMeta(a);
+  return a;
+}
+function renderAgentMeta(a) {
+  const i = a.info;
+  const parts = [i.type, i.tools ? `${i.tools} ${plural(i.tools, 'nástroj', 'nástroje', 'nástrojů')}` : '',
+    i.tokens ? `${fmtTok(i.tokens)} tokenů` : '', i.ms ? fmtDur(i.ms) : '', i.background ? 'na pozadí' : ''].filter(Boolean);
+  a.meta.textContent = parts.join(' · ');
+}
+/** Událost z agenta (parent = id nástroje Agent). @returns {boolean} true = zpracováno v kartě agenta */
+function agentEvent(ev) {
+  const a = AG.get(ev.parent);
+  if (!a) return false;
+  if (ev.type === 'tool_start' || ev.type === 'tool_use') {
+    let li = a.lines.get(ev.id);
+    if (!li) {
+      li = el('li', 'agent-step');
+      li.dataset.state = 'running';
+      a.log.appendChild(li);
+      a.lines.set(ev.id, li);
+      a.info.tools++;
+      renderAgentMeta(a);
+    }
+    if (ev.type === 'tool_use') {
+      li.textContent = '';
+      li.append(el('span', 'agent-tool', ev.name), document.createTextNode(` ${toolSummary(ev.name, ev.input, S.run && S.run.cwd)}`));
+    } else if (!li.textContent) li.appendChild(el('span', 'agent-tool', ev.name));
+    a.t.sm.textContent = `${ev.name} ${ev.type === 'tool_use' ? toolSummary(ev.name, ev.input, S.run && S.run.cwd) : ''}`.trim();
+  } else if (ev.type === 'tool_result') {
+    const li = a.lines.get(ev.id);
+    if (li) li.dataset.state = ev.denied ? 'denied' : ev.isError ? 'error' : 'ok';
+  } else if (ev.type === 'text' && ev.text) {
+    const li = el('li', 'agent-text');
+    renderMd(li, ev.text.length > 3000 ? `${ev.text.slice(0, 3000)}…` : ev.text, false);
+    a.log.appendChild(li);
+  }
+  return true;
+}
+/** Události úloh (agent nebo příkaz na pozadí): začal / průběh / změna stavu / hotovo. */
+function taskEvent(ev, run) {
+  const a = ev.toolUseId ? AG.get(ev.toolUseId) : null;
+  if (a) {
+    if (ev.subagentType) a.info.type = ev.subagentType;
+    if (ev.tokens) a.info.tokens = ev.tokens;
+    if (ev.ms) a.info.ms = ev.ms;
+    if (ev.background) a.info.background = true;
+    if (ev.lastTool && ev.phase === 'progress' && !a.lines.size) a.t.sm.textContent = ev.description || ev.lastTool;
+    if (ev.phase === 'notification' || (ev.phase === 'updated' && ev.status && ev.status !== 'running')) {
+      a.t.d.dataset.state = ev.status === 'completed' ? 'ok' : 'error';
+      a.t.badge.textContent = ev.status === 'completed' ? 'hotovo' : ev.status === 'stopped' || ev.status === 'killed' ? 'zastaveno' : 'chyba';
+    }
+    renderAgentMeta(a);
+  }
+  // Panel „Na pozadí“: jen to, co Claude pustil na pozadí (příkazy i agenti).
+  if (ev.phase === 'started' && ev.background) {
+    BG.tasks.set(ev.taskId, { description: ev.description || ev.taskId, type: ev.taskType, start: Date.now(), status: 'running', runId: run.runId });
+    if (a) { a.t.badge.textContent = 'na pozadí'; }
+  } else if (BG.tasks.has(ev.taskId) && (ev.phase === 'notification' || (ev.phase === 'updated' && ev.status && ev.status !== 'running'))) {
+    const t = BG.tasks.get(ev.taskId);
+    t.status = ev.status || 'completed';
+    t.end = Date.now();
+    if (ev.summary) t.summary = ev.summary;
+    setTimeout(() => { BG.tasks.delete(ev.taskId); renderBackground(); renderProgress(); }, 60_000); // hotové chvíli zůstanou
+  }
+  renderBackground();
+  renderProgress();
+}
+function renderBackground() {
+  const sec = $('#bg-section'), ul = $('#bg-list');
+  sec.hidden = !BG.tasks.size;
+  ul.textContent = '';
+  for (const [id, t] of BG.tasks) {
+    const li = el('li', 'bg-item');
+    li.dataset.state = t.status;
+    const main = el('span', 'bg-main');
+    main.append(el('span', 'bg-desc', t.description),
+      el('span', 'bg-meta', `${t.type === 'local_agent' ? 'agent' : 'příkaz'} · ${t.status === 'running' ? `běží ${fmtDur(Date.now() - t.start)}`
+        : t.status === 'completed' ? 'hotovo' : 'zastaveno'}`));
+    li.appendChild(main);
+    if (t.status === 'running' && S.run && S.run.runId === t.runId) {
+      const stopBtn = button('Zastavit', 'btn-ghost btn-small', async () => {
+        stopBtn.disabled = true;
+        try { await apiJson(`/api/runs/${t.runId}/task-stop`, { method: 'POST', body: { taskId: id } }); announce(`Zastavuji: ${t.description}`); }
+        catch (e) { stopBtn.disabled = false; showError('Úlohu nejde zastavit', e.message); }
+      });
+      stopBtn.setAttribute('aria-label', `Zastavit ${t.description}`);
+      li.appendChild(stopBtn);
+    }
+    ul.appendChild(li);
+  }
+}
+
+/* ---------- Příkazy s popisy a agenti (z initialize) ---------- */
+const CMDINFO_KEY = (acc, proj) => `acd.cmdinfo.${acc}.${proj}`;
+function rememberCommandInfo(ev) {
+  const info = {};
+  for (const c of ev.commands || []) info[c.name] = [c.description || '', c.argumentHint || ''];
+  store(CMDINFO_KEY(S.account, S.project), JSON.stringify({ info, agents: (ev.agents || []).slice(0, 100) }));
+}
+function commandInfo() {
+  try { const v = JSON.parse(load(CMDINFO_KEY(S.account, S.project)) || '{}'); return { info: v.info || {}, agents: Array.isArray(v.agents) ? v.agents : [] }; }
+  catch { return { info: {}, agents: [] }; }
+}
+
+/* ---------- Otázka od Clauda (AskUserQuestion) ---------- */
+function showQuestionCard(ev, run) {
+  const box = el('div', 'perm question');
+  box.dataset.requestId = ev.requestId;
+  box.setAttribute('role', 'group');
+  box.setAttribute('aria-label', 'Claude se ptá');
+  box.appendChild(el('div', 'eyebrow', 'Claude se ptá'));
+  const groups = [];
+  ev.questions.forEach((q, qi) => {
+    const fs = el('fieldset', 'question-set');
+    fs.appendChild(el('legend', 'perm-title', q.question));
+    const name = `q-${ev.requestId}-${qi}`;
+    const inputs = [];
+    for (const o of q.options) {
+      const lab = el('label', 'question-opt');
+      const inp = el('input');
+      inp.type = q.multiSelect ? 'checkbox' : 'radio';
+      inp.name = name;
+      inp.value = o.label;
+      lab.append(inp, el('span', 'question-label', o.label));
+      if (o.description) lab.appendChild(el('span', 'question-desc', o.description));
+      fs.appendChild(lab);
+      inputs.push(inp);
+    }
+    const other = el('input', 'question-other');
+    other.type = 'text';
+    other.maxLength = 2000;
+    other.placeholder = 'Jiná odpověď (napište vlastní)';
+    other.setAttribute('aria-label', `Jiná odpověď na: ${q.question}`);
+    fs.appendChild(other);
+    box.appendChild(fs);
+    groups.push({ q, inputs, other });
+  });
+  const msg = el('p', 'perm-result');
+  const actions = el('div', 'perm-actions');
+  const send = async (decision) => {
+    let answers;
+    if (decision === 'answer') {
+      answers = {};
+      for (const g of groups) {
+        const picked = g.inputs.filter((i) => i.checked).map((i) => i.value);
+        const own = g.other.value.trim();
+        const val = own || picked.join(', ');
+        if (!val) { msg.textContent = 'Vyberte odpověď u každé otázky, nebo napište vlastní.'; (g.inputs[0] || g.other).focus(); return; }
+        answers[g.q.question] = val;
+      }
+    }
+    for (const b of actions.querySelectorAll('button')) b.disabled = true;
+    try {
+      await apiJson(`/api/runs/${encodeURIComponent(run.runId)}/permission`, { method: 'POST', body: { requestId: ev.requestId, decision, answers } });
+      box.dataset.state = 'resolved';
+      msg.textContent = decision === 'answer' ? `Odpověď: ${Object.values(answers).join(' / ')}` : 'Bez odpovědi – Claude pokračuje sám.';
+      $('#prompt').focus({ preventScroll: true });
+    } catch (e) { for (const b of actions.querySelectorAll('button')) b.disabled = false; msg.textContent = e.message; }
+  };
+  const ok = button('Odpovědět', 'btn-accent btn-small', () => send('answer'));
+  actions.append(ok, button('Neodpovídat', 'btn-ghost btn-small', () => send('deny')));
+  box.append(actions, msg);
+  append(box, true);
+  run.pendingPermissions = (run.pendingPermissions || 0) + 1;
+  setStatus('Claude čeká na vaši odpověď…', true);
+  if (!isTyping()) (groups[0].inputs[0] || groups[0].other).focus({ preventScroll: true });
+  announce(`Claude se ptá: ${ev.questions.map((q) => q.question).join(' ')}`);
+  notify('Claude se ptá', ev.questions[0].question, 'plan');
+}
+
+/* ---------- Návrat souborů k dřívější zprávě (jako Esc Esc / /rewind) ---------- */
+function attachUuid(bubble, uuid) {
+  if (!bubble || !uuid || bubble.dataset.uuid) return;
+  bubble.dataset.uuid = uuid;
+  const b = el('button', 'msg-rewind', '↶');
+  b.type = 'button';
+  b.title = 'Vrátit soubory projektu do stavu před touto zprávou';
+  b.setAttribute('aria-label', 'Vrátit soubory do stavu před touto zprávou');
+  b.addEventListener('click', () => rewindTo(uuid, b));
+  bubble.appendChild(b);
+}
+async function rewindTo(uuid, btn) {
+  if (S.run) { showBanner('warn', [document.createTextNode('Soubory jde vrátit, až Claude doběhne.')], []); return; }
+  if (!S.sessionId) return;
+  const url = `/api/sessions/${encodeURIComponent(S.sessionId)}/rewind?account=${encodeURIComponent(S.account)}&project=${encodeURIComponent(S.project)}`;
+  btn.disabled = true;
+  setStatus('Zjišťuji, co se změní…', true);
+  let r;
+  try { r = await apiJson(url, { method: 'POST', body: { messageId: uuid, dryRun: true } }); }
+  catch (e) { setStatus(''); btn.disabled = false; showError('Návrat nejde zjistit', e.message); return; }
+  setStatus('');
+  btn.disabled = false;
+  if (!r.canRewind || !r.files.length) {
+    showBanner('warn', [document.createTextNode(r.error && !/checkpoint/i.test(r.error) ? r.error
+      : 'K této zprávě není co vracet – od ní se nezměnil žádný soubor (nebo změny udělal příkaz v terminálu, ty se nevracejí).')], []);
+    return;
+  }
+  const list = r.files.slice(0, 20).join('\n') + (r.files.length > 20 ? `\n… a dalších ${r.files.length - 20}` : '');
+  if (!confirm(`Vrátit ${r.files.length} ${plural(r.files.length, 'soubor', 'soubory', 'souborů')} do stavu před touto zprávou?\n\n${list}\n\n`
+    + 'Změny od té doby (i vaše vlastní v těchto souborech) se ztratí. Konverzace zůstane, jak je.')) return;
+  try {
+    const d = await apiJson(url, { method: 'POST', body: { messageId: uuid, dryRun: false } });
+    append(el('div', 'msg msg--note', `Soubory vráceny do stavu před vybranou zprávou (${d.files.length || r.files.length} ${plural(r.files.length, 'soubor', 'soubory', 'souborů')}).`), true);
+    announce('Soubory vráceny.');
+    loadGit();
+  } catch (e) { showError('Návrat se nepovedl', e.message); }
+}
+
+/* ---------- Kontext (jako /context) a zhuštění (/compact) ---------- */
+const CTX = { data: null, seq: 0 };
+async function loadContext() {
+  const b = $('#foot-context');
+  if (!S.sessionId) { b.hidden = true; return; }
+  const seq = ++CTX.seq;
+  const id = S.sessionId;
+  try {
+    const c = await apiJson(`/api/sessions/${encodeURIComponent(id)}/context?account=${encodeURIComponent(S.account)}&project=${encodeURIComponent(S.project)}`);
+    if (seq !== CTX.seq || id !== S.sessionId) return;
+    CTX.data = c;
+    b.hidden = false;
+    const pct = Math.round(c.percentage);
+    b.textContent = `Kontext ${pct} %`;
+    b.dataset.level = c.autoCompactThreshold && c.totalTokens >= c.autoCompactThreshold * 0.85 ? 'warn' : pct >= 70 ? 'warn' : 'ok';
+    if ($('#contextdlg').open) renderContext();
+  } catch { if (seq === CTX.seq) b.hidden = true; }
+}
+function renderContext() {
+  const c = CTX.data, body = $('#context-body');
+  body.textContent = '';
+  if (!c) { body.appendChild(el('p', 'stats-empty', 'Zatím bez údajů.')); return; }
+  body.appendChild(el('p', 'context-sum', `${fmtTok(c.totalTokens)} z ${fmtTok(c.maxTokens)} tokenů (${Math.round(c.percentage)} %)`
+    + (c.model ? ` · ${c.model.replace(/^claude-/, '')}` : '')));
+  const bar = el('span', 'meter-bar');
+  bar.setAttribute('role', 'meter'); bar.setAttribute('aria-valuemin', '0'); bar.setAttribute('aria-valuemax', '100');
+  bar.setAttribute('aria-valuenow', String(Math.round(c.percentage))); bar.setAttribute('aria-label', 'Zaplnění kontextu');
+  const fill = el('i'); fill.style.width = `${Math.min(100, c.percentage)}%`; bar.appendChild(fill);
+  body.appendChild(bar);
+  if (c.autoCompact && c.autoCompactThreshold)
+    body.appendChild(el('p', 'stats-empty', `Claude Code konverzaci automaticky zhustí kolem ${fmtTok(c.autoCompactThreshold)} tokenů.`));
+  const t = el('table', 'stats-table');
+  t.appendChild(el('caption', null, 'Co zabírá místo'));
+  const tb = el('tbody');
+  for (const x of c.categories.filter((x) => x.tokens > 0)) {
+    const tr = el('tr');
+    const th = el('th', null, x.name + (x.deferred ? ' (načte se až při použití)' : '')); th.scope = 'row';
+    tr.append(th, el('td', null, fmtNum(x.tokens)));
+    tb.appendChild(tr);
+  }
+  t.appendChild(tb);
+  body.appendChild(t);
+}
+function setupContext() {
+  $('#foot-context').addEventListener('click', () => { renderContext(); $('#contextdlg').showModal(); loadContext(); });
+  $('#context-close').addEventListener('click', () => $('#contextdlg').close());
+  $('#contextdlg').addEventListener('click', (e) => { if (e.target === e.currentTarget) e.currentTarget.close(); });
+  $('#context-compact').addEventListener('click', () => {
+    $('#contextdlg').close();
+    if (S.run) { showBanner('warn', [document.createTextNode('Zhustit jde, až Claude doběhne.')], []); return; }
+    startRun('/compact', S.mode);
+  });
+}
+
+/* ---------- Otázka bokem (jako /btw): kopie sezení jen pro čtení, neukládá se ---------- */
+const SQ = { controller: null };
+function openSide() {
+  if (!S.sessionId) { showBanner('warn', [document.createTextNode('Otázka bokem potřebuje rozpracované sezení – nejdřív pošlete zprávu.')], []); return; }
+  const d = $('#sidedlg');
+  if (!d.open) d.showModal();
+  $('#side-input').focus();
+}
+async function askSide(e) {
+  e.preventDefault();
+  const q = $('#side-input').value.trim();
+  if (!q || SQ.controller) return;
+  const out = $('#side-answer');
+  out.textContent = '';
+  const ans = el('div', 'md');
+  out.appendChild(ans);
+  $('#side-status').textContent = 'Claude odpovídá…';
+  $('#side-send').disabled = true;
+  SQ.controller = new AbortController();
+  let raw = '';
+  try {
+    const res = await api('/api/runs', { method: 'POST', signal: SQ.controller.signal,
+      body: { account: S.account, project: S.project, mode: 'plan', prompt: q, resume: S.sessionId, model: S.model, effort: S.effort, side: true } });
+    if (!res.ok) { let m = `HTTP ${res.status}`; try { m = (await res.json()).error || m; } catch { } throw new Error(m); }
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf('\n\n')) >= 0) {
+        const chunk = buf.slice(0, i); buf = buf.slice(i + 2);
+        if (!chunk.startsWith('data: ')) continue;
+        let ev; try { ev = JSON.parse(chunk.slice(6)); } catch { continue; }
+        if (ev.type === 'text_delta' && !ev.parent) { raw += ev.text || ''; renderMd(ans, raw, false); }
+        else if (ev.type === 'text' && !ev.parent) { raw = raw && !raw.endsWith(ev.text) ? raw : ev.text; renderMd(ans, raw, true); }
+        else if (ev.type === 'result' && ev.isError) throw new Error(ev.result || 'Chyba');
+      }
+    }
+    $('#side-status').textContent = 'Hotovo. Do sezení se nic nezapsalo.';
+  } catch (err) {
+    $('#side-status').textContent = err.name === 'AbortError' ? 'Zrušeno.' : `Chyba: ${err.message}`;
+  } finally { SQ.controller = null; $('#side-send').disabled = false; }
+}
+function setupSide() {
+  $('#side-form').addEventListener('submit', askSide);
+  $('#side-close').addEventListener('click', () => $('#sidedlg').close());
+  $('#sidedlg').addEventListener('close', () => { if (SQ.controller) SQ.controller.abort(); });
+  $('#side-input').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) askSide(e); });
+}
+
+/* ---------- Export konverzace (Markdown) ---------- */
+async function exportSession() {
+  if (!S.sessionId) { showBanner('warn', [document.createTextNode('Není co exportovat – sezení je prázdné.')], []); return; }
+  let items;
+  try { items = await apiJson(`/api/sessions/${encodeURIComponent(S.sessionId)}?account=${encodeURIComponent(S.account)}&project=${encodeURIComponent(S.project)}`); }
+  catch (e) { showError('Export se nepovedl', e.message); return; }
+  const titleEl = document.querySelector(`#sessions button[data-id="${CSS.escape(S.sessionId)}"] .s-title`);
+  const title = titleEl ? titleEl.textContent : 'Sezení';
+  const proj = S.projects.find((p) => p.id === S.project);
+  const lines = [`# ${title}`, '', `Projekt: ${proj ? proj.label : S.project} · sezení ${S.sessionId} · export ${new Date().toLocaleString('cs-CZ')}`, ''];
+  let tools = [];
+  const flush = () => { if (tools.length) { lines.push(`> Nástroje: ${tools.join(', ')}`, ''); tools = []; } };
+  for (const it of items) {
+    if (it.role === 'tool') { tools.push(it.name); continue; }
+    flush();
+    const text = it.role === 'assistant' ? Review.progressMarks(it.text).clean : it.text;
+    lines.push(it.role === 'user' ? '## Vy' : '## Claude', '', text.trim(), '');
+  }
+  flush();
+  const url = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' }));
+  const a = el('a');
+  a.href = url;
+  a.download = `${title.replace(/[\\/:*?"<>|]+/g, ' ').slice(0, 60).trim() || 'sezeni'}.md`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  announce('Konverzace exportována.');
+}
+
+/* ---------- Sezení otevřená jinde (terminál, pozadí) ---------- */
+const ELSE = { ids: new Set(), at: 0 };
+async function loadElsewhere() {
+  try {
+    const list = await apiJson(`/api/sessions/active?account=${encodeURIComponent(S.account)}&project=${encodeURIComponent(S.project)}`);
+    ELSE.ids = new Set(list.map((s) => s.sessionId));
+    ELSE.kind = Object.fromEntries(list.map((s) => [s.sessionId, s.kind === 'background' ? 'běží na pozadí' : 'otevřené v terminálu']));
+    for (const b of document.querySelectorAll('#sessions button[data-id]')) {
+      const meta = b.querySelector('.s-meta');
+      if (!meta) continue;
+      meta.textContent = meta.textContent.replace(/ • (otevřené v terminálu|běží na pozadí)/, '')
+        + (ELSE.ids.has(b.dataset.id) ? ` • ${ELSE.kind[b.dataset.id]}` : '');
+    }
+  } catch { /* bez údajů */ }
+}
+
+/* ---------- Připomínky k plánu ---------- */
+function planComments(box, markdown) {
+  if (box.querySelector('.plan-review')) { box.querySelector('.plan-review').remove(); return; }
+  const wrap = el('div', 'plan-review');
+  wrap.appendChild(el('p', 'hint', 'Klikněte na řádek plánu (nebo Enter) a napište připomínku. „Poslat připomínky“ je pošle Claudovi – plán upraví a nic nezmění.'));
+  const lines = String(markdown || '').split('\n').map((l, i) => ({ text: l, n: i + 1 })).filter((l) => l.text.trim());
+  const notes = new Map();
+  const d = el('div', 'diff diff--review');
+  for (const l of lines) {
+    const row = el('div', 'ctx diff-line', l.text);
+    row.tabIndex = 0;
+    row.setAttribute('role', 'button');
+    row.setAttribute('aria-label', `Řádek plánu ${l.n}: ${l.text.trim()}`);
+    const open = () => {
+      d.querySelectorAll('.diff-form').forEach((f) => f.remove());
+      const form = el('div', 'diff-form');
+      const ta = el('textarea');
+      ta.rows = 2;
+      ta.value = notes.get(l.n) || '';
+      ta.setAttribute('aria-label', `Připomínka k řádku ${l.n}`);
+      const save = () => {
+        const v = ta.value.trim();
+        if (v) notes.set(l.n, v); else notes.delete(l.n);
+        row.classList.toggle('has-comment', !!v);
+        row.title = v;
+        form.remove();
+        count.textContent = `${notes.size} ${plural(notes.size, 'připomínka', 'připomínky', 'připomínek')}`;
+        sendBtn.disabled = !notes.size;
+        row.focus();
+      };
+      ta.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(); }
+        else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); form.remove(); row.focus(); }
+      });
+      const acts = el('div', 'diff-form-actions');
+      acts.append(button('Uložit', 'btn-accent btn-small', save), button('Zrušit', 'btn-ghost btn-small', () => { form.remove(); row.focus(); }));
+      form.append(ta, acts);
+      row.after(form);
+      ta.focus();
+    };
+    row.addEventListener('click', open);
+    row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+    d.appendChild(row);
+  }
+  wrap.appendChild(d);
+  const bar = el('div', 'plan-actions');
+  const count = el('span', 'hint', '0 připomínek');
+  const sendBtn = button('Poslat připomínky', 'btn-accent btn-small', () => {
+    if (S.run || !notes.size) return;
+    const items = [...notes.entries()].sort((a, b) => a[0] - b[0])
+      .map(([n, note], i) => `${i + 1}. K řádku „${lines.find((l) => l.n === n).text.trim().slice(0, 160)}“:\n   ${note.replace(/\n/g, '\n   ')}`);
+    wrap.remove();
+    setMode('plan');
+    startRun(`Připomínky k plánu – uprav ho podle nich a znovu ho předlož ke schválení:\n\n${items.join('\n')}`, 'plan');
+  });
+  sendBtn.disabled = true;
+  bar.append(sendBtn, count);
+  wrap.appendChild(bar);
+  box.appendChild(wrap);
+  d.querySelector('.diff-line')?.focus();
 }
 
 /* ---------- Hledat v konverzaci (Ctrl+F) – bez diakritiky, zvýraznění přes CSS Highlight API ---------- */
@@ -3136,11 +3767,17 @@ async function main() {
   setupFind();
   setupOverview();
   setupProgress();
+  setupContext();
+  setupSide();
+  $('#side-open').addEventListener('click', openSide);
+  $('#fork-cancel').addEventListener('click', () => { S.forkNext = false; renderForkNote(); $('#prompt').focus(); });
+  $('#chrome-toggle').addEventListener('change', (e) => setChrome(e.target.checked));
+  $('#overview-export').addEventListener('click', exportSession);
   setupHistory();
   setupSessionSearch();
   $('#new-session').addEventListener('click', newSession);
   $('#project').addEventListener('change', (e) => switchProject(e.target.value));
-  document.querySelectorAll('input[name="mode"]').forEach((i) => i.addEventListener('change', () => { S.mode = i.value; }));
+  document.querySelectorAll('input[name="mode"]').forEach((i) => i.addEventListener('change', () => { S.mode = i.value; liveMode(i.value); }));
   window.addEventListener('beforeunload', (e) => { if (S.run || S.queue.length || S.pending.length) { e.preventDefault(); e.returnValue = ''; } });
 
   try {
@@ -3167,6 +3804,7 @@ async function main() {
     try { if (!S.run) { await loadState(); } else await api('/api/ping'); } catch { }
   }, 30000);
   setInterval(() => { if (!S.run) loadGit(); }, 60000);
+  setInterval(() => { if (!S.run && !document.hidden) loadElsewhere(); }, 30000);
   $('#prompt').focus();
 }
 

@@ -67,7 +67,7 @@ export function history(file, maxItems = 400) {
     if (o.isSidechain === true) continue;
     if (o.type === 'user' && o.isMeta == null) {
       const t = userText(o);
-      if (t) items.push({ role: 'user', text: t });
+      if (t) items.push({ role: 'user', text: t, uuid: isValidId(o.uuid) ? o.uuid : undefined });
     } else if (o.type === 'assistant' && Array.isArray(o.message?.content)) {
       for (const b of o.message.content) {
         if (b?.type === 'text' && b.text) items.push({ role: 'assistant', text: b.text });
@@ -147,6 +147,10 @@ export function overview(file, projectPath) {
   /** @type {Map<string, number>} */ const tools = new Map();
   /** @type {Map<string, number>} */ const mcp = new Map();
   let todos = null, todosAt = null, started = null, updated = null, userMsgs = 0, replies = 0;
+  /** Seznam úkolů Claude Code (TaskCreate/TaskUpdate): id → {content, status} */
+  const tasks = new Map();
+  /** @type {Map<string, string>} tool_use TaskCreate → název úkolu */
+  const pendingTasks = new Map();
 
   const rel = (p) => {
     const abs = path.resolve(root, p);
@@ -180,6 +184,13 @@ export function overview(file, projectPath) {
             if (typeof b.id === 'string') pendingEdits.set(b.id, { key });
           } else if (!sub && AGENT_TOOLS.has(b.name) && typeof b.id === 'string') {
             agents.set(b.id, { id: b.id, description: s300(input.description) || '(bez popisu)', type: s300(input.subagent_type), status: 'running' });
+          } else if (!sub && b.name === 'TaskCreate' && typeof b.id === 'string') {
+            pendingTasks.set(b.id, s300(input.subject) || s300(input.description) || '(bez názvu)');
+          } else if (!sub && b.name === 'TaskUpdate' && tasks.has(String(input.taskId))) {
+            const st = input.status;
+            if (st === 'deleted') tasks.delete(String(input.taskId));
+            else if (['pending', 'in_progress', 'completed'].includes(st)) tasks.get(String(input.taskId)).status = st;
+            todosAt = typeof o.timestamp === 'string' ? o.timestamp : todosAt;
           } else if (!sub && b.name === 'TodoWrite' && Array.isArray(input.todos)) {
             todos = input.todos.slice(0, 100).filter((t) => t && typeof t === 'object')
               .map((t) => ({ content: s300(t.content), status: ['pending', 'in_progress', 'completed'].includes(t.status) ? t.status : 'pending' }));
@@ -190,6 +201,14 @@ export function overview(file, projectPath) {
         if (!sub && o.isMeta == null && userText(o)) userMsgs++;
         for (const b of content) {
           if (b?.type !== 'tool_result' || typeof b.tool_use_id !== 'string') continue;
+          const pt = pendingTasks.get(b.tool_use_id);
+          if (pt != null) {
+            // „Task #3 created successfully: …“ → id úkolu pro TaskUpdate
+            const txt = typeof b.content === 'string' ? b.content : Array.isArray(b.content) ? b.content.map((x) => x?.text ?? '').join(' ') : '';
+            const mm = /#(\d+)/.exec(txt);
+            if (mm && b.is_error !== true) { tasks.set(mm[1], { content: pt, status: 'pending' }); todosAt = typeof o.timestamp === 'string' ? o.timestamp : todosAt; }
+            pendingTasks.delete(b.tool_use_id);
+          }
           const pe = pendingEdits.get(b.tool_use_id);
           if (pe && b.is_error === true) { const f = files.get(pe.key); if (f) f.failed++; }
           const a = !sub && agents.get(b.tool_use_id);
@@ -221,7 +240,7 @@ export function overview(file, projectPath) {
   return {
     files: [...files.values()].sort((a, b) => Number(a.outside) - Number(b.outside) || a.path.localeCompare(b.path)).slice(0, 300),
     agents: [...agents.values()].slice(0, 100).map(({ id, ...a }) => a),
-    todos, todosAt,
+    todos: tasks.size ? [...tasks.values()].slice(0, 100) : todos, todosAt,
     tools: sortBy(tools).slice(0, 30),
     mcp: sortBy(mcp).slice(0, 30),
     userMessages: userMsgs, replies, started, updated,

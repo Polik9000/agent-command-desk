@@ -59,9 +59,9 @@ test('parser: control_request can_use_tool a jiné podtypy', () => {
   assert.deepEqual(p.parse(JSON.stringify({ type: 'control_request', request: { subtype: 'can_use_tool' } })), []);
 });
 
-test('allowedModes: Ručně (default) jen s interactivePermissions, nikdy bypass/acceptEdits', () => {
-  assert.deepEqual(allowedModes({}), ['auto', 'plan']);
-  assert.deepEqual(allowedModes({ interactivePermissions: false }), ['auto', 'plan']);
-  assert.deepEqual(allowedModes({ interactivePermissions: true }), ['auto', 'plan', 'default']);
-  assert.deepEqual(allowedModes({ interactivePermissions: 'true' }), ['auto', 'plan']);
+test('allowedModes: Úpravy (acceptEdits) vždy, Ručně (default) jen s interactivePermissions, nikdy bypass/dontAsk', () => {
+  assert.deepEqual(allowedModes({}), ['auto', 'plan', 'acceptEdits']);
+  assert.deepEqual(allowedModes({ interactivePermissions: false }), ['auto', 'plan', 'acceptEdits']);
+  assert.deepEqual(allowedModes({ interactivePermissions: true }), ['auto', 'plan', 'acceptEdits', 'default']);
+  assert.deepEqual(allowedModes({ interactivePermissions: 'true' }), ['auto', 'plan', 'acceptEdits']);
 });
