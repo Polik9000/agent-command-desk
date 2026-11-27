@@ -1,5 +1,10 @@
 # Agent Command Desk
 
+**English** · [Česky](README.cs.md)
+
+> **Asking Claude Code to install this?** Point it at this file – everything it needs (what to ask you, which file to
+> write, how to check it, how to change the colours) is in [Installing with Claude Code](#installing-with-claude-code).
+
 A small local desktop window for **Claude Code** that works like the terminal and shows more. Pick an allowlisted
 account and project, chat with streamed answers, watch every tool call and every agent Claude starts, see a live task
 list with progress and time left, plan first and approve with one click, switch mode or model while Claude works,
@@ -156,6 +161,73 @@ Runs on Windows and macOS (experimental). The UI is in Czech.
 To update later: `git pull`, close the window and run the launcher again (your `local/` folder is never touched).
 Changes to `local/config.json` also apply only after a restart.
 
+## Installing with Claude Code
+This section is written for **Claude Code (or another coding agent)** that was asked to download, set up and restyle the
+app. Follow it literally; nothing here needs guessing or searching the repo.
+
+**Facts**
+- Repo: `https://github.com/Polik9000/agent-command-desk` (branch `main`). No `npm install` – there are no dependencies.
+- Needs Node.js ≥ 22 (`node --version`), Google Chrome, and the **native** Claude Code binary: Windows
+  `%USERPROFILE%\.local\bin\claude.exe`, macOS/Linux `~/.local/bin/claude` (check with `claude --version`; on Windows a
+  `claude.cmd` from npm is rejected on purpose – set `claudeExe` to the real `.exe` instead).
+- The only file you must create is **`local/config.json`** (git-ignored). Everything personal lives in `local/`:
+  `config.json`, `theme.css` (colours/fonts), `favicon.svg`. Never edit files outside `local/`, never commit `local/`,
+  never read or print credentials (`.credentials.json`, `.claude.json`, tokens), no global installs.
+- The app only runs for accounts and projects listed in `local/config.json`. An account is used only when `claude auth
+  status` in its config folder reports exactly its `expectedEmail`.
+
+**Steps**
+1. `git clone https://github.com/Polik9000/agent-command-desk.git <folder>` and `cd <folder>`.
+2. **Ask the user** (one short message, then act): the app name; for each account a label, its e-mail and the folder of
+   its Claude Code login (e.g. `~/.claude-work`; each account needs its **own** folder, even a single one); the project
+   folders; whether they want permission cards (recommend yes); a main accent colour per account (hex) and, if they want
+   a brand look, colours/fonts.
+3. Create `local/config.json` from `config.example.json` (JSON, comments are not allowed):
+   ```json
+   {
+     "app": { "id": "my-desk", "name": "My Desk" },
+     "interactivePermissions": true,
+     "appendSystemPrompt": "<copy the value from config.example.json>",
+     "defaultAccount": "work",
+     "accounts": [
+       { "id": "work", "label": "Work", "configDir": "~/.claude-work", "expectedEmail": "me@example.com", "accent": "#7aa2ff" }
+     ],
+     "defaultProject": "site",
+     "projects": [ { "id": "site", "label": "Site", "path": "~/code/site" } ]
+   }
+   ```
+   `app.id` = lowercase letters, digits, dashes (it becomes the launcher command and the state folder name). Paths accept
+   `~`, `%VAR%`, `$VAR`, or per-platform `{ "win32": "…", "darwin": "…", "linux": "…" }`. Project folders should exist (missing ones are marked in the project picker).
+   Other keys are in the table under *Setup → Configure*.
+4. **Logging in is the user's step** (it opens a browser): for a new folder give them the command and wait –
+   PowerShell `$env:CLAUDE_CONFIG_DIR = "$HOME\.claude-work"; claude`, macOS/Linux `CLAUDE_CONFIG_DIR=~/.claude-work claude`,
+   then `/login` with the right account. Do not try to log in yourself.
+5. **Check:** `node src/server/server.mjs --info` must print JSON (name, id, state folder); an error message names the
+   exact config problem – fix it and repeat. Then `npm test` (about 120 tests, no real `claude` needed).
+6. **Install the launcher** (creates one small file, nothing else): Windows `powershell -ExecutionPolicy Bypass -File
+   scripts\install.ps1` → `%USERPROFILE%\bin\<app.id>.cmd` (tell the user to add `%USERPROFILE%\bin` to `PATH` if the
+   script warns); macOS/Linux `sh scripts/install.sh` → `~/.local/bin/<app.id>`.
+7. **Start:** run `<app.id>` in a terminal. A Chrome app window opens; the account chips must show the accounts as
+   verified. If one says *nepřihlášen*, step 4 is not done for it; a wrong e-mail is reported with the e-mail found.
+8. Update later with `git pull`, then close the window and start it again. Changes to `local/config.json` and
+   `local/theme.css` need a restart or window reload.
+
+**Changing the colours and look** (create `local/theme.css`; it is loaded after the defaults, so list only what changes)
+- Start from a copy of `src/server/wwwroot/theme.css` (all variables are documented there). Put your values in `:root { … }`
+  for the dark theme and in `:root[data-theme="light"] { … }` for the light one – a brand look needs both.
+- Variables: `--bg` page, `--fg` text, `--gray-1` panels and fields, `--gray-2` highlights and hover, `--gray-3` captions,
+  `--bubble` reply bubble, `--text-muted`, `--line` borders, `--code-bg` code and diffs, `--on-accent` text on the accent,
+  `--ok` `--info` `--err` status colours, `--hl-keyword` `--hl-string` `--hl-number` `--hl-title` code colours, fonts
+  `--font-head` `--font-body` `--font-mono`, brand `--brand-suffix` `--title-suffix` `--motif-short` `--motif-fill`
+  `--spinner`.
+- The **accent** is set per account by `accent` in `local/config.json`, not in CSS (it colours buttons, chips and your
+  message bubbles and follows the selected account). In the light theme the accent is also used for text, so
+  `--accent-ink` (default: the accent darkened) keeps it readable – override it if your accent is very light.
+- Keep text/background contrast at least 4.5:1 in both themes (the UI is checked with axe-core for WCAG 2.2 AA).
+- Fonts: add `@font-face` rules in `local/theme.css` with files from `local/` (only fonts whose licence allows it); the
+  repo bundles Bricolage Grotesque and Merriweather (OFL) in `src/server/wwwroot/fonts/`.
+- Name: `app.name` in the config (title and logo); icon: `local/favicon.svg`.
+
 ## Customize
 Everything personal lives in `local/` (git-ignored):
 
@@ -205,31 +277,4 @@ Removes the launcher and the state folder; your Claude Code accounts and the rep
 ---
 
 ## Česky
-Malé lokální okno nad Claude Code, které funguje jako terminál a ukazuje víc: povolené účty a projekty, streamované
-odpovědi, karty nástrojů s diffem a karty agentů s živým postupem, vpravo **průběh** (seznam úkolů Clauda, procenta,
-odhad času) a **úlohy na pozadí**. Režimy **Auto, Plán, Úpravy, Ručně**; režim i model jde přepnout za běhu. *Zastavit*
-přeruší jako Esc, ↶ u zprávy vrátí soubory, ⑂ pokračuje v kopii sezení, *Bokem* položí otázku mimo sezení, v patičce je
-zaplnění **kontextu** se *Zhustit*. Během práce lze poslat zprávu hned nebo do fronty; přikládat jde screenshoty
-(Ctrl+V), PDF a textové soubory; `/` nabídne příkazy, `@` soubory. Rozhraní je české.
-
-**Nastavení**
-1. Každý účet = vlastní složka `CLAUDE_CONFIG_DIR` (alias viz *Setup*), jednou `/login`.
-2. `config.example.json` zkopírujte do `local/config.json` a vyplňte účty (včetně očekávaného e-mailu) a projekty.
-   Doporučeno `"interactivePermissions": true` – karty svolení, otázky s možnostmi, režim Ručně a Claude in Chrome.
-   Volitelně `models` (modely ve výběru), `startFullscreen`, `sessionProcessMinutes`. Projekty (i výchozí) a účty jde
-   později spravovat přímo v aplikaci (**Nastavení**); nový účet se použije, až je jeho složka přihlášená zadaným
-   e-mailem (tlačítko *Příkaz pro přihlášení*, v terminálu pak `/login`).
-3. Vlastní název: `app.name`. Vlastní vzhled: `local/theme.css` (vzor `src/server/wwwroot/theme.css`), ikona
-   `local/favicon.svg`. Složka `local/` se nikdy necommituje. Světlý nebo tmavý motiv: **Nastavení → Vzhled**.
-4. Spouštěč: Windows `scripts\install.ps1`, macOS `scripts/install.sh`; pak v terminálu příkaz podle `app.id`.
-   Novou verzi nebo změnu configu načte aplikace po zavření okna a novém spuštění.
-
-Přehled změn v gitu (klik na větev v hlavičce) umí komentáře k řádkům pro Clauda, **Soubory** hledají a ukazují
-soubory projektu, **Přehled sezení** v patičce ukáže upravené soubory, úkoly, agenty a MCP servery, **Statistiky →
-Historie a grafy** spotřebu v čase. Po limitu účtu aplikace sama pokračuje po jeho obnovení.
-
-Nebo dejte Claudovi prompt z části *Customize* a nechte ho nastavit všechno za vás.
-
-**Klávesy:** Ctrl+K paleta (příkazy, skilly, agenti, akce, nedávné zprávy), Ctrl+F hledání v konverzaci, Ctrl+Enter
-odeslat (během práce = poslat hned), Ctrl+Shift+Enter = do fronty, Enter v seznamu doplní další číslo či odrážku,
-Shift+Enter = obyčejný nový řádek, Ctrl+V vloží screenshot jako přílohu, Esc zavře dialog.
+Úplný český překlad tohoto souboru je v [README.cs.md](README.cs.md).
