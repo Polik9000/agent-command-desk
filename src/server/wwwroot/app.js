@@ -411,6 +411,97 @@ async function switchProject(id) {
   await Promise.all([loadSessions(), loadGit()]);
 }
 
+/* ---------- Git přehled (jen pro čtení) ---------- */
+const GIT_CODES = { M: 'změněno', A: 'přidáno', D: 'smazáno', R: 'přejmenováno', C: 'zkopírováno', T: 'změna typu', U: 'konflikt', '?': 'nový' };
+const G = { files: null, sel: null, seq: 0 };
+
+async function openGit() {
+  const d = $('#gitdlg');
+  if (!d.open) d.showModal();
+  await loadGitFiles();
+}
+
+async function loadGitFiles() {
+  const nav = $('#git-files');
+  nav.textContent = '';
+  $('#git-sub').textContent = 'Načítám…';
+  let r;
+  try { r = await apiJson(`/api/projects/${encodeURIComponent(S.project)}/git/files`); }
+  catch (e) { $('#git-sub').textContent = e.message; return; }
+  if (!r.repo) { $('#git-sub').textContent = 'Projekt není git repozitář.'; showDiff(null); return; }
+  const ab = r.upstream ? ` • ${r.upstream}` + (r.ahead ? ` • ${r.ahead} napřed` : '') + (r.behind ? ` • ${r.behind} pozadu` : '') : '';
+  $('#git-sub').textContent = `větev ${r.branch || '(odpojená HEAD)'}${ab} • ${r.files.length} ${plural(r.files.length, 'soubor', 'soubory', 'souborů')}`;
+  const groups = [
+    ['Konflikty', r.files.filter((f) => f.kind === 'conflict').map((f) => [f, 'worktree', 'U'])],
+    ['Připravené ke commitu', r.files.filter((f) => f.kind !== 'conflict' && f.kind !== 'untracked' && f.x !== '.').map((f) => [f, 'staged', f.x])],
+    ['Změněné', r.files.filter((f) => f.kind !== 'conflict' && f.kind !== 'untracked' && f.y !== '.').map((f) => [f, 'worktree', f.y])],
+    ['Nové (nesledované)', r.files.filter((f) => f.kind === 'untracked').map((f) => [f, 'untracked', '?'])],
+  ];
+  const all = [];
+  for (const [title, items] of groups) {
+    if (!items.length) continue;
+    const g = el('div', 'git-group');
+    g.appendChild(el('h3', 'eyebrow', `${title} (${items.length})`));
+    for (const [f, area, code] of items) {
+      const b = el('button', 'git-file');
+      b.type = 'button';
+      const c = el('span', 'git-code', code); c.dataset.k = code; c.title = GIT_CODES[code] || code;
+      b.appendChild(c);
+      const p = el('span', 'git-path', f.path);
+      if (f.orig && area === 'staged') p.appendChild(el('small', null, `dříve ${f.orig}`));
+      b.appendChild(p);
+      b.setAttribute('aria-label', `${f.path} – ${GIT_CODES[code] || code}`);
+      b.addEventListener('click', () => selectGitFile(b, f.path, area));
+      b.dataset.key = `${area}\n${f.path}`;
+      g.appendChild(b);
+      all.push(b);
+    }
+    nav.appendChild(g);
+  }
+  if (!all.length) { showDiff(null, 'Žádné změny – pracovní strom je čistý.'); return; }
+  const keep = G.sel && all.find((b) => b.dataset.key === G.sel);
+  const first = keep || all[0];
+  const [area, path] = first.dataset.key.split('\n');
+  selectGitFile(first, path, area);
+}
+
+async function selectGitFile(btn, path, area) {
+  for (const b of $('#git-files').querySelectorAll('.git-file')) b.setAttribute('aria-current', b === btn ? 'true' : 'false');
+  G.sel = `${area}\n${path}`;
+  const seq = ++G.seq;
+  showDiff(null, 'Načítám…');
+  try {
+    const r = await apiJson(`/api/projects/${encodeURIComponent(S.project)}/git/diff?path=${encodeURIComponent(path)}&area=${area}`);
+    if (seq === G.seq) showDiff(r);
+  } catch (e) { if (seq === G.seq) showDiff(null, e.message); }
+}
+
+/** Unified diff → řádky s barvami (stejné třídy jako u karet nástrojů). */
+function showDiff(r, message) {
+  const box = $('#git-diff');
+  box.textContent = '';
+  if (!r) { if (message) box.appendChild(el('p', 'git-note', message)); return; }
+  if (r.note) box.appendChild(el('p', 'git-note', r.note));
+  if (r.diff) {
+    const d = el('div', 'diff');
+    const lines = r.diff.replace(/\n$/, '').split('\n');
+    for (const line of lines) {
+      const k = /^(diff --git|index |--- |\+\+\+ |new file|deleted file|similarity|rename |old mode|new mode)/.test(line) ? 'file'
+        : line.startsWith('@@') ? 'hunk' : line.startsWith('+') ? 'add' : line.startsWith('-') ? 'del' : 'ctx';
+      d.appendChild(el('div', k, line));
+    }
+    box.appendChild(d);
+  }
+  if (r.truncated) box.appendChild(el('p', 'git-note', 'Diff je příliš dlouhý – zobrazen jen začátek.'));
+}
+
+function setupGit() {
+  $('#git').addEventListener('click', openGit);
+  $('#git-refresh').addEventListener('click', loadGitFiles);
+  $('#git-close').addEventListener('click', () => $('#gitdlg').close());
+  $('#gitdlg').addEventListener('close', () => { if (!S.run) loadGit(); });
+}
+
 /* ---------- Nastavení ---------- */
 function setMsg(text, kind) {
   const m = $('#set-projects-msg');
@@ -1346,6 +1437,7 @@ async function main() {
   setupAttachments();
   setupRunOpts();
   setupSettings();
+  setupGit();
   $('#new-session').addEventListener('click', newSession);
   $('#project').addEventListener('change', (e) => switchProject(e.target.value));
   document.querySelectorAll('input[name="mode"]').forEach((i) => i.addEventListener('change', () => { S.mode = i.value; }));

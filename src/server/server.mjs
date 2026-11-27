@@ -10,7 +10,7 @@ import { createSecret, setSecurityHeaders, checkRequest } from './lib/guard.mjs'
 import { AccountGuard, ClaudeRunner, MODES } from './lib/claude.mjs';
 import { ev } from './lib/parser.mjs';
 import { listSessions, history, transcriptPath } from './lib/sessions.mjs';
-import { gitStatus } from './lib/git.mjs';
+import { gitStatus, gitFiles, gitDiff } from './lib/git.mjs';
 import { AttachmentStore, attachmentsPrompt, MAX_PER_RUN as MAX_ATTACHMENTS } from './lib/attachments.mjs';
 import { openWindow, createHeartbeat } from './lib/window.mjs';
 import { changeProjects, settingsView } from './lib/settings.mjs';
@@ -186,6 +186,17 @@ async function handleApi(req, res, url) {
   if (req.method === 'GET' && (m = /^\/api\/projects\/([^/]+)\/git$/.exec(p))) {
     const project = findProject(cfg, decodeURIComponent(m[1]));
     return project ? sendJson(res, 200, await gitStatus(cfg, project.pathFull)) : problem(res, 404, 'Neznámý projekt.');
+  }
+  // Git přehled jen pro čtení: seznam změněných souborů a diff jednoho z nich.
+  if (req.method === 'GET' && (m = /^\/api\/projects\/([^/]+)\/git\/(files|diff)$/.exec(p))) {
+    const project = findProject(cfg, decodeURIComponent(m[1]));
+    if (!project) return problem(res, 404, 'Neznámý projekt.');
+    if (m[2] === 'files') {
+      const files = await gitFiles(cfg, project.pathFull);
+      return sendJson(res, 200, files ? { repo: true, ...files } : { repo: false, files: [] });
+    }
+    try { return sendJson(res, 200, await gitDiff(cfg, project.pathFull, q.get('path') ?? '', q.get('area') ?? '')); }
+    catch (e) { return problem(res, e.status ?? 500, e.status ? e.message : 'Diff selhal.'); }
   }
 
   if (req.method === 'GET' && p === '/api/sessions') {

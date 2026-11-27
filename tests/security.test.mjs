@@ -197,3 +197,15 @@ test('Nastavení: jen s tokenem a Origin, neplatná cesta 400, přidání/přejm
   assert.ok(existsSync(path.join(stateDir, 'config.json.bak')));
   rmSync(extra, { recursive: true, force: true });
 });
+
+test('Git přehled: jen s tokenem, neznámý projekt 404, cesta mimo výpis status 404/400', async () => {
+  assert.equal((await req('GET', '/api/projects/p/git/files')).status, 401);
+  assert.equal((await req('GET', '/api/projects/nic/git/files', { 'X-ACD-Token': TOKEN })).status, 404);
+  const files = await req('GET', '/api/projects/p/git/files', { 'X-ACD-Token': TOKEN });
+  assert.equal(files.status, 200);
+  assert.equal(typeof JSON.parse(files.body).repo, 'boolean');
+  const diff = (q) => req('GET', `/api/projects/p/git/diff?${q}`, { 'X-ACD-Token': TOKEN });
+  assert.ok([404, 409].includes((await diff('path=..%2F..%2Fetc%2Fpasswd&area=worktree')).status)); // 409 = checkout bez gitu
+  assert.equal((await diff('path=package.json&area=rm')).status, 400);
+  assert.equal((await diff('area=worktree')).status, 400);
+});

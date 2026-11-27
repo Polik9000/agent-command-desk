@@ -26,6 +26,9 @@ Runs on Windows and macOS (experimental). The UI is in Czech.
 - **Accounts with an allowlist** – each account is a separate Claude Code config directory with an expected e-mail,
   verified via `claude auth status`. Any other login (e.g. a personal account) cannot be used, not even by mistake.
 - **Projects** – only allowlisted folders; git branch and number of changes shown in the header.
+- **Git changes (read-only)** – click the branch/changes in the header: changed files grouped as conflicts, staged,
+  changed and new, with a coloured diff per file (new text files shown as added). Nothing can be staged, committed or
+  pushed from the app.
 - **Auto / Plan** – Plan writes a plan and changes nothing; **Approve plan** continues in Auto in the same session.
 - **Model and effort** – the *Model* button next to Auto/Plan offers presets (*Rychlé* = Sonnet + low effort,
   *Běžná práce* = account default, *Důkladné* = Opus + high effort) or any allowlisted model and effort level. The choice
@@ -127,7 +130,7 @@ Only create files inside local/, do not change anything else and do not commit. 
 
 ## Development
 ```
-npm test        # 69 tests: stream parser, config (incl. model allowlist), settings writes, account guard, queue, list editing, attachments, 401/403/CSP
+npm test        # 75 tests: stream parser, config (incl. model allowlist), settings writes, git view, account guard, queue, list editing, attachments, 401/403/CSP
 npm run check   # syntax check
 ACD_OPEN_BROWSER=0 node src/server/server.mjs   # prints the URL with token on an interactive console
 ```
@@ -137,8 +140,7 @@ Vendor libraries and optional fonts: `scripts/fetch-vendor.ps1` (pinned versions
 How the CLI is driven (stream-json input/output, sending into a running turn): [docs/claude-code-headless.md](docs/claude-code-headless.md).
 
 ## Roadmap
-Read-only git diff view, command palette,
-usage statistics. Interactive permission prompts are being researched.
+Command palette, usage statistics, session search and rename. Interactive permission prompts are being researched.
 
 ## Uninstall
 Windows: `powershell -ExecutionPolicy Bypass -File scripts\uninstall.ps1` · macOS: `sh scripts/uninstall.sh`.
@@ -161,6 +163,8 @@ do fronty; přikládat jde screenshoty (Ctrl+V), PDF a textové soubory. Rozhran
    Volitelně `models` = seznam modelů nabízených ve výběru (viz *Setup*), `startFullscreen` = okno na celou obrazovku.
    Projekty jde později přidávat, přejmenovat a odebírat přímo v aplikaci (tlačítko **Nastavení**); účty jen ručně
    v configu.
+
+Kliknutím na větev a počet změn v hlavičce se otevře **přehled změn v gitu** (soubory a diff, jen pro čtení).
 3. Vlastní název: `app.name` v configu. Vlastní vzhled: `local/theme.css` (vzor `src/server/wwwroot/theme.css`),
    ikona `local/favicon.svg`. Složka `local/` se nikdy necommituje.
 4. Spouštěč: Windows `scripts\install.ps1`, macOS `scripts/install.sh`; pak příkaz podle `app.id`.

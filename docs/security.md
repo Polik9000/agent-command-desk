@@ -43,3 +43,8 @@ Claude Code login and never reads, copies or stores credentials.
     state folder (in either direction) are refused, as are duplicates. A project with a running `claude` cannot be
     removed. The whole new config is validated with the same code as at start-up before it is written; the file is
     written atomically (temp file + rename) and the previous version is kept as `config.json.bak`.
+17. **Git view is read-only.** Only `status` and `diff` are run (argument array, no shell, `GIT_OPTIONAL_LOCKS=0`,
+    `core.fsmonitor=false`, `--no-ext-diff --no-textconv`), always in an allowlisted project. A diff is returned only
+    for a path that the current `git status` lists, in an area it is listed in; anything else is 400/404. New
+    (untracked) files are read directly only if they are regular files up to 256 kB without NUL bytes; symlinks are
+    not followed. Output is capped at 1 MB. There is no endpoint that stages, commits, checks out or pushes.

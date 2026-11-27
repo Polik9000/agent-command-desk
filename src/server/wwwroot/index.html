@@ -34,7 +34,7 @@
         <select id="project"></select>
       </label>
 
-      <span class="git" id="git" title="Aktuální větev a počet změněných souborů"></span>
+      <button type="button" class="git" id="git" title="Větev a změněné soubory – kliknutím zobrazíte změny (jen pro čtení)" aria-haspopup="dialog"></button>
       <button type="button" class="btn btn-ghost btn-small" id="settings-open" aria-haspopup="dialog">Nastavení</button>
     </div>
   </header>
@@ -140,6 +140,24 @@
         <label><input type="checkbox" value="problem"> Chyba, limit účtu nebo pozastavená fronta</label>
       </fieldset>
     </section>
+  </dialog>
+
+  <dialog class="dialog dialog--wide" id="gitdlg" aria-labelledby="git-title">
+    <div class="dialog-head">
+      <div>
+        <h2 class="dialog-title" id="git-title">Změny v projektu</h2>
+        <p class="git-sub" id="git-sub"></p>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" class="btn btn-ghost btn-small" id="git-refresh">Obnovit</button>
+        <button type="button" class="btn btn-ghost btn-small" id="git-close">Zavřít</button>
+      </div>
+    </div>
+    <div class="git-body">
+      <nav class="git-files" id="git-files" aria-label="Změněné soubory"></nav>
+      <section class="git-diff" id="git-diff" aria-label="Rozdíly vybraného souboru" aria-live="polite"></section>
+    </div>
+    <p class="set-hint">Jen pro čtení – commit, push ani jiné změny v gitu se odsud nedělají.</p>
   </dialog>
 
   <footer class="foot" id="foot">
