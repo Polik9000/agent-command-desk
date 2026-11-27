@@ -36,9 +36,13 @@ Claude Code login and never reads, copies or stores credentials.
     `<state>/attachments/<account>/<project>/<random id>/`; a run accepts only ids from the same account and project and
     gets `--add-dir` for that folder only. Old uploads are deleted after 7 days.
 15. **Single instance** per user via a pid file in the state directory.
-16. **Settings writes.** The only thing the UI can change in the config is the list of **projects** (add, rename,
-    remove) – there is no endpoint for accounts, so the account allowlist with `expectedEmail` stays hand-edited only.
-    Writes need token + Origin like any other write. A new project folder must be an existing directory given as a full
+16. **Settings writes.** The UI can change **projects** (add, rename, remove, default project) and **accounts** (add,
+    remove). A new account is the same allowlist entry as a hand-written one: its own Claude Code config folder and an
+    expected e-mail; it is used only after `claude auth status` in that folder reports exactly that e-mail, so another
+    login (e.g. a personal account) still cannot be used. The account folder must be a full path; drive roots, the home
+    folder, project folders, the app state folder and other accounts' folders are refused, as are duplicate e-mails; an
+    account with a running `claude` cannot be removed. The app never logs in for you – it only shows the command
+    (`CLAUDE_CONFIG_DIR=<folder> claude`, then `/login`) to run in a terminal. Writes need token + Origin like any other write. A new project folder must be an existing directory given as a full
     path (symlinks resolved); drive roots, the home folder (and its parents), Claude Code account folders and the app
     state folder (in either direction) are refused, as are duplicates. A project with a running `claude` cannot be
     removed. The whole new config is validated with the same code as at start-up before it is written; the file is

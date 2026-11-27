@@ -1,6 +1,7 @@
 // @ts-check
-// Zápis z panelu Nastavení – výhradně pole `projects` (a `defaultProject`) v konfiguraci.
-// Účty se z UI nikdy nemění: allowlist účtů s expectedEmail zůstává jen v ručně upravovaném souboru.
+// Zápis z panelu Nastavení – pole `projects`, `defaultProject`, `accounts` a `defaultAccount` v konfiguraci.
+// Účet přidaný z UI je stejný allowlist jako ruční: vlastní složka Claude Code a očekávaný e-mail, který se ověřuje
+// (`claude auth status`) – jiný přihlášený účet se nepoužije (rozhodnutí uživatele 2026-11-27).
 // Postup: přečíst surový JSON z disku → upravit projekty → ověřit stejnou validací jako při startu (parseConfig) →
 // zapsat atomicky (dočasný soubor + rename) se zálohou <config>.bak → v paměti nahradit cfg.projects.
 import { readFileSync, writeFileSync, renameSync, copyFileSync, statSync, realpathSync, unlinkSync } from 'node:fs';
@@ -96,6 +97,29 @@ export function changeProjects(file, cfg, change, { isBusy = () => false } = {})
     raw.projects.splice(i, 1);
     if (raw.defaultProject === change.id) raw.defaultProject = raw.projects[0].id;
     id = change.id;
+  } else if (change.op === 'default') {
+    if (idx(change.id) < 0) throw Object.assign(new Error('Neznámý projekt.'), { status: 404 });
+    raw.defaultProject = change.id;
+    id = change.id;
+  } else if (change.op === 'addAccount') {
+    if (!Array.isArray(raw.accounts)) throw Object.assign(new Error('Konfigurace na disku nemá pole accounts.'), { status: 409 });
+    if (raw.accounts.length >= MAX_ACCOUNTS) throw bad(`Nejvýš ${MAX_ACCOUNTS} účtů.`);
+    const label = checkLabel(change.label);
+    const email = checkEmail(change.expectedEmail);
+    const dir = checkAccountDir(cfg, change.configDir);
+    if (cfg.accounts.some((a) => a.expectedEmail.toLowerCase() === email)) throw bad('Účet s tímto e-mailem už je v seznamu.');
+    id = slugId(label, new Set(raw.accounts.map((a) => a?.id)));
+    const accent = typeof change.accent === 'string' && /^#[0-9a-f]{6}$/i.test(change.accent) ? change.accent : undefined;
+    raw.accounts.push({ id, label, configDir: dir, expectedEmail: email, ...(accent ? { accent } : {}) });
+  } else if (change.op === 'removeAccount') {
+    if (!Array.isArray(raw.accounts)) throw Object.assign(new Error('Konfigurace na disku nemá pole accounts.'), { status: 409 });
+    const i = raw.accounts.findIndex((a) => a && a.id === change.id);
+    if (i < 0) throw Object.assign(new Error('Neznámý účet.'), { status: 404 });
+    if (raw.accounts.length <= 1) throw bad('Poslední účet nelze odebrat.');
+    if (isBusy(change.id)) throw Object.assign(new Error('Na účtu právě běží Claude – nejdřív ho zastavte.'), { status: 409 });
+    raw.accounts.splice(i, 1);
+    if (raw.defaultAccount === change.id) raw.defaultAccount = raw.accounts[0].id;
+    id = change.id;
   } else {
     throw bad('Neznámá operace.');
   }
@@ -113,11 +137,41 @@ export function changeProjects(file, cfg, change, { isBusy = () => false } = {})
   }
   cfg.projects = next.projects;
   cfg.defaultProject = next.defaultProject;
+  cfg.accounts = next.accounts;
+  cfg.defaultAccount = next.defaultAccount;
   return { id };
+}
+
+export const MAX_ACCOUNTS = 20;
+/** Očekávaný e-mail účtu (aplikace ho porovná s `claude auth status`). */
+export function checkEmail(v) {
+  const e = typeof v === 'string' ? v.trim().toLowerCase() : '';
+  if (!e || e.length > 200 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) throw bad('Zadejte e-mail, kterým je účet přihlášený v Claude Code.');
+  return e;
+}
+/**
+ * Složka účtu Claude Code (CLAUDE_CONFIG_DIR). Nemusí ještě existovat – vznikne při přihlášení.
+ * Nesmí to být kořen disku, domovská složka, složka projektu, stavu aplikace ani jiného účtu.
+ */
+export function checkAccountDir(cfg, input) {
+  if (typeof input !== 'string' || !input.trim() || input.length > 1000 || input.includes('\0')) throw bad('Zadejte složku účtu.');
+  const typed = input.trim();
+  if (!path.isAbsolute(typed) && !/^(~([\\/]|$)|%[^%]+%|\$)/.test(typed)) throw bad('Zadejte celou cestu (např. ~/.claude-prace nebo %USERPROFILE%\\.claude-prace).');
+  const full = path.resolve(expand(typed));
+  const home = os.homedir();
+  if (path.parse(full).root === full) throw bad('Kořen disku nelze použít.');
+  if (samePath(full, home) || isUnder(home, full)) throw bad('Domovská složka nejde použít – zvolte podsložku, např. ~/.claude-prace.');
+  for (const g of [cfg.stateDirFull, ...cfg.accounts.map((a) => a.configDirFull)].filter(Boolean))
+    if (samePath(full, g) || isUnder(full, g) || isUnder(g, full)) throw bad('Tuto složku už používá jiný účet nebo aplikace.');
+  for (const p of cfg.projects)
+    if (samePath(full, p.pathFull) || isUnder(full, p.pathFull)) throw bad('Složka účtu nesmí ležet v projektu.');
+  return typed;
 }
 
 /** Přehled pro Nastavení: projekty včetně cesty (jen pro zobrazení; běhy dál posílají jen id). */
 export const settingsView = (cfg) => ({
   projects: cfg.projects.map((p) => ({ id: p.id, label: p.label, path: p.pathFull })),
   defaultProject: cfg.defaultProject,
+  accounts: cfg.accounts.map((a) => ({ id: a.id, label: a.label, configDir: a.configDirFull, expectedEmail: a.expectedEmail, accent: a.accent })),
+  defaultAccount: cfg.defaultAccount,
 });

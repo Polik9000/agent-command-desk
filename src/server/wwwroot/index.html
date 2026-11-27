@@ -78,6 +78,7 @@
       </section>
 
       <form class="composer" id="composer">
+        <button type="button" class="to-bottom" id="to-bottom" hidden title="Posunout na konec konverzace">↓ Na konec</button>
         <section class="queue" id="queue" aria-label="Fronta zpráv" hidden></section>
         <div class="attach-list" id="attach-list" aria-label="Přílohy" hidden></div>
         <div class="fork-note" id="fork-note" hidden><span id="fork-note-text"></span>
@@ -161,8 +162,17 @@
     <section class="set-section" aria-labelledby="set-accounts-title">
       <h3 class="eyebrow" id="set-accounts-title">Účty</h3>
       <ul class="set-list" id="set-accounts"></ul>
-      <p class="set-hint">Účty se z bezpečnostních důvodů upravují jen ručně v <code>local/config.json</code> – každý s očekávaným
-        e-mailem, který aplikace ověřuje. Jiný účet (třeba osobní) tak nejde použít ani omylem.</p>
+      <form class="set-add" id="set-add-account">
+        <label class="set-field"><span>Název</span><input id="acc-label" maxlength="60" required autocomplete="off" placeholder="např. Práce"></label>
+        <label class="set-field"><span>E-mail účtu</span><input id="acc-email" type="email" maxlength="200" required autocomplete="off" spellcheck="false"></label>
+        <label class="set-field set-field--wide"><span>Složka účtu Claude Code</span><input id="acc-dir" maxlength="1000" required autocomplete="off" spellcheck="false" placeholder="např. ~/.claude-prace nebo %USERPROFILE%\.claude-prace"></label>
+        <label class="set-field set-field--color"><span>Barva</span><input id="acc-color" type="color" value="#7aa2ff"></label>
+        <button type="submit" class="btn btn-accent btn-small">Přidat účet</button>
+      </form>
+      <p class="set-msg" id="set-accounts-msg" role="status" aria-live="polite"></p>
+      <p class="set-hint">Každý účet má vlastní složku Claude Code. Aplikace ho použije jen tehdy, když je v té složce přihlášený
+        <strong>právě zadaný e-mail</strong> – jiný účet (třeba osobní) tak nejde použít ani omylem. Novou složku přihlásíte
+        tlačítkem <em>Příkaz pro přihlášení</em>: vložte ho do terminálu, spusťte a napište <code>/login</code>.</p>
     </section>
 
     <section class="set-section" aria-labelledby="set-perm-title">
@@ -319,6 +329,7 @@
       <textarea id="side-input" rows="2" maxlength="4000" placeholder="Na co se chcete zeptat? (Ctrl+Enter odešle)"></textarea>
       <button type="submit" class="btn btn-accent btn-small" id="side-send">Zeptat se</button>
     </form>
+    <div class="side-tools"><button type="button" class="btn btn-ghost btn-small" id="side-to-message" title="Poslat text jako běžnou zprávu do sezení">Přesunout do zprávy</button></div>
     <div class="side-answer" id="side-answer" aria-live="polite"></div>
     <p class="set-hint" id="side-status" role="status"></p>
     <p class="set-hint">Claude odpoví z kontextu otevřeného sezení v režimu Plán (nic nemění). Otázka ani odpověď se do sezení nezapíšou.</p>
@@ -341,6 +352,11 @@
       <div class="files-side">
         <label for="files-filter" class="sr-only">Hledat soubor podle názvu nebo cesty</label>
         <input type="search" id="files-filter" class="files-filter" maxlength="200" autocomplete="off" spellcheck="false" placeholder="Hledat soubor…">
+        <fieldset class="seg seg-small" id="files-view-switch">
+          <legend class="sr-only">Zobrazení souborů</legend>
+          <label class="seg-item"><input type="radio" name="files-view" value="list"><span>Seznam</span></label>
+          <label class="seg-item"><input type="radio" name="files-view" value="tree"><span>Složky</span></label>
+        </fieldset>
         <nav class="git-files files-list" id="files-list" aria-label="Soubory"></nav>
       </div>
       <section class="git-diff files-view" id="files-view" aria-label="Obsah souboru"></section>

@@ -210,8 +210,12 @@ test('Nastavení: jen s tokenem a Origin, neplatná cesta 400, přidání/přejm
   assert.equal((await send('DELETE', '/api/settings/projects/p2', undefined, { 'X-ACD-Token': TOKEN })).status, 403);
   assert.equal((await send('POST', '/api/settings/projects', { label: 'X', path: stateDir })).status, 400);
   assert.equal((await send('POST', '/api/settings/projects', { label: 'X', path: 'relativni' })).status, 400);
-  // účty z UI měnit nejde – neexistuje žádná taková adresa
-  assert.equal((await send('POST', '/api/settings/accounts', { id: 'x' })).status, 404);
+  // účty: jen s tokenem a Origin, neplatný vstup 400, poslední účet odebrat nejde
+  assert.equal((await send('POST', '/api/settings/accounts', { label: 'X' }, { 'X-ACD-Token': TOKEN })).status, 403);
+  assert.equal((await send('POST', '/api/settings/accounts', { label: 'X', expectedEmail: 'x', configDir: '~/.claude-x' })).status, 400);
+  assert.equal((await send('DELETE', '/api/settings/accounts/a')).status, 400);
+  assert.equal((await send('PUT', '/api/settings/default-project/nic')).status, 404);
+  assert.equal((await req('GET', '/api/commands?account=a&project=p', { 'X-ACD-Token': TOKEN })).status, 409);
 
   const added = await send('POST', '/api/settings/projects', { label: 'Navíc', path: extra });
   assert.equal(added.status, 200);

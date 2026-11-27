@@ -85,7 +85,7 @@ test('neplatné hodnoty odmítnuty', () => {
 
 test('models: výchozí seznam, vlastní seznam vždy s „Výchozí účtu“, neplatné id odmítnuto', () => {
   const def = loadConfig(writeCfg('m1.json', base()));
-  assert.deepEqual(def.models.map((m) => m.id), ['', 'opus', 'sonnet', 'fable']);
+  assert.deepEqual(def.models.map((m) => m.id), ['', 'opus', 'sonnet', 'haiku', 'fable']);
   const own = loadConfig(writeCfg('m2.json', { ...base(), models: [{ id: 'claude-opus-5-5', label: 'Opus 5.5' }] }));
   assert.deepEqual(own.models.map((m) => m.id), ['', 'claude-opus-5-5']);
   assert.throws(() => loadConfig(writeCfg('m3.json', { ...base(), models: [{ id: '--dangerously-skip-permissions', label: 'x' }] })), /models/);

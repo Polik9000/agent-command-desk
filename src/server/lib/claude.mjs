@@ -126,6 +126,9 @@ export class AccountGuard {
   }
 
   /** Kontroly běží za sebou (žádné souběžné `auth status`). */
+  /** Odebraný účet: zapomenout výsledek ověření. */
+  forget(id) { this.cache.delete(id); }
+
   check(a) {
     const p = this.queue.then(() => this.#runCheck(a));
     this.queue = p.catch(() => {});
@@ -202,6 +205,8 @@ export class ClaudeRunner {
     this.busySessions = new Set();
     /** @type {Map<string, any>} čekající procesy podle id sezení (pořadí = od nejstaršího) */
     this.idle = new Map();
+    /** @type {Map<string, {at:number, c:any}>} příkazy a agenti podle účtu a projektu (z initialize) */
+    this.commandsCache = new Map();
   }
 
   get idleMs() { return this.idleMsOverride ?? (this.cfg.sessionProcessMinutes ?? 10) * 60_000; }
@@ -212,6 +217,19 @@ export class ClaudeRunner {
   find(id) { return this.runs.get(id); }
   /** Běží v projektu nějaký claude? (takový projekt nejde odebrat v Nastavení) */
   isProjectBusy(projectId) { for (const r of this.runs.values()) if (r.projectId === projectId) return true; return false; }
+  isAccountBusy(accountId) { for (const r of this.runs.values()) if (r.accountId === accountId) return true; return false; }
+  /** Zavře čekající procesy účtu (po odebrání účtu z Nastavení). */
+  closeAccount(accountId) { for (const p of [...this.idle.values()]) if (p.accountId === accountId) this.#retire(p); }
+  /** Příkazy, skilly a agenti pro nabídku `/` – z cache (10 min), jinak krátký proces bez dotazu na model. */
+  async commandsFor(account, project) {
+    const key = `${account.id}|${project.id}`;
+    const c = this.commandsCache.get(key);
+    if (c && Date.now() - c.at < 10 * 60_000) return c.c;
+    const r = await this.#withTempProcess(account, project, null, (proc) => this.#control(proc, 'initialize'));
+    const info = commandsInfo(r);
+    this.commandsCache.set(key, { at: Date.now(), c: info });
+    return info;
+  }
   /** Zavře čekající procesy projektu (po odebrání projektu z Nastavení). */
   closeProject(projectId) { for (const p of [...this.idle.values()]) if (p.projectId === projectId) this.#retire(p); }
   stopAll() {
@@ -304,6 +322,7 @@ export class ClaudeRunner {
     // Seznam příkazů a skillů s popisy, agenti (jako nabídka / v terminálu) → událost pro paletu.
     this.#control(proc, 'initialize').then((r) => {
       const c = commandsInfo(r);
+      this.commandsCache.set(`${account.id}|${project.id}`, { at: Date.now(), c });
       if (proc.run && !proc.run.ended) proc.run.emit('event', ev('commands', c));
       else proc.commandsInfo = c;
     }).catch(() => { /* starší Claude Code – nevadí */ });
@@ -386,7 +405,7 @@ export class ClaudeRunner {
 
   async #withTempProcess(account, project, sessionId, fn) {
     const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'plan',
-      '--permission-prompts', 'none', '--resume', sessionId];
+      '--permission-prompts', 'none', ...(sessionId ? ['--resume', sessionId] : ['--no-session-persistence'])];
     const child = this.spawnFn(claudeExePath(this.cfg), args, {
       cwd: project.pathFull, env: runEnv(account), shell: false, stdio: ['pipe', 'pipe', 'pipe'], ...childSpawnOptions(),
     });

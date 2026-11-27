@@ -55,7 +55,7 @@ Runs on Windows and macOS (experimental). The UI is in Czech.
 | Esc Esc, `/rewind` | ↶ next to your message rewinds the project files to the state before it (file list shown first) |
 | questions with options | a card with choices and your own answer (needs `interactivePermissions`) |
 | permission prompts | cards *Povolit jednou / Povolit vždy / Zamítnout*, edits shown as a diff (needs `interactivePermissions`) |
-| `/btw` | *Bokem* – a side question answered from the session in Plan mode, never saved |
+| `/btw` | *Bokem* – a side question answered from the session in Plan mode, never saved (a half-written message moves into it) |
 | `--fork-session` | ⑂ continue in a copy of a session; the original stays untouched |
 | `/rename` | ✎ renames the session in Claude Code itself (visible in the terminal too) |
 | `/resume` | session list with search across your and Claude's messages; sessions open in a terminal are marked |
@@ -66,8 +66,8 @@ Runs on Windows and macOS (experimental). The UI is in Czech.
 - **Git changes (read-only)** – click the branch in the header: changed files grouped as conflicts, staged, changed and
   new, with a coloured diff. Click a line (or Enter on it) to write a comment; *Vložit do zprávy* turns all comments
   into one message for Claude. Nothing can be staged, committed or pushed from the app.
-- **Project files (read-only)** – *Soubory*: search by name or path, view with syntax highlighting, insert the path or
-  copy the content. Only what git tracks plus new files; key, certificate and `.env` files are never shown.
+- **Project files (read-only)** – *Soubory*: a flat list or folders (*Seznam* / *Složky*), search by name or path,
+  view with syntax highlighting, insert the path or copy the content. Only what git tracks plus new files; key, certificate and `.env` files are never shown.
 - **Session overview** – *Přehled sezení* in the footer: files Claude edited (also by agents), the task list, agents
   and their state, tools used, MCP servers.
 
@@ -84,8 +84,9 @@ Runs on Windows and macOS (experimental). The UI is in Czech.
 ### Window and safety
 - **Accounts with an allowlist** – each account is its own Claude Code config directory with an expected e-mail,
   verified via `claude auth status`; any other login (e.g. a personal account) cannot be used, not even by mistake.
-- **Projects** – only allowlisted folders; add, rename and remove them in *Nastavení* (accounts only by hand in
-  `local/config.json`).
+- **Projects and accounts in *Nastavení*** – add, rename, remove projects and pick the default one; add or remove
+  accounts (name, e-mail, Claude Code folder, colour). A new account is used only once that folder is logged in with
+  exactly that e-mail – *Příkaz pro přihlášení* copies the terminal command, then type `/login`.
 - **Claude in Chrome** (optional, only with `interactivePermissions`) – a checkbox in the *Model* panel lets Claude
   control your Chrome through the Claude in Chrome extension; every browser action needs your approval in the window.
 - **Notifications** – when Claude finishes, asks, a plan waits or a limit is hit while the window is in the background.
@@ -214,8 +215,9 @@ zaplnění **kontextu** se *Zhustit*. Během práce lze poslat zprávu hned nebo
 1. Každý účet = vlastní složka `CLAUDE_CONFIG_DIR` (alias viz *Setup*), jednou `/login`.
 2. `config.example.json` zkopírujte do `local/config.json` a vyplňte účty (včetně očekávaného e-mailu) a projekty.
    Doporučeno `"interactivePermissions": true` – karty svolení, otázky s možnostmi, režim Ručně a Claude in Chrome.
-   Volitelně `models` (modely ve výběru), `startFullscreen`, `sessionProcessMinutes`. Projekty jde později spravovat
-   přímo v aplikaci (**Nastavení**); účty jen ručně v configu.
+   Volitelně `models` (modely ve výběru), `startFullscreen`, `sessionProcessMinutes`. Projekty (i výchozí) a účty jde
+   později spravovat přímo v aplikaci (**Nastavení**); nový účet se použije, až je jeho složka přihlášená zadaným
+   e-mailem (tlačítko *Příkaz pro přihlášení*, v terminálu pak `/login`).
 3. Vlastní název: `app.name`. Vlastní vzhled: `local/theme.css` (vzor `src/server/wwwroot/theme.css`), ikona
    `local/favicon.svg`. Složka `local/` se nikdy necommituje. Světlý nebo tmavý motiv: **Nastavení → Vzhled**.
 4. Spouštěč: Windows `scripts\install.ps1`, macOS `scripts/install.sh`; pak v terminálu příkaz podle `app.id`.

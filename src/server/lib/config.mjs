@@ -26,6 +26,7 @@ const DEFAULT_MODELS = [
   { id: '', label: 'Výchozí účtu' },
   { id: 'opus', label: 'Opus' },
   { id: 'sonnet', label: 'Sonnet' },
+  { id: 'haiku', label: 'Haiku' },
   { id: 'fable', label: 'Fable' },
 ];
 

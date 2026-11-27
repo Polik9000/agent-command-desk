@@ -93,8 +93,11 @@ function renderMd(target, text, highlight) {
 const chat = () => $('#chat');
 function scrollDown(force) {
   const c = chat();
-  const nearBottom = c.scrollHeight - c.scrollTop - c.clientHeight < 160;
-  if (force || nearBottom) c.scrollTop = c.scrollHeight;
+  if (force) STICK.on = true;
+  if (!STICK.on) { $('#to-bottom').hidden = false; return; } // uživatel je výš → nechat ho tam
+  if (c.scrollHeight - c.scrollTop - c.clientHeight < 1) return;
+  c.scrollTo({ top: c.scrollHeight, behavior: 'instant' });
+  $('#to-bottom').hidden = true;
 }
 function append(node, force) {
   $('#empty').hidden = true;
@@ -570,6 +573,7 @@ async function switchAccount(id) {
 }
 
 async function switchProject(id) {
+  CMDLOAD.p = null;
   if (S.run || id === S.project) return;
   if (!leaveContext()) { $('#project').value = S.project; return; }
   saveDraft();
@@ -605,8 +609,8 @@ function addRunStats(ev, run) {
 function renderFootStats() {
   const b = $('#foot-cost');
   const l = S.stats.last;
-  if (!l) { b.hidden = true; return; }
   b.hidden = false;
+  if (!l) { b.textContent = 'Statistiky'; return; }
   b.textContent = `poslední běh ${fmtTok(tokTotal(l))} tokenů • odhad API $${l.cost.toFixed(3)} • ${l.turns} ${plural(l.turns, 'tah', 'tahy', 'tahů')} • ${(l.ms / 1000).toFixed(1)} s`;
 }
 
@@ -1062,6 +1066,7 @@ function insertIntoPrompt(text, { replaceEmpty = true } = {}) {
     ta.setSelectionRange(a + text.length, a + text.length);
   }
   ta.focus();
+  autoGrow();
   clearTimeout(DR.timer);
   DR.timer = setTimeout(saveDraft, 400);
 }
@@ -1441,6 +1446,13 @@ function renderFiles() {
   const q = fold($('#files-filter').value.trim());
   const terms = q.split(/\s+/).filter(Boolean);
   const hits = terms.length ? F.files.filter((p) => { const f = fold(p); return terms.every((t) => f.includes(t)); }) : F.files;
+  if (filesTree()) {
+    nav.textContent = '';
+    if (!hits.length) nav.appendChild(el('p', 'git-note', terms.length ? 'Nic nenalezeno.' : 'Žádné soubory.'));
+    else renderTree(nav, hits, terms.length > 0);
+    $('#files-status').textContent = terms.length ? `${hits.length} ${plural(hits.length, 'soubor', 'soubory', 'souborů')}` : '';
+    return;
+  }
   // Shoda v názvu souboru před shodou jen ve složce.
   const name = (p) => fold(p.slice(p.lastIndexOf('/') + 1));
   const sorted = terms.length ? hits.slice().sort((x, y) => (name(x).includes(terms[0]) ? 0 : 1) - (name(y).includes(terms[0]) ? 0 : 1)) : hits;
@@ -1500,6 +1512,10 @@ async function showFile(btn, p) {
 }
 
 function setupFiles() {
+  for (const i of document.querySelectorAll('input[name="files-view"]')) {
+    i.checked = (i.value === 'tree') === filesTree();
+    i.addEventListener('change', () => setFilesView(i.value === 'tree'));
+  }
   $('#files-open').addEventListener('click', openFiles);
   $('#files-refresh').addEventListener('click', () => loadFiles(true));
   $('#files-close').addEventListener('click', () => $('#filesdlg').close());
@@ -1541,7 +1557,7 @@ async function openSettings() {
   $('#set-autocontinue').checked = autoOn();
   $('#set-drafts').checked = draftsOn();
   if (!d.open) d.showModal();
-  try { renderSettingsProjects(await apiJson('/api/settings')); } catch (e) { setMsg(e.message, 'err'); }
+  try { const v = await apiJson('/api/settings'); renderSettingsProjects(v); renderSettingsAccountsFull(v); } catch (e) { setMsg(e.message, 'err'); }
 }
 
 function renderSettingsAccounts() {
@@ -1570,6 +1586,11 @@ function renderSettingsProjects(view) {
     li.appendChild(main);
     if (p.id === S.project) li.appendChild(el('span', 'set-badge', 'otevřený'));
     if (p.id === view.defaultProject) li.appendChild(el('span', 'set-badge', 'výchozí'));
+    else {
+      const d = button('Nastavit jako výchozí', 'btn-ghost btn-small', () => setDefaultProject(p));
+      d.title = 'Tento projekt se otevře při spuštění aplikace';
+      li.appendChild(d);
+    }
     li.appendChild(button('Přejmenovat', 'btn-ghost btn-small', () => startRename(li, p)));
     const rm = button('Odebrat', 'btn-danger btn-small', () => removeProject(p));
     rm.disabled = view.projects.length <= 1 || (!!S.run && p.id === S.project);
@@ -1664,6 +1685,7 @@ function setupSettings() {
   $('#settings-close').addEventListener('click', () => $('#settings').close());
   $('#settings').addEventListener('click', (e) => { if (e.target === e.currentTarget) e.currentTarget.close(); }); // klik na pozadí
   $('#set-add').addEventListener('submit', addProjectSubmit);
+  $('#set-add-account').addEventListener('submit', addAccountSubmit);
   $('#set-fullscreen').addEventListener('click', toggleFullscreen);
   $('#set-theme').addEventListener('change', (e) => { if (window.acdTheme) window.acdTheme.set(e.target.value); });
   document.addEventListener('fullscreenchange', renderFullscreenButton);
@@ -2012,7 +2034,7 @@ function setRunning(on) {
  * 'queue' = do fronty (odešle se po dokončení).
  */
 function send(target = 'now') {
-  setTimeout(saveDraft, 0); // odeslaný text už není koncept
+  setTimeout(() => { saveDraft(); autoGrow(); }, 0); // odeslaný text už není koncept
   const ta = $('#prompt');
   if (S.pending.some((a) => a.status === 'uploading')) { S.attachNotice = 'Počkejte, až se přílohy nahrají.'; renderAttachments(); return; }
   const files = S.pending.filter((a) => a.status === 'ok').map(({ id, name, type, size }) => ({ id, name, type, size }));
@@ -2331,6 +2353,7 @@ function updateSlash() {
   const ta = $('#prompt');
   let items, mode = 'cmd', at = null;
   if (q !== null) {
+    if (!commandEntries().length) { ensureCommands().then((ok) => { if (ok && slashQuery() !== null) updateSlash(); }); }
     const f = fold(q);
     items = commandEntries().filter((c) => fold(c.name).includes(f))
       .sort((x, y) => (fold(x.name).startsWith(f) ? 0 : 1) - (fold(y.name).startsWith(f) ? 0 : 1)).slice(0, 50)
@@ -2924,6 +2947,7 @@ function saveDraft() {
 function restoreDraft() {
   const d = draftsOn() ? readDrafts()[draftKey()] : null;
   $('#prompt').value = d ? d.text : '';
+  autoGrow();
   if (d) setStatus('Obnovena rozepsaná zpráva.');
 }
 const hasDraft = (id) => draftsOn() && !!readDrafts()[`${S.account}|${S.project}|${id}`];
@@ -3455,6 +3479,202 @@ function planComments(box, markdown) {
   d.querySelector('.diff-line')?.focus();
 }
 
+/* ---------- Pole pro psaní roste s textem, kurzor zůstává vidět ---------- */
+function autoGrow() {
+  const ta = $('#prompt');
+  if (!ta) return;
+  const max = Math.round(window.innerHeight * 0.4);
+  ta.style.height = 'auto';
+  ta.style.height = `${Math.min(ta.scrollHeight + 4, max)}px`;
+  ta.style.overflowY = ta.scrollHeight + 4 > max ? 'auto' : 'hidden';
+  // Kurzor na konci (typicky po Enteru) → posunout dolů, ať je nový řádek vidět.
+  if (ta.selectionEnd >= ta.value.length - 1) ta.scrollTop = ta.scrollHeight;
+}
+
+/* ---------- Chat se drží dole, jen když jste dole ---------- */
+const STICK = { on: true };
+function setupStick() {
+  const c = chat();
+  c.addEventListener('scroll', () => {
+    STICK.on = c.scrollHeight - c.scrollTop - c.clientHeight < 48;
+    $('#to-bottom').hidden = STICK.on;
+  }, { passive: true });
+  $('#to-bottom').addEventListener('click', () => { scrollDown(true); $('#prompt').focus({ preventScroll: true }); });
+}
+
+/* ---------- Otázka bokem: rozepsaný text se přesune do otázky (a zpět, když ji neodešlete) ---------- */
+const SIDE = { moved: '' };
+function openSideWithDraft() {
+  const ta = $('#prompt'), side = $('#side-input');
+  if (ta.value.trim() && !side.value.trim()) {
+    SIDE.moved = ta.value;
+    side.value = ta.value;
+    ta.value = '';
+    autoGrow();
+    saveDraft();
+  }
+  openSide();
+  if (SIDE.moved) $('#side-status').textContent = 'Rozepsanou zprávu jsem přesunul sem. Když otázku neodešlete, vrátí se po zavření zpět.';
+}
+function sideClosed() {
+  const ta = $('#prompt'), side = $('#side-input');
+  if (SIDE.moved && side.value.trim() && !ta.value.trim()) { ta.value = side.value; side.value = ''; autoGrow(); saveDraft(); }
+  SIDE.moved = '';
+}
+function sideToMessage() {
+  const ta = $('#prompt'), side = $('#side-input');
+  const t = side.value.trim();
+  if (!t) return;
+  ta.value = ta.value.trim() ? `${ta.value.replace(/\s+$/, '')}\n\n${t}` : t;
+  side.value = '';
+  SIDE.moved = '';
+  $('#sidedlg').close();
+  autoGrow();
+  saveDraft();
+  ta.focus();
+}
+
+/* ---------- Nabídka / : příkazy a skilly ze serveru, když je okno ještě nezná ---------- */
+const CMDLOAD = { key: '', p: null };
+function ensureCommands() {
+  const key = `${S.account}|${S.project}`;
+  if (CMDLOAD.key === key && CMDLOAD.p) return CMDLOAD.p;
+  CMDLOAD.key = key;
+  CMDLOAD.p = apiJson(`/api/commands?account=${encodeURIComponent(S.account)}&project=${encodeURIComponent(S.project)}`)
+    .then((r) => {
+      if (`${S.account}|${S.project}` !== key) return false;
+      rememberCommandInfo(r);
+      if (!commandEntries().length && r.commands.length)
+        store(CMDS_KEY(S.account, S.project), JSON.stringify({ commands: r.commands.map((c) => c.name), skills: [] }));
+      return true;
+    })
+    .catch(() => { CMDLOAD.p = null; return false; });
+  return CMDLOAD.p;
+}
+
+/* ---------- Soubory projektu jako strom složek ---------- */
+const FILES_VIEW_KEY = 'acd.files.view';
+const filesTree = () => load(FILES_VIEW_KEY) === 'tree';
+F.open = new Set();
+function buildTree(paths) {
+  const root = { dirs: new Map(), files: [] };
+  for (const p of paths) {
+    const parts = p.split('/');
+    let n = root;
+    for (let i = 0; i < parts.length - 1; i++) {
+      if (!n.dirs.has(parts[i])) n.dirs.set(parts[i], { dirs: new Map(), files: [], path: parts.slice(0, i + 1).join('/') });
+      n = n.dirs.get(parts[i]);
+    }
+    n.files.push(p);
+  }
+  return root;
+}
+function renderTree(nav, paths, expandAll) {
+  const tree = buildTree(paths);
+  let shown = 0;
+  const walk = (node, depth, parent) => {
+    const dirs = [...node.dirs.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    for (const [name, d] of dirs) {
+      if (shown > FILES_SHOWN * 2) return;
+      const open = expandAll || F.open.has(d.path);
+      const b = el('button', 'git-file files-dir');
+      b.type = 'button';
+      b.style.paddingLeft = `${0.5 + depth * 1.1}em`;
+      b.setAttribute('aria-expanded', String(open));
+      b.setAttribute('aria-label', `Složka ${d.path}`);
+      b.append(el('span', 'files-caret', open ? '▾' : '▸'), el('span', 'git-path', `${name}/`));
+      b.addEventListener('click', () => { if (F.open.has(d.path)) F.open.delete(d.path); else F.open.add(d.path); renderFiles(); focusFileButton(`Složka ${d.path}`); });
+      parent.appendChild(b);
+      shown++;
+      if (open) walk(d, depth + 1, parent);
+    }
+    for (const p of node.files.sort((a, b) => a.localeCompare(b))) {
+      if (shown > FILES_SHOWN * 2) return;
+      const b = el('button', 'git-file');
+      b.type = 'button';
+      b.style.paddingLeft = `${0.5 + depth * 1.1 + 1}em`;
+      b.appendChild(el('span', 'git-path', p.slice(p.lastIndexOf('/') + 1)));
+      b.setAttribute('aria-label', p);
+      if (p === F.sel) b.setAttribute('aria-current', 'true');
+      b.addEventListener('click', () => showFile(b, p));
+      parent.appendChild(b);
+      shown++;
+    }
+  };
+  walk(tree, 0, nav);
+  if (shown > FILES_SHOWN * 2) nav.appendChild(el('p', 'git-note', 'Seznam je zkrácený – zpřesněte hledání.'));
+}
+function focusFileButton(label) {
+  const b = [...$('#files-list').querySelectorAll('.git-file')].find((x) => x.getAttribute('aria-label') === label);
+  if (b) b.focus();
+}
+function setFilesView(tree) {
+  store(FILES_VIEW_KEY, tree ? 'tree' : 'list');
+  for (const i of document.querySelectorAll('input[name="files-view"]')) i.checked = (i.value === 'tree') === tree;
+  renderFiles();
+}
+
+/* ---------- Nastavení: účty a výchozí projekt ---------- */
+async function setDefaultProject(p) {
+  try {
+    const view = await apiJson(`/api/settings/default-project/${encodeURIComponent(p.id)}`, { method: 'PUT' });
+    renderSettingsProjects(view);
+    setMsg(`Výchozí projekt: „${p.label}“ – otevře se při příštím spuštění.`);
+  } catch (e) { setMsg(e.message, 'err'); }
+}
+function loginCommand(dir) {
+  return navigator.userAgent.includes('Windows') ? `$env:CLAUDE_CONFIG_DIR = "${dir}"; claude` : `CLAUDE_CONFIG_DIR="${dir}" claude`;
+}
+function renderSettingsAccountsFull(view) {
+  const ul = $('#set-accounts');
+  ul.textContent = '';
+  for (const a of view.accounts) {
+    const st = accountById(a.id) || {};
+    const li = el('li', 'set-item set-item--wrap');
+    const sw = el('i', 'swatch'); sw.style.background = a.accent; li.appendChild(sw);
+    const main = el('div', 'set-item-main');
+    main.appendChild(el('span', 'set-item-label', a.label + (a.id === view.defaultAccount ? ' (výchozí)' : '')));
+    main.appendChild(el('span', 'set-item-path', `${a.expectedEmail} · ${a.configDir}`));
+    if (!st.ok && st.error) main.appendChild(el('span', 'set-item-path set-item-err', st.error));
+    li.appendChild(main);
+    li.appendChild(el('span', st.ok ? 'set-badge' : 'set-badge set-badge--bad', st.ok ? 'ověřen' : st.error === 'Ověřuji…' ? 'ověřuji' : 'nepřihlášen'));
+    if (!st.ok) {
+      const cmd = loginCommand(a.configDir);
+      const copy = button('Příkaz pro přihlášení', 'btn-ghost btn-small', () => copyText(cmd, copy, 'Příkaz je ve schránce – vložte ho do terminálu a napište /login.'));
+      copy.title = cmd;
+      li.appendChild(copy);
+    }
+    const rm = button('Odebrat', 'btn-danger btn-small', async () => {
+      if (!confirm(`Odebrat účet „${a.label}“ z aplikace?\n\nPřihlášení ani sezení se nesmažou, účet jen zmizí ze seznamu.`)) return;
+      await changeAccount('DELETE', a.id, undefined, `Účet „${a.label}“ odebrán.`);
+    });
+    rm.disabled = view.accounts.length <= 1 || (!!S.run && S.run.account === a.id);
+    li.appendChild(rm);
+    ul.appendChild(li);
+  }
+}
+async function changeAccount(method, id, body, okText) {
+  const m = $('#set-accounts-msg');
+  try {
+    const view = await apiJson(id ? `/api/settings/accounts/${encodeURIComponent(id)}` : '/api/settings/accounts', { method, body });
+    m.dataset.kind = ''; m.textContent = okText;
+    await loadState();
+    if (!S.accounts.some((a) => a.id === S.account)) await switchAccount(S.accounts[0].id);
+    renderSettingsAccountsFull(view);
+    // Ověření běží na pozadí – chvíli obnovovat stav.
+    for (let i = 0; i < 6; i++) { await new Promise((r) => setTimeout(r, 2500)); await loadState(); if ($('#settings').open) renderSettingsAccountsFull(await apiJson('/api/settings')); }
+    return view;
+  } catch (e) { m.dataset.kind = 'err'; m.textContent = e.message; return null; }
+}
+async function addAccountSubmit(e) {
+  e.preventDefault();
+  const label = $('#acc-label').value.trim(), email = $('#acc-email').value.trim(), dir = $('#acc-dir').value.trim();
+  if (!label || !email || !dir) return;
+  const view = await changeAccount('POST', '', { label, expectedEmail: email, configDir: dir, accent: $('#acc-color').value },
+    `Účet „${label}“ přidán. Pokud v té složce ještě nejste přihlášený, zkopírujte příkaz pro přihlášení a v terminálu napište /login.`);
+  if (view) { $('#acc-label').value = ''; $('#acc-email').value = ''; $('#acc-dir').value = ''; }
+}
+
 /* ---------- Hledat v konverzaci (Ctrl+F) – bez diakritiky, zvýraznění přes CSS Highlight API ---------- */
 const FD = { ranges: [], cur: -1, timer: null, obs: null, max: 2000 };
 const canHighlight = () => !!(window.CSS && CSS.highlights && window.Highlight);
@@ -3749,6 +3969,9 @@ async function main() {
     listKeydown(e);
   });
   $('#prompt').addEventListener('input', updateSlash);
+  $('#prompt').addEventListener('input', autoGrow);
+  $('#prompt').addEventListener('keyup', (e) => { if (e.key === 'Enter') autoGrow(); });
+  window.addEventListener('resize', autoGrow);
   $('#prompt').addEventListener('input', () => { clearTimeout(DR.timer); DR.timer = setTimeout(saveDraft, 400); });
   $('#prompt').addEventListener('click', updateSlash);
   $('#prompt').addEventListener('blur', closeSlash);
@@ -3769,7 +3992,11 @@ async function main() {
   setupProgress();
   setupContext();
   setupSide();
-  $('#side-open').addEventListener('click', openSide);
+  $('#side-open').addEventListener('click', openSideWithDraft);
+  $('#side-to-message').addEventListener('click', sideToMessage);
+  $('#sidedlg').addEventListener('close', sideClosed);
+  setupStick();
+  autoGrow();
   $('#fork-cancel').addEventListener('click', () => { S.forkNext = false; renderForkNote(); $('#prompt').focus(); });
   $('#chrome-toggle').addEventListener('change', (e) => setChrome(e.target.checked));
   $('#overview-export').addEventListener('click', exportSession);

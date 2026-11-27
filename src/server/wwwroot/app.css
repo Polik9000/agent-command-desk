@@ -103,7 +103,7 @@ select:hover { border-color: var(--gray-3); }
 
 .main { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .chat:focus-visible { outline-offset: -3px; }
-.chat { flex: 1; overflow-y: auto; padding: var(--space-4) var(--space-5); display: flex; flex-direction: column; gap: var(--space-3); scroll-behavior: smooth; }
+.chat { flex: 1; overflow-y: auto; padding: var(--space-4) var(--space-5); display: flex; flex-direction: column; gap: var(--space-3); }
 
 /* ---------- Prázdný stav ---------- */
 .empty { position: relative; margin: auto 0; padding: var(--space-5) 0; }
@@ -628,3 +628,21 @@ textarea::placeholder { color: var(--gray-3); }
 .side-answer:empty { display: none; }
 .tool-img { display: block; max-width: 100%; max-height: 28rem; margin-top: var(--space-2); border: 1px solid var(--line); border-radius: var(--radius); }
 .plan-review { display: grid; gap: var(--space-2); margin-top: var(--space-2); }
+
+/* ---------- Pole pro psaní, chat dole, soubory jako strom, účty ---------- */
+#prompt { min-height: 4.5rem; resize: none; overflow-y: hidden; }
+.composer { position: relative; }
+.to-bottom { position: absolute; right: var(--space-5); bottom: calc(100% + .6rem); z-index: 7;
+  background: var(--gray-2); color: var(--fg); border: 1px solid var(--line); border-radius: 999px; padding: .4em .9em; cursor: pointer;
+  font: 700 .75rem/1.2 var(--font-head); letter-spacing: .06em; box-shadow: 0 4px 14px rgba(0, 0, 0, .35); }
+.to-bottom[hidden] { display: none; }
+.to-bottom:hover { border-color: var(--accent-ink); }
+.files-side .seg-small { align-self: flex-start; }
+.files-dir { color: var(--text-muted); }
+.files-caret { width: 1em; display: inline-block; color: var(--text-muted); }
+.set-item--wrap { flex-wrap: wrap; }
+.set-item-err { color: var(--err); }
+.set-field--color { flex: 0 0 4rem; }
+.set-field--color input { padding: 0; height: 2.3rem; cursor: pointer; }
+#set-accounts-msg[data-kind="err"] { color: var(--err); }
+.side-tools { display: flex; justify-content: flex-end; margin-top: var(--space-1); }

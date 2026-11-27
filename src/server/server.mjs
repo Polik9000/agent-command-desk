@@ -311,8 +311,44 @@ async function handleApi(req, res, url) {
   // Statistiky v čase (jen čísla z usage.jsonl).
   if (req.method === 'GET' && p === '/api/stats/history') return sendJson(res, 200, usage.read(Number(q.get('days') ?? 30)));
 
-  // Nastavení: jen projekty (účty se z UI nikdy nemění – viz docs/security.md).
+  // Nastavení: projekty (přidat, přejmenovat, odebrat, výchozí) a účty (přidat, odebrat) – viz docs/security.md.
   if (req.method === 'GET' && p === '/api/settings') return sendJson(res, 200, settingsView(cfg));
+  if ((req.method === 'POST' && p === '/api/settings/accounts') || (req.method === 'DELETE' && (m = /^\/api\/settings\/accounts\/([^/]+)$/.exec(p)))) {
+    let body = {};
+    if (req.method === 'POST') {
+      try { body = await readJson(req); } catch (e) { return problem(res, e.status ?? 400, e.message); }
+      if (!body || typeof body !== 'object') return problem(res, 400, 'Prázdný požadavek.');
+    } else req.resume();
+    const change = req.method === 'POST'
+      ? { op: 'addAccount', label: body.label, configDir: body.configDir, expectedEmail: body.expectedEmail, accent: body.accent }
+      : { op: 'removeAccount', id: decodeURIComponent(m[1]) };
+    try {
+      const r = changeProjects(CONFIG_FILE, cfg, /** @type {any} */ (change), { isBusy: (x) => runner.isAccountBusy(x) });
+      log(`Nastavení: účet ${r.id} – ${change.op}`);
+      if (change.op === 'removeAccount') { accounts.forget(r.id); runner.closeAccount(r.id); }
+      else accounts.check(findAccount(cfg, r.id)).catch(() => {});
+      return sendJson(res, 200, { ...settingsView(cfg), changed: r.id });
+    } catch (e) {
+      if (!e.status) log(`Nastavení: zápis selhal: ${e.message}`);
+      return problem(res, e.status ?? 500, e.status ? e.message : 'Uložení konfigurace selhalo.');
+    }
+  }
+  if (req.method === 'PUT' && (m = /^\/api\/settings\/default-project\/([^/]+)$/.exec(p))) {
+    req.resume();
+    try {
+      const r = changeProjects(CONFIG_FILE, cfg, { op: 'default', id: decodeURIComponent(m[1]) });
+      log(`Nastavení: výchozí projekt ${r.id}`);
+      return sendJson(res, 200, { ...settingsView(cfg), changed: r.id });
+    } catch (e) { return problem(res, e.status ?? 500, e.status ? e.message : 'Uložení konfigurace selhalo.'); }
+  }
+
+  // Příkazy, skilly a agenti účtu v projektu (z Claude Code `initialize`, bez dotazu na model; cache).
+  if (req.method === 'GET' && p === '/api/commands') {
+    const r = await resolveAccountProject(res, q.get('account'), q.get('project'));
+    if (!r) return;
+    try { return sendJson(res, 200, await runner.commandsFor(r.account, r.project)); }
+    catch (e) { return problem(res, 502, e.message); }
+  }
   if ((req.method === 'POST' && p === '/api/settings/projects')
     || ((req.method === 'PATCH' || req.method === 'DELETE') && (m = /^\/api\/settings\/projects\/([^/]+)$/.exec(p)))) {
     let body = {};

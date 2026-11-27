@@ -116,3 +116,31 @@ test('poškozený soubor na disku → 409, nic se nepřepíše', () => {
   assert.throws(() => add('B', projB), err(409, /JSON/));
   assert.equal(readFileSync(file, 'utf8'), '{ nejde');
 });
+
+test('výchozí projekt', () => {
+  add('B', projB);
+  const id = cfg.projects[1].id;
+  changeProjects(file, cfg, { op: 'default', id });
+  assert.equal(cfg.defaultProject, id);
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).defaultProject, id);
+  assert.throws(() => changeProjects(file, cfg, { op: 'default', id: 'nic' }), err(404, /Neznámý/));
+});
+
+test('účty: přidat s ověřenou složkou a e-mailem, odebrat; ochrany', () => {
+  const acc = (o) => changeProjects(file, cfg, { op: 'addAccount', label: 'Práce', configDir: path.join(dir, '.claude-prace'), expectedEmail: 'Prace@Example.com', accent: '#123abc', ...o });
+  const r = acc({});
+  assert.equal(r.id, 'prace');
+  const saved = JSON.parse(readFileSync(file, 'utf8')).accounts;
+  assert.deepEqual(saved[1], { id: 'prace', label: 'Práce', configDir: path.join(dir, '.claude-prace'), expectedEmail: 'prace@example.com', accent: '#123abc' });
+  assert.equal(cfg.accounts.length, 2);
+  assert.throws(() => acc({ configDir: path.join(dir, 'jina') }), err(400, /e-mailem/));
+  assert.throws(() => acc({ expectedEmail: 'b@example.com', configDir: acct }), err(400, /jiný účet/));
+  assert.throws(() => acc({ expectedEmail: 'b@example.com', configDir: path.join(projA, '.claude') }), err(400, /projekt/));
+  assert.throws(() => acc({ expectedEmail: 'b@example.com', configDir: os.homedir() }), err(400, /Domovská/));
+  assert.throws(() => acc({ expectedEmail: 'neni-email', configDir: path.join(dir, 'x') }), err(400, /e-mail/));
+  assert.throws(() => acc({ expectedEmail: 'b@example.com', configDir: 'relativni' }), err(400, /celou cestu/));
+  assert.throws(() => changeProjects(file, cfg, { op: 'removeAccount', id: 'prace' }, { isBusy: () => true }), err(409, /běží/));
+  changeProjects(file, cfg, { op: 'removeAccount', id: 'prace' });
+  assert.equal(cfg.accounts.length, 1);
+  assert.throws(() => changeProjects(file, cfg, { op: 'removeAccount', id: 'a' }), err(400, /Poslední/));
+});
