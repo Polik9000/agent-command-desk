@@ -40,6 +40,7 @@ Runs on Windows and macOS (experimental). The UI is in Czech.
   checked by content, size limited, stored outside the repo, deleted after 7 days.
 - **`/` and `@` in the text box** – `/` suggests your commands and skills with descriptions and argument hints, `@`
   suggests project files (Claude Code reads the file right away).
+- **Follows the output** – the conversation stays at the bottom while Claude writes, unless you scroll up (then *↓ Na konec* appears); the message box grows with your text.
 - **Find** – Ctrl+F finds text in the conversation (diacritics and case ignored; matches in collapsed cards open them).
 - **Comfortable typing** – lists continue on Enter, Shift+Enter is a plain new line; unsent drafts are kept per session.
 
@@ -72,7 +73,7 @@ Runs on Windows and macOS (experimental). The UI is in Czech.
   and their state, tools used, MCP servers.
 
 ### Usage and limits
-- **Statistics** – click the last run in the footer: tokens, turns, time and the API-price estimate for the last run and
+- **Statistics** – the *Statistiky* button in the footer (or Ctrl+K → *Statistiky v čase*): tokens, turns, time and the API-price estimate for the last run and
   the session, apart from your **subscription limit** (5-hour and 7-day windows). *Historie a grafy*: per day by
   project, model or account, limit usage over time, table and CSV export (only numbers are stored, 180 days).
 - **Several accounts** – a warning when an account gets close to its limit; when it hits it, one click switches to
@@ -137,7 +138,7 @@ Runs on Windows and macOS (experimental). The UI is in Czech.
    |---|---|
    | `interactivePermissions` | `true` = permission cards, questions with options, mode *Ručně* and Claude in Chrome. Off by default: whatever Claude Code would ask about is denied automatically. **Recommended `true`.** |
    | `appendSystemPrompt` | text added to Claude Code's system prompt (`{appName}` is replaced); the example tells Claude it runs in this app and may ask questions with options |
-   | `models` | models offered in the picker, e.g. `[{ "id": "opus", "label": "Opus" }, { "id": "sonnet", "label": "Sonnet" }]` (`id` = alias or full name for `claude --model`; the account default `""` is always added) |
+   | `models` | models offered in the picker, e.g. `[{ "id": "haiku", "label": "Haiku" }, { "id": "sonnet", "label": "Sonnet" }, { "id": "opus", "label": "Opus" }]` (default order: Haiku, Sonnet, Opus, Fable – from fastest to most capable) (`id` = alias or full name for `claude --model`; the account default `""` is always added) |
    | `sessionProcessMinutes` | how long Claude Code stays running after a reply (default 10; `0` = new process every message) |
    | `startFullscreen` | `true` = open the window in full screen |
    | `claudeExe`, `gitExe`, `browserExe`, `stateDir`, `disallowedTools` | paths and tools to deny |

@@ -24,9 +24,9 @@ const MODEL_ID_RX = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/; // nikdy nezačíná �
 export const EFFORTS = ['', 'low', 'medium', 'high', 'xhigh', 'max'];
 const DEFAULT_MODELS = [
   { id: '', label: 'Výchozí účtu' },
-  { id: 'opus', label: 'Opus' },
+  { id: 'haiku', label: 'Haiku' },   // od nejrychlejšího po nejschopnější
   { id: 'sonnet', label: 'Sonnet' },
-  { id: 'haiku', label: 'Haiku' },
+  { id: 'opus', label: 'Opus' },
   { id: 'fable', label: 'Fable' },
 ];
 
