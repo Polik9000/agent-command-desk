@@ -209,3 +209,12 @@ test('Git přehled: jen s tokenem, neznámý projekt 404, cesta mimo výpis stat
   assert.equal((await diff('path=package.json&area=rm')).status, 400);
   assert.equal((await diff('area=worktree')).status, 400);
 });
+
+test('hledání v sezeních: 2–100 znaků, jen ověřený účet a známý projekt', async () => {
+  const s = (qs) => req('GET', `/api/sessions/search?${qs}`, { 'X-ACD-Token': TOKEN });
+  assert.equal((await req('GET', '/api/sessions/search?account=a&project=p&q=abc')).status, 401);
+  assert.equal((await s('account=a&project=p&q=x')).status, 400);
+  assert.equal((await s(`account=a&project=p&q=${'x'.repeat(101)}`)).status, 400);
+  assert.equal((await s('account=nic&project=p&q=abc')).status, 400);
+  assert.equal((await s('account=a&project=p&q=abc')).status, 409); // účet v testu není ověřen
+});

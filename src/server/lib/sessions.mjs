@@ -77,3 +77,47 @@ export function history(file, maxItems = 400) {
   }
   return items.slice(-maxItems);
 }
+
+const fold = (s) => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+/** Hledání: nejvýš tolik nejnovějších sezení a tolik bajtů na jeden transkript. */
+export const SEARCH_MAX_FILES = 50;
+export const SEARCH_MAX_BYTES = 32 * 1024 * 1024;
+
+/**
+ * Fulltext v textech uživatele a Claude (bez nástrojů a vedlejších agentů) v sezeních jednoho účtu a projektu.
+ * Bez rozlišení velikosti písmen a diakritiky. Vrací sezení s úryvkem kolem první shody.
+ * @param {string} q 2–100 znaků
+ */
+export function searchSessions(projectsDirectory, projectPath, q, { maxFiles = SEARCH_MAX_FILES, maxResults = 30 } = {}) {
+  const needle = fold(String(q).replace(/\s+/g, ' ').trim());
+  if (needle.length < 2 || needle.length > 100) return [];
+  const dir = projectDir(projectsDirectory, projectPath);
+  const out = [];
+  for (const s of listSessions(projectsDirectory, projectPath, maxFiles)) {
+    const file = path.join(dir, `${s.id}.jsonl`);
+    try { if (statSync(file).size > SEARCH_MAX_BYTES) continue; } catch { continue; }
+    let hit = null;
+    for (const line of readLines(file)) {
+      if (!line || !(line.includes('"type":"user"') || line.includes('"type":"assistant"'))) continue;
+      let o; try { o = JSON.parse(line); } catch { continue; }
+      if (o.isSidechain === true) continue;
+      const texts = o.type === 'user' && o.isMeta == null ? [userText(o)]
+        : o.type === 'assistant' && Array.isArray(o.message?.content) ? o.message.content.filter((b) => b?.type === 'text').map((b) => b.text) : [];
+      for (const t of texts) {
+        if (typeof t !== 'string') continue;
+        const flat = t.replace(/\s+/g, ' ');
+        // fold() zachová délku jen pro složené znaky; pro úryvek stačí přibližná pozice.
+        const i = fold(flat).indexOf(needle);
+        if (i < 0) continue;
+        const from = Math.max(0, i - 50);
+        hit = { role: o.type === 'user' ? 'user' : 'assistant',
+          snippet: (from > 0 ? '…' : '') + flat.slice(from, i + needle.length + 70).trim() + (i + needle.length + 70 < flat.length ? '…' : '') };
+        break;
+      }
+      if (hit) break;
+    }
+    if (hit) out.push({ ...s, ...hit });
+    if (out.length >= maxResults) break;
+  }
+  return out;
+}

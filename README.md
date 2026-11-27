@@ -35,7 +35,9 @@ Runs on Windows and macOS (experimental). The UI is in Czech.
   is remembered per account, applies from the next message (also inside a running session) and queued messages keep
   theirs. The footer shows the model Claude Code actually used; effort is marked *požadováno* (requested) because the
   CLI does not report it back.
-- **Sessions** – list with history, resume any session, Stop kills the whole process tree.
+- **Sessions** – list with history, resume any session, Stop kills the whole process tree. Search across your and
+  Claude's messages in the account's and project's sessions (case and diacritics ignored, matching snippet shown) and
+  rename sessions with ✎ (the name is stored in the app only; Claude Code's transcripts are never modified).
 - **Send now** – while Claude works, *Poslat hned* passes your message into the running turn; Claude picks it up at the
   next step (like in the Claude Code terminal) and the message shows when it was read.
 - **Message queue** – *Do fronty* keeps messages until the run finishes, then sends them one by one to the same session.
@@ -137,7 +139,7 @@ Only create files inside local/, do not change anything else and do not commit. 
 
 ## Development
 ```
-npm test        # 77 tests: stream parser, config (incl. model allowlist), settings writes, git view, account guard, queue, list editing, attachments, 401/403/CSP
+npm test        # 80 tests: stream parser, config (incl. model allowlist), settings writes, git view, account guard, queue, list editing, attachments, 401/403/CSP
 npm run check   # syntax check
 ACD_OPEN_BROWSER=0 node src/server/server.mjs   # prints the URL with token on an interactive console
 ```
@@ -147,7 +149,8 @@ Vendor libraries and optional fonts: `scripts/fetch-vendor.ps1` (pinned versions
 How the CLI is driven (stream-json input/output, sending into a running turn): [docs/claude-code-headless.md](docs/claude-code-headless.md).
 
 ## Roadmap
-Session search and rename. Interactive permission prompts are being researched.
+Interactive permission prompts (answer Claude Code's permission requests in the window) are researched and waiting for
+a decision.
 
 ## Uninstall
 Windows: `powershell -ExecutionPolicy Bypass -File scripts\uninstall.ps1` · macOS: `sh scripts/uninstall.sh`.
@@ -160,7 +163,7 @@ Removes the launcher and the state folder; your Claude Code accounts and the rep
 
 ## Česky
 Malé lokální okno nad Claude Code: povolené účty a projekty, streamované odpovědi, karty nástrojů s diffem, režim Plán
-se schválením jedním tlačítkem, pokračování sezení, volba modelu a effortu (předvolby Rychlé / Běžná práce / Důkladné,
+se schválením jedním tlačítkem, pokračování, hledání a přejmenování sezení, volba modelu a effortu (předvolby Rychlé / Běžná práce / Důkladné,
 pamatuje se pro každý účet). Během práce lze poslat zprávu hned do běžícího tahu, nebo ji dát
 do fronty; přikládat jde screenshoty (Ctrl+V), PDF a textové soubory. Rozhraní je české.
 

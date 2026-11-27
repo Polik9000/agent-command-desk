@@ -304,29 +304,105 @@ async function loadGit() {
   } catch { g.textContent = ''; }
 }
 
+/* Vlastní názvy sezení jen v této aplikaci (localStorage) – do transkriptů Claude Code se nezapisuje. */
+const TITLES_KEY = () => `acd.titles.${S.account}.${S.project}`;
+function customTitles() {
+  try { const o = JSON.parse(localStorage.getItem(TITLES_KEY()) || '{}'); return o && typeof o === 'object' ? o : {}; } catch { return {}; }
+}
+function setCustomTitle(id, title) {
+  const o = customTitles();
+  const t = String(title || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  if (t) o[id] = t; else delete o[id];
+  try { localStorage.setItem(TITLES_KEY(), JSON.stringify(o)); } catch { }
+}
+
+const SS = { q: '', timer: null, seq: 0 };
+
 async function loadSessions() {
   const ul = $('#sessions');
+  const q = SS.q;
+  const seq = ++SS.seq;
   let list = [];
   try {
-    list = await apiJson(`/api/sessions?account=${encodeURIComponent(S.account)}&project=${encodeURIComponent(S.project)}`);
+    const base = `account=${encodeURIComponent(S.account)}&project=${encodeURIComponent(S.project)}`;
+    list = await apiJson(q ? `/api/sessions/search?${base}&q=${encodeURIComponent(q)}` : `/api/sessions?${base}`);
   } catch (e) {
+    if (seq !== SS.seq) return;
     ul.textContent = '';
     ul.appendChild(el('li', 's-empty', e.message));
     return;
   }
+  if (seq !== SS.seq) return; // mezitím přišlo novější hledání
   ul.textContent = '';
-  if (!list.length) { ul.appendChild(el('li', 's-empty', 'Zatím žádná sezení.')); return; }
+  if (!list.length) { ul.appendChild(el('li', 's-empty', q ? 'Nic nenalezeno.' : 'Zatím žádná sezení.')); return; }
+  const titles = customTitles();
   for (const s of list) {
     const li = el('li');
     const b = el('button');
     b.type = 'button';
     b.dataset.id = s.id;
     if (s.id === S.sessionId) b.setAttribute('aria-current', 'true');
-    b.append(el('span', 's-title', s.title), el('span', 's-meta', fmtRelative(s.updated) + (s.busy ? ' • běží' : '')));
+    const title = titles[s.id] || s.title;
+    b.appendChild(el('span', 's-title', title));
+    if (s.snippet) b.appendChild(snippetNode(s.snippet, q, s.role));
+    b.appendChild(el('span', 's-meta', fmtRelative(s.updated) + (s.busy ? ' • běží' : '') + (titles[s.id] ? ' • přejmenováno' : '')));
     b.addEventListener('click', () => openSession(s.id));
     li.appendChild(b);
+    const r = el('button', 's-rename', '✎');
+    r.type = 'button';
+    r.title = 'Přejmenovat (jen v této aplikaci)';
+    r.setAttribute('aria-label', `Přejmenovat sezení ${title}`);
+    r.addEventListener('click', () => renameSession(li, s, title));
+    li.appendChild(r);
     ul.appendChild(li);
   }
+}
+
+/** Úryvek s vyznačenou shodou (bez innerHTML). */
+function snippetNode(text, q, role) {
+  const span = el('span', 's-snippet');
+  span.appendChild(document.createTextNode(role === 'assistant' ? 'Claude: ' : 'Vy: '));
+  const f = fold(text), n = fold(q.replace(/\s+/g, ' ').trim());
+  const i = n ? f.indexOf(n) : -1;
+  if (i < 0) { span.appendChild(document.createTextNode(text)); return span; }
+  span.appendChild(document.createTextNode(text.slice(0, i)));
+  span.appendChild(el('mark', null, text.slice(i, i + n.length)));
+  span.appendChild(document.createTextNode(text.slice(i + n.length)));
+  return span;
+}
+
+function renameSession(li, s, current) {
+  const input = el('input', 's-edit');
+  input.type = 'text'; input.value = current; input.maxLength = 80;
+  input.setAttribute('aria-label', 'Nový název sezení (prázdný = původní)');
+  li.textContent = '';
+  li.appendChild(input);
+  input.focus(); input.select();
+  let done = false;
+  const finish = (save) => {
+    if (done) return;
+    done = true;
+    if (save) setCustomTitle(s.id, input.value.trim() === s.title ? '' : input.value);
+    loadSessions();
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+  });
+  input.addEventListener('blur', () => finish(true));
+}
+
+function setupSessionSearch() {
+  const inp = $('#session-search');
+  const go = () => {
+    const v = inp.value.replace(/\s+/g, ' ').trim();
+    const q = v.length >= 2 ? v : '';
+    if (q === SS.q) return;
+    SS.q = q;
+    loadSessions();
+  };
+  inp.addEventListener('input', () => { clearTimeout(SS.timer); SS.timer = setTimeout(go, 300); });
+  inp.addEventListener('keydown', (e) => { if (e.key === 'Escape' && inp.value) { e.preventDefault(); inp.value = ''; clearTimeout(SS.timer); go(); } });
 }
 
 function markCurrentSession() {
@@ -1678,6 +1754,7 @@ async function main() {
   setupGit();
   setupPalette();
   setupStats();
+  setupSessionSearch();
   $('#new-session').addEventListener('click', newSession);
   $('#project').addEventListener('change', (e) => switchProject(e.target.value));
   document.querySelectorAll('input[name="mode"]').forEach((i) => i.addEventListener('change', () => { S.mode = i.value; }));

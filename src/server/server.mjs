@@ -9,7 +9,7 @@ import { loadConfig, configPath, findAccount, findProject, EFFORTS } from './lib
 import { createSecret, setSecurityHeaders, checkRequest } from './lib/guard.mjs';
 import { AccountGuard, ClaudeRunner, MODES } from './lib/claude.mjs';
 import { ev } from './lib/parser.mjs';
-import { listSessions, history, transcriptPath } from './lib/sessions.mjs';
+import { listSessions, history, transcriptPath, searchSessions } from './lib/sessions.mjs';
 import { gitStatus, gitFiles, gitDiff } from './lib/git.mjs';
 import { AttachmentStore, attachmentsPrompt, MAX_PER_RUN as MAX_ATTACHMENTS } from './lib/attachments.mjs';
 import { openWindow, createHeartbeat } from './lib/window.mjs';
@@ -205,6 +205,16 @@ async function handleApi(req, res, url) {
     const list = listSessions(r.status.projectsDirectory, r.project.pathFull)
       .map((s) => ({ ...s, busy: runner.isSessionBusy(s.id) }));
     return sendJson(res, 200, list);
+  }
+
+  // Hledání v sezeních (musí být před /api/sessions/:id).
+  if (req.method === 'GET' && p === '/api/sessions/search') {
+    const query = String(q.get('q') ?? '').trim();
+    if (query.length < 2 || query.length > 100) return problem(res, 400, 'Hledejte 2–100 znaků.');
+    const r = await resolveAccountProject(res, q.get('account'), q.get('project'));
+    if (!r) return;
+    return sendJson(res, 200, searchSessions(r.status.projectsDirectory, r.project.pathFull, query)
+      .map((s) => ({ ...s, busy: runner.isSessionBusy(s.id) })));
   }
 
   if (req.method === 'GET' && (m = /^\/api\/sessions\/([^/]+)$/.exec(p))) {

@@ -48,3 +48,6 @@ Claude Code login and never reads, copies or stores credentials.
     for a path that the current `git status` lists, in an area it is listed in; anything else is 400/404. New
     (untracked) files are read directly only if they are regular files up to 256 kB without NUL bytes; symlinks are
     not followed. Output is capped at 1 MB. There is no endpoint that stages, commits, checks out or pushes.
+18. **Session search** reads only transcripts of the selected (verified) account and allowlisted project – the 50 most
+    recent, each up to 32 MB – and only user/assistant text (no tool input, meta or sub-agent messages); the query is
+    2–100 characters. Custom session names live in the browser profile of the app window; transcripts are never written.
