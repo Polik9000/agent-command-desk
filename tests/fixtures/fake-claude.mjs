@@ -2,6 +2,8 @@
 // Text zprávy řídí chování: EXITPLAN = nástroj ExitPlanMode, DRIFT = init hlásí jiný režim, FAIL = výsledek s chybou,
 // SLOW = výsledek až po 3 s (lze přerušit). Řídicí požadavky: initialize, set_permission_mode, set_model, interrupt,
 // get_context_usage (jako Claude Code 2.1.332).
+// --fake-batch: odpověď na initialize pozdrží do první zprávy a pošle ji s celým tahem jedním zápisem
+// (stdout se u rodiče přečte jako jeden blok – tak se to stávalo na macOS, issue #2).
 import { createInterface } from 'node:readline';
 import { randomUUID } from 'node:crypto';
 
@@ -10,7 +12,10 @@ const opt = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1
 const sessionId = args.includes('--fork-session') ? randomUUID() : opt('--resume') ?? randomUUID();
 let mode = opt('--permission-mode');
 let model = opt('--model') ?? 'default';
-const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
+/** @type {string[]|null} rozepsaný blok výstupu (jen --fake-batch, do konce prvního tahu) */
+let pending = args.includes('--fake-batch') ? [] : null;
+const out = (o) => { const l = JSON.stringify(o) + '\n'; if (pending) pending.push(l); else process.stdout.write(l); };
+const flush = () => { if (pending) { const b = pending.join(''); pending = null; process.stdout.write(b); } };
 let turn = 0;
 let slow = null; // {timer, turn}
 
@@ -42,6 +47,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   if (text.includes('EXITPLAN'))
     out({ type: 'assistant', message: { id: `m${turn}x`, content: [{ type: 'tool_use', id: `tu${turn}`, name: 'ExitPlanMode', input: {} }] } });
   out({ type: 'assistant', message: { id: `m${turn}`, content: [{ type: 'text', text: `pid ${process.pid} turn ${turn} model ${model}` }] } });
-  if (text.includes('SLOW')) { const t = turn; slow = { turn: t, timer: setTimeout(() => { slow = null; finish(t, false); }, 3000) }; return; }
+  if (text.includes('SLOW')) { flush(); const t = turn; slow = { turn: t, timer: setTimeout(() => { slow = null; finish(t, false); }, 3000) }; return; }
   finish(turn, text.includes('FAIL'));
+  flush();
 });

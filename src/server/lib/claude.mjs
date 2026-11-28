@@ -320,7 +320,9 @@ export class ClaudeRunner {
     };
     this.#pump(proc, /** @type {any} */ (closedResolve));
     // Seznam příkazů a skillů s popisy, agenti (jako nabídka / v terminálu) → událost pro paletu.
-    this.#control(proc, 'initialize').then((r) => {
+    // Odpověď se zpracuje hned při čtení řádku (onData), ne až v .then(): readline vydá celý blok stdout
+    // synchronně, takže by jinak `result` téhož bloku tah ukončil dřív a commands by dostal až další tah (issue #2).
+    this.#control(proc, 'initialize', {}, CONTROL_TIMEOUT_MS, (r) => {
       const c = commandsInfo(r);
       this.commandsCache.set(`${account.id}|${project.id}`, { at: Date.now(), c });
       if (proc.run && !proc.run.ended) proc.run.emit('event', ev('commands', c));
@@ -331,15 +333,16 @@ export class ClaudeRunner {
 
   /**
    * Řídicí požadavek na proces (stdin stream-json) → odpověď Claude Code.
+   * @param {(data:any) => void} [onData] zavolá se synchronně při zpracování odpovědi (v pořadí proudu)
    * @returns {Promise<any>}
    */
-  #control(proc, subtype, payload = {}, timeoutMs = CONTROL_TIMEOUT_MS) {
+  #control(proc, subtype, payload = {}, timeoutMs = CONTROL_TIMEOUT_MS, onData) {
     return new Promise((resolve, reject) => {
       if (proc.exited || !proc.stdinOpen) { reject(new Error('Proces Claude Code už neběží.')); return; }
       const id = `acd-${randomUUID()}`;
       const t = setTimeout(() => { proc.pending.delete(id); reject(new Error('Claude Code neodpověděl.')); }, timeoutMs);
       t.unref?.();
-      proc.pending.set(id, { resolve, reject, t });
+      proc.pending.set(id, { resolve, reject, t, onData });
       try { proc.child.stdin.write(JSON.stringify({ type: 'control_request', request_id: id, request: { subtype, ...payload } }) + '\n', 'utf8'); }
       catch (e) { clearTimeout(t); proc.pending.delete(id); reject(e); }
     });
@@ -425,6 +428,7 @@ export class ClaudeRunner {
 
   #newRun(proc, account, project, resume, warm) {
     const runner = this;
+    const emitNow = EventEmitter.prototype.emit;
     const run = Object.assign(new EventEmitter(), {
       id: randomUUID().replaceAll('-', ''),
       accountId: account.id,
@@ -490,9 +494,27 @@ export class ClaudeRunner {
       },
       /** Vstup otázky (kvůli ověření odpovědi). */
       permissionInput(requestId) { return run.permissions.get(requestId)?.input; },
+      /**
+       * Události 'event' a 'end' se drží ve frontě, dokud se nepřihlásí posluchač (issue #2): běh vrací start()
+       * a volající (server, SSE) se přihlásí až potom. release() je přehraje ve stejném pořadí a pustí dál.
+       * @type {Array<[string, any[]]>|null}
+       */
+      held: [],
+      release() {
+        const q = run.held;
+        if (!q) return;
+        run.held = null;
+        for (const [name, a] of q) emitNow.call(run, name, ...a);
+      },
     });
+    run.emit = function (name, ...a) {
+      if (run.held && (name === 'event' || name === 'end')) { run.held.push([name, a]); return true; }
+      return emitNow.call(run, name, ...a);
+    };
+    // Bez výslovného release(): pustit po prvním posluchači 'event', až se synchronně přihlásí i ostatní.
+    run.on('newListener', (name) => { if (name === 'event' && run.held) queueMicrotask(() => run.release()); });
     proc.run = run;
-    if (proc.commandsInfo) { const c = proc.commandsInfo; proc.commandsInfo = null; queueMicrotask(() => run.emit('event', ev('commands', c))); }
+    if (proc.commandsInfo) { const c = proc.commandsInfo; proc.commandsInfo = null; run.emit('event', ev('commands', c)); }
     proc.turnTools.clear();
     runner.runs.set(run.id, run);
     return run;
@@ -525,7 +547,13 @@ export class ClaudeRunner {
         const run = proc.run;
         if (e.type === 'control_response') {
           const w = proc.pending.get(e.requestId);
-          if (w) { proc.pending.delete(e.requestId); clearTimeout(w.t); if (e.ok) w.resolve(e.data ?? {}); else w.reject(new Error(e.error || 'Chyba Claude Code.')); }
+          if (w) {
+            proc.pending.delete(e.requestId);
+            clearTimeout(w.t);
+            if (!e.ok) { w.reject(new Error(e.error || 'Chyba Claude Code.')); continue; }
+            try { w.onData?.(e.data ?? {}); } catch (err) { this.log(`Proces ${proc.id}: ${err.message}`); }
+            w.resolve(e.data ?? {});
+          }
           continue;
         }
         if (e.type === 'status' && e.permissionMode) proc.lastMode = e.permissionMode; // po změně režimu za běhu
