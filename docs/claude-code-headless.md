@@ -81,6 +81,12 @@ None of these calls the model.
 | `stop_task` | `task_id` | *Zastavit* in *Na pozadí* |
 | `background_tasks`, `mcp_status`, `get_settings` | – | available, not used by the UI (`mcp_status` and `get_settings` return configuration, so the app does not call them) |
 
+**Ordering.** Replies are handled while the stdout line is parsed, in stream order (not in a promise callback):
+readline emits every line of a chunk synchronously, so a reply handled later could be overtaken by the `result` of the
+same chunk. The `initialize` reply of a new process therefore reaches the first turn as a `commands` event before its
+`init`. A run also holds its `event`/`end` emits until the first `event` listener attaches (or `run.release()` is
+called), so the server's SSE stream never misses events that arrived before it subscribed.
+
 `supported_commands` is not supported (use `initialize`). A session without a running process gets a short
 `claude -p --resume <id> --permission-mode plan --permission-prompts none` process for these requests (no message for
 the model), closed right after.

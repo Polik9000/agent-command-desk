@@ -165,3 +165,52 @@ test('commandsInfo: popisy zkrácené, účet a nic dalšího se nepředá', () 
   assert.deepEqual(c, { commands: [{ name: 'x', description: 'a b', argumentHint: '' }], agents: [{ name: 'Plan', description: '' }] });
   assert.deepEqual(commandsInfo(null), { commands: [], agents: [] });
 });
+
+/* ---- issue #2: úvodní události (commands z initialize) se nesmí ztratit ---- */
+const batchSpawn = (exe, args, opts) => spawn(process.execPath, [FAKE, '--fake-batch', ...args], opts);
+const events = (run) => { const list = []; run.on('event', (e) => list.push(e)); return list; };
+/** Čeká na podmínku (ne pevnou dobu): kontroluje každých 5 ms, nejvýš 10 s. */
+async function until(cond, maxMs = 10_000) {
+  const end = Date.now() + maxMs;
+  while (!cond() && Date.now() < end) await new Promise((r) => setTimeout(r, 5));
+  assert.ok(cond(), 'podmínka nenastala');
+}
+
+test('initialize ve stejném bloku jako celý tah → commands patří prvnímu tahu, před result', async () => {
+  const r = mk({}, { spawnFn: batchSpawn });
+  const run = await r.start(account, project, 'auto', 'ahoj', null, { addDirs: [] });
+  const ev1 = events(run);
+  await new Promise((res) => run.once('end', res));
+  const types = ev1.map((e) => e.type);
+  assert.ok(types.includes('commands'), `commands chybí: ${types.join(',')}`);
+  assert.ok(types.indexOf('commands') < types.indexOf('init'), 'v pořadí proudu: odpověď na initialize je před tahem');
+  const t2 = await turn(r, 'znovu', run.sessionId);
+  assert.equal(t2.events.filter((e) => e.type === 'commands').length, 0, 'druhý tah už commands znovu nedostane');
+  r.stopAll();
+  await closed(r);
+});
+
+test('posluchač připojený až po skončení běhu dostane všechny události včetně end', async () => {
+  const r = mk();
+  const run = await r.start(account, project, 'auto', 'ahoj', null, { addDirs: [] });
+  await until(() => run.ended);
+  let ended = false;
+  const list = [];
+  run.on('event', (e) => list.push(e));
+  run.once('end', () => { ended = true; });
+  await until(() => ended);
+  const types = list.map((e) => e.type);
+  for (const t of ['commands', 'init', 'result', 'exit']) assert.ok(types.includes(t), `${t} chybí: ${types.join(',')}`);
+  assert.ok(types.indexOf('result') < types.indexOf('exit'));
+  r.stopAll();
+  await closed(r);
+});
+
+test('posluchač připojený hned: commands před init i result', async () => {
+  const r = mk();
+  const t = await turn(r, 'ahoj');
+  const types = t.events.map((e) => e.type);
+  assert.ok(types.indexOf('commands') >= 0 && types.indexOf('commands') < types.indexOf('init'), types.join(','));
+  r.stopAll();
+  await closed(r);
+});

@@ -9,12 +9,12 @@ import { loadConfig, configPath, findAccount, findProject, EFFORTS } from './lib
 import { createSecret, setSecurityHeaders, checkRequest } from './lib/guard.mjs';
 import { AccountGuard, ClaudeRunner, allowedModes, activeSessions } from './lib/claude.mjs';
 import { UsageLog } from './lib/usage.mjs';
-import { ev } from './lib/parser.mjs';
 import { listSessions, history, transcriptPath, searchSessions, overview, isValidId } from './lib/sessions.mjs';
 import { gitStatus, gitFiles, gitDiff } from './lib/git.mjs';
 import { AttachmentStore, attachmentsPrompt, MAX_PER_RUN as MAX_ATTACHMENTS } from './lib/attachments.mjs';
 import { openWindow, createHeartbeat } from './lib/window.mjs';
 import { changeProjects, settingsView } from './lib/settings.mjs';
+import { streamRun } from './lib/runstream.mjs';
 import { DECISIONS } from './lib/permissions.mjs';
 import { listFiles, readProjectFile, clearFilesCache } from './lib/files.mjs';
 
@@ -518,15 +518,9 @@ async function startRun(req, res) {
   try { run = await runner.start(account, project, body.mode, prompt, resume, { addDirs, model, effort, fork, side, chrome }); }
   catch (e) { return problem(res, 409, e.message); }
 
-  res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'X-Accel-Buffering': 'no' });
-  const send = (e) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(e)}\n\n`); };
-  send(ev('run', { runId: run.id, account: account.id, project: project.id, mode: body.mode, model, effort,
-    warm: run.warm || undefined, fork: fork || undefined, side: side || undefined, chrome: chrome || undefined }));
-  run.on('event', send);
-  run.on('event', usage.observer(account.id, project.id, { model, effort }));
-  run.once('end', () => res.end());
-  // Okno zavřeno / spojení přerušeno → běh nenecháme viset.
-  res.on('close', () => { if (!run.ended) run.stop(); });
+  streamRun(res, run, { runId: run.id, account: account.id, project: project.id, mode: body.mode, model, effort,
+    warm: run.warm || undefined, fork: fork || undefined, side: side || undefined, chrome: chrome || undefined },
+  [usage.observer(account.id, project.id, { model, effort })]);
 }
 
 /* ---------- Server ---------- */
