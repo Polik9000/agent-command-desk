@@ -98,6 +98,32 @@ answers "isn't available in this environment" in this mode), `--chrome --setting
 Local slash commands such as `/rename <name>`, `/context` and `/compact` work as user messages (`/rename` and `/context`
 cost no tokens). Thinking blocks arrive empty (signature only), so the app does not show thinking.
 
+## Orchestration (`--agents`, opt-in)
+Only in **Auto** (per session; default `orchestration.defaultMode`, `off` unless set). Verified on 2.1.332; the file form
+of `--agents` needs **2.1.281+** in `-p` mode, so the app runs `claude --version` once and falls back to Off with a
+diagnostic on older or unknown versions.
+- The runner writes the worker definitions (JSON object keyed by name: `description`, `prompt`, `model`, `tools`,
+  `disallowedTools`) to `<stateDir>/agents/<process id>.json` (mode 0600) and passes `--agents <file>`. The file lives as
+  long as the process (also while it waits for the next message) and is removed when the process closes (retire, idle
+  limit, error, kill, Stop all), when spawning fails, on app exit, and leftovers are removed at start-up. Nothing is
+  written to the project's `.claude/agents/` or to the account folder.
+- Orchestration guidance is appended to `appendSystemPrompt` (`<user text>\n\n<guidance>`). Off passes exactly the
+  previous arguments.
+- `orchestration` is part of the process signature: switching Off ↔ Auto closes a waiting process and starts a new one
+  with `--resume` (same boundary as effort). Copies, side questions and the short control processes never get workers.
+- Workers never get `permissionMode`; they inherit the session's mode and rules, `--permission-prompts none|host` stays
+  as before. Read-only roles get `tools: [Read, Grep, Glob]` and `disallowedTools` with Write/Edit/MultiEdit/
+  NotebookEdit/Bash/Agent; the session's `disallowedTools` are added to every worker. Names already used by a user or
+  project agent (`name:` in `<project>/.claude/agents/*.md` or `<configDir>/agents/*.md`) are skipped, because `--agents`
+  takes precedence over them.
+- The run emits `orchestration {mode, active, workers:[{name, model, readOnly}], skipped, reason, warnings}` (no prompts).
+- Usage (verified on 2.1.332): `result.usage` covers **only the main conversation**; `result.model_usage_since_last_result`
+  has this turn per model including workers (`modelUsage` is the process total); `total_cost_usd` includes workers;
+  `subagent_stats` (spawned/completed/failed) is a process total like `total_cost_usd`, so the runner subtracts the
+  previous turn's values. `task_*` events carry `usage.total_tokens` per worker but no model. The app
+  computes "tokens incl. workers" only from `model_usage_since_last_result` and shows worker token counts separately,
+  so nothing is counted twice; without that field a turn with workers is shown as partial.
+
 Events used besides assistant/user/result: `system/task_started|task_progress|task_updated|task_notification`
 (agents and background commands), `system/background_tasks_changed`, `system/session_title_changed`, `system/status`
 (`permissionMode`), `user` replays with `uuid` (needed for rewind). `total_cost_usd` in `result` is the sum for the whole

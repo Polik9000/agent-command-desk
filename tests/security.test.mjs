@@ -195,6 +195,22 @@ test('/api/state: seznam modelů a effortů', async () => {
   assert.ok(st.models.some((m) => m.id === '' ) && st.models.some((m) => m.id === 'opus'));
   assert.deepEqual(st.efforts, ['', 'low', 'medium', 'high', 'xhigh', 'max']);
   assert.deepEqual(st.modes, ['auto', 'plan', 'acceptEdits']);
+  assert.equal(st.orchestration.defaultMode, 'off');
+  assert.deepEqual(st.orchestration.workers.map((w) => w.name), ['acd-explore', 'acd-plan', 'acd-implementer', 'acd-reviewer']);
+  assert.equal(JSON.stringify(st.orchestration).includes('prompt'), false, 'prompty pracovníků do UI nejdou');
+});
+test('běh: neplatný režim orchestrace → 400; výchozí orchestrace jen s tokenem a Origin', async () => {
+  const body = Buffer.from(JSON.stringify({ account: 'a', project: 'p', mode: 'auto', prompt: 'ahoj', orchestration: 'vzdy' }));
+  const r = await req('POST', '/api/runs', { ...origin(), 'Content-Type': 'application/json', 'Content-Length': body.length }, body);
+  assert.equal(r.status, 400);
+  assert.match(JSON.parse(r.body).error, /orchestrace/);
+  const ok = Buffer.from(JSON.stringify({ account: 'a', project: 'p', mode: 'auto', prompt: 'ahoj', orchestration: 'auto' }));
+  assert.equal((await req('POST', '/api/runs', { ...origin(), 'Content-Type': 'application/json', 'Content-Length': ok.length }, ok)).status, 409, 'povoleno → až neověřený účet');
+  const b2 = Buffer.from(JSON.stringify({ defaultMode: 'auto' }));
+  const h = { 'Content-Type': 'application/json', 'Content-Length': b2.length };
+  assert.equal((await req('PUT', '/api/settings/orchestration', { 'X-ACD-Token': TOKEN, ...h }, b2)).status, 403);
+  const bad = Buffer.from(JSON.stringify({ defaultMode: 'x' }));
+  assert.equal((await req('PUT', '/api/settings/orchestration', { ...origin(), 'Content-Type': 'application/json', 'Content-Length': bad.length }, bad)).status, 400);
 });
 
 test('Nastavení: jen s tokenem a Origin, neplatná cesta 400, přidání/přejmenování/odebrání projektu', async () => {

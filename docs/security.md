@@ -109,3 +109,11 @@ Claude Code login and never reads, copies or stores credentials.
 27. **Questions and Chrome.** Answers to Claude's AskUserQuestion are accepted only for the questions in the pending
     request (≤ 2000 characters each). Claude in Chrome needs `interactivePermissions`; it adds `--chrome` and a
     `permissions.ask` rule for every `mcp__claude-in-chrome` tool, so each browser action asks in the window.
+28. **Agent orchestration (opt-in, Off by default).** In Auto the app passes worker definitions with `--agents` from a
+    file in `<stateDir>/agents/` (removed with the process; nothing written to the project or the account folder).
+    Workers never get `permissionMode` (no `bypassPermissions`, no `dontAsk`): they inherit the session's permission mode
+    and rules, deny-by-default without `interactivePermissions` and the permission cards with it stay unchanged.
+    Read-only workers get only Read/Grep/Glob, with Write, Edit, MultiEdit, NotebookEdit, Bash and Agent denied; the
+    session's `disallowedTools` apply to every worker. Worker models must be in the `models` allowlist (or `inherit`);
+    names must start with `acd-`, and a user or project agent with the same name is never shadowed. Only worker names
+    and models reach the browser, never their prompts.
