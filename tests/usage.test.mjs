@@ -53,3 +53,20 @@ test('read podle dní a prune starších než KEEP_DAYS; poškozený řádek nev
   assert.equal(readFileSync(f, 'utf8').trim().split('\n').length, 3);
   assert.equal(new UsageLog(path.join(dir, 'nic')).read(30).runs.length, 0);
 });
+
+test('observer: tah s pracovníky → byModel (hlavní + pracovníci) a počet pracovníků; jeden model → beze změny', () => {
+  fresh();
+  const now = Date.UTC(2026, 10, 28, 12);
+  const u = new UsageLog(dir, { now: () => now });
+  const obs = u.observer('a', 'p', { model: 'sonnet' });
+  obs({ type: 'result', costUsd: 0.12, usage: { input: 4, output: 296, cacheRead: 10, cacheWrite: 20 }, subagents: { spawned: 2 },
+    modelUsage: [{ model: 'claude-sonnet-5-5', input: 4, output: 296, cacheRead: 10, cacheWrite: 20, costUsd: 0.1 },
+      { model: 'claude-haiku-5-5', input: 1, output: 2, cacheRead: 3, cacheWrite: 4, costUsd: 0.02 }] });
+  obs({ type: 'result', usage: { input: 1, output: 1 }, modelUsage: [{ model: 'claude-sonnet-5-5', input: 1, output: 1 }] });
+  const [a, b] = u.read(1).runs;
+  assert.equal(a.input, 4, 'input… = hlavní konverzace jako dřív');
+  assert.equal(a.workers, 2);
+  assert.deepEqual(a.byModel['claude-haiku-5-5'], { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, cost: 0.02 });
+  assert.equal(b.byModel, undefined);
+  assert.equal(b.workers, undefined);
+});

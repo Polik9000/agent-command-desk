@@ -64,7 +64,8 @@ export function checkProjectPath(cfg, input) {
 /**
  * Provede změnu projektů a uloží ji. `isBusy(id)` = v projektu právě běží Claude (takový projekt nejde odebrat).
  * @param {string} file @param {import('./config.mjs').Config} cfg
- * @param {{op:'add', label:unknown, path:unknown} | {op:'rename', id:string, label:unknown} | {op:'remove', id:string}} change
+ * @param {{op:'add', label:unknown, path:unknown} | {op:'rename', id:string, label:unknown} | {op:'remove', id:string}
+ *   | {op:'orchestrationDefault', mode:unknown}} change
  * @param {{isBusy?: (projectId: string) => boolean}} [opts]
  * @returns {{id: string}}
  */
@@ -120,6 +121,13 @@ export function changeProjects(file, cfg, change, { isBusy = () => false } = {})
     raw.accounts.splice(i, 1);
     if (raw.defaultAccount === change.id) raw.defaultAccount = raw.accounts[0].id;
     id = change.id;
+  } else if (change.op === 'orchestrationDefault') {
+    // Výchozí režim orchestrace pro nová sezení; zbytek bloku orchestration (pracovníci) zůstává, jak ho uživatel napsal.
+    if (change.mode !== 'off' && change.mode !== 'auto') throw bad('Režim orchestrace musí být off nebo auto.');
+    if (raw.orchestration != null && (typeof raw.orchestration !== 'object' || Array.isArray(raw.orchestration)))
+      throw Object.assign(new Error('Blok orchestration v konfiguraci není objekt – opravte ho ručně.'), { status: 409 });
+    raw.orchestration = { ...(raw.orchestration ?? {}), defaultMode: change.mode };
+    id = change.mode;
   } else {
     throw bad('Neznámá operace.');
   }
@@ -139,6 +147,7 @@ export function changeProjects(file, cfg, change, { isBusy = () => false } = {})
   cfg.defaultProject = next.defaultProject;
   cfg.accounts = next.accounts;
   cfg.defaultAccount = next.defaultAccount;
+  cfg.orchestration = next.orchestration;
   return { id };
 }
 

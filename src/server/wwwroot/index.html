@@ -17,6 +17,7 @@
   <script src="queue.js" defer></script>
   <script src="editor.js" defer></script>
   <script src="review.js" defer></script>
+  <script src="agents.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>
@@ -109,7 +110,9 @@
               <label class="field"><span class="eyebrow">Effort</span><select id="effort"></select></label>
               <label class="runopts-check" id="chrome-row" hidden><input type="checkbox" id="chrome-toggle"> Claude in Chrome – Claude smí ovládat
                 váš Chrome (rozšíření Claude in Chrome); každou akci v prohlížeči schvalujete v okně</label>
-              <p class="runopts-hint">Model jde přepnout i za běhu (platí od dalšího kroku), effort a Chrome od další zprávy. Skutečně použitý model je v patičce.</p>
+              <label class="field"><span class="eyebrow">Orchestrace agentů</span><select id="orch" title="Auto: hlavní model smí část práce svěřit pracovníkům (subagentům) na Haiku a Sonnet. Platí pro toto sezení.">
+                <option value="off">Vypnuto</option><option value="auto">Auto</option></select></label>
+              <p class="runopts-hint">Model jde přepnout i za běhu (platí od dalšího kroku), effort, Chrome a orchestrace od další zprávy. Skutečně použitý model je v patičce.</p>
             </div>
           </details>
           <span class="status" id="status" role="status" aria-live="polite"></span>
@@ -188,7 +191,9 @@
         <legend class="sr-only">Zprávy a práce</legend>
         <label><input type="checkbox" id="set-autocontinue"> Po obnovení limitu účtu automaticky pokračovat (okno musí zůstat otevřené)</label>
         <label><input type="checkbox" id="set-drafts"> Pamatovat rozepsané zprávy u každého sezení (jen v tomto prohlížeči, nejvýš 30 dní)</label>
+        <label>Orchestrace agentů pro nová sezení <select id="set-orch"><option value="off">Vypnuto</option><option value="auto">Auto</option></select></label>
       </fieldset>
+      <p class="set-hint">Auto: hlavní model sám rozhodne, zda část práce svěří pracovníkům (subagentům Claude Code). Pracovníci čerpají stejné limity účtu. U sezení jde volbu změnit v nabídce modelu.</p>
     </section>
 
     <section class="set-section" aria-labelledby="set-theme-title">

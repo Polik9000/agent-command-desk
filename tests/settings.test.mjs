@@ -144,3 +144,17 @@ test('účty: přidat s ověřenou složkou a e-mailem, odebrat; ochrany', () =>
   assert.equal(cfg.accounts.length, 1);
   assert.throws(() => changeProjects(file, cfg, { op: 'removeAccount', id: 'a' }), err(400, /Poslední/));
 });
+
+test('výchozí režim orchestrace: zápis do konfigurace, zbytek bloku zůstane; neplatné hodnoty 400/409', () => {
+  assert.equal(cfg.orchestration.defaultMode, 'off');
+  const r0 = JSON.parse(readFileSync(file, 'utf8'));
+  writeFileSync(file, JSON.stringify({ ...r0, orchestration: { workers: { 'acd-explore': { model: 'sonnet' } } } }, null, 2));
+  changeProjects(file, cfg, { op: 'orchestrationDefault', mode: 'auto' });
+  assert.equal(cfg.orchestration.defaultMode, 'auto');
+  const disk = JSON.parse(readFileSync(file, 'utf8'));
+  assert.deepEqual(disk.orchestration, { workers: { 'acd-explore': { model: 'sonnet' } }, defaultMode: 'auto' });
+  assert.equal(cfg.orchestration.workers.find((w) => w.name === 'acd-explore').model, 'sonnet');
+  assert.throws(() => changeProjects(file, cfg, { op: 'orchestrationDefault', mode: 'vzdy' }), err(400, /off nebo auto/));
+  writeFileSync(file, JSON.stringify({ ...r0, orchestration: 'auto' }));
+  assert.throws(() => changeProjects(file, cfg, { op: 'orchestrationDefault', mode: 'off' }), err(409, /orchestration/));
+});

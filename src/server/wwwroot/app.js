@@ -34,6 +34,9 @@ const S = {
   efforts: [''],
   model: '',             // pro další zprávy (pamatuje se pro každý účet)
   effort: '',
+  orchDefault: 'off',    // orchestrace agentů: výchozí režim pro nová sezení (Nastavení → local/config.json)
+  orchNext: null,        // volba pro ještě nezaložené sezení (pak se pamatuje u sezení, agents.js)
+  orchNoteKey: null,     // poznámka o orchestraci se v sezení ukáže jen při změně
   pending: [],           // přílohy připravené k odeslání
   attachNotice: null,
   mcp: {},               // stav MCP serverů z posledního init podle účtu a projektu (jen v paměti)
@@ -160,6 +163,7 @@ async function loadState() {
   if (Array.isArray(st.models)) S.models = st.models.map((m) => ({ ...m, label: _tr(m.label) }));
   if (Array.isArray(st.efforts)) S.efforts = st.efforts;
   S.interactivePermissions = st.interactivePermissions === true;
+  S.orchDefault = st.orchestration && st.orchestration.defaultMode === 'auto' ? 'auto' : 'off';
   S.modes = Array.isArray(st.modes) ? st.modes : ['auto', 'plan'];
   $('#mode-ask').hidden = !S.modes.includes('default');
   $('#chrome-row').hidden = !S.interactivePermissions;
@@ -267,12 +271,63 @@ function setChrome(on) {
   announce(on ? _t('Claude in Chrome zapnuto – od další zprávy, každá akce v prohlížeči se schvaluje.') : _t('Claude in Chrome vypnuto.'));
 }
 
+/* ---------- Orchestrace agentů (Vypnuto / Auto) – pamatuje se u sezení ---------- */
+/** Režim pro další zprávu: uložený u sezení; u nového sezení volba, jinak výchozí z Nastavení. */
+const currentOrch = () => (S.sessionId ? Agents.sessionOrch(localStorage, S.sessionId, S.orchDefault) : (S.orchNext || S.orchDefault));
+function setOrch(v) {
+  if (!Agents.ORCH_MODES.includes(v) || v === currentOrch()) return;
+  if (S.sessionId) Agents.saveSessionOrch(localStorage, S.sessionId, v); else S.orchNext = v;
+  renderRunOpts();
+  announce(v === 'auto' ? _t('Orchestrace agentů: Auto – platí od další zprávy (nový proces Claude Code).') : _t('Orchestrace agentů vypnuta – platí od další zprávy.'));
+}
+/** Poznámka v konverzaci: orchestrace aktivní (a s kým), nebo proč ne. Jen při změně, ne u každé zprávy. */
+function orchestrationNote(ev) {
+  const workers = (ev.workers || []).map((w) => `${w.name} (${w.model === 'inherit' ? _t('model sezení') : modelLabel(w.model)})`).join(', ');
+  const key = `${S.sessionId || ''}|${ev.active}|${workers}|${ev.reason || ''}`;
+  if (S.orchNoteKey === key) return;
+  S.orchNoteKey = key;
+  const n = el('div', 'msg msg--note orch-note');
+  n.dataset.state = ev.active ? 'on' : 'off';
+  n.appendChild(document.createTextNode(ev.active
+    ? _t('Orchestrace agentů: Auto. Claude sám rozhodne, zda část práce svěří pracovníkům: {0}.', workers)
+    : _t('Orchestrace agentů není k dispozici – běh pokračuje bez ní. {0}', _tr(ev.reason || ''))));
+  const extra = [...(ev.skipped || []).map((x) => _t('{0} vynechán: {1}.', x.name, _tr(x.reason || ''))), ...(ev.warnings || []).map(_tr)];
+  if (extra.length) n.appendChild(el('div', 'orch-warn', extra.join(' ')));
+  append(n);
+}
+/** Titulek karty agenta: model jen když je známý (z volání nebo z definice pracovníka). */
+function agentTitle(a, input, run) {
+  const m = Agents.workerModel(input, run && run.orchWorkers, run && (run.model || run.initModel));
+  a.model = m || '';
+  const desc = (input && input.description) || '';
+  if (m) return desc ? _t('Agent · {0} · {1}', modelLabel(m), desc) : _t('Agent · {0}', modelLabel(m));
+  return desc ? _t('Agent · {0}', desc) : 'Agent';
+}
+/** Agent spuštěný jiným agentem: vlastní karta uvnitř záznamu rodiče (hierarchie). */
+function nestedAgent(ev, run) {
+  const parent = AG.get(ev.parent);
+  const fresh = !AG.has(ev.id);
+  const a = agentCard(ev.id, ev.type === 'tool_use' ? ev.input : undefined);
+  if (fresh) {
+    const li = el('li', 'agent-sub');
+    li.appendChild(a.t.d);
+    parent.log.appendChild(li);
+    a.parentId = ev.parent;
+    parent.info.tools++;
+    renderAgentMeta(parent);
+  }
+  if (ev.type === 'tool_use') { a.t.nm.textContent = agentTitle(a, ev.input, run); a.t.sm.textContent = ''; }
+}
+
 function renderRunOpts() {
   const sum = $('#runopts-summary');
   if (!sum) return;
   const custom = S.model || S.effort;
-  sum.textContent = (custom ? `${modelLabel(S.model)} · ${S.effort || _t('výchozí')}` : _t('Model: výchozí')) + (chromeOn() ? ' · Chrome' : '');
-  sum.classList.toggle('is-custom', !!custom);
+  const orch = currentOrch() === 'auto';
+  sum.textContent = (custom ? `${modelLabel(S.model)} · ${S.effort || _t('výchozí')}` : _t('Model: výchozí')) + (chromeOn() ? ' · Chrome' : '')
+    + (orch ? _t(' · Orchestrace') : '');
+  sum.classList.toggle('is-custom', !!custom || orch);
+  $('#orch').value = currentOrch();
   const ms = $('#model'), es = $('#effort'), box = $('#runopts-presets');
   // Volby a předvolby se staví jen jednou: přestavění by zrušilo fokus a klik by vypadal jako klik mimo panel.
   if (!box.childElementCount) {
@@ -293,6 +348,7 @@ function renderRunOpts() {
 function setupRunOpts() {
   $('#model').addEventListener('change', (e) => setRunOpts(e.target.value, S.effort));
   $('#effort').addEventListener('change', (e) => setRunOpts(S.model, e.target.value));
+  $('#orch').addEventListener('change', (e) => setOrch(e.target.value));
   const d = $('#runopts');
   document.addEventListener('click', (e) => { if (d.open && !d.contains(e.target)) d.open = false; });
   d.addEventListener('keydown', (e) => { if (e.key === 'Escape') { d.open = false; $('#runopts-summary').focus(); } });
@@ -504,6 +560,9 @@ function newSession() {
   DR.skip = false;
   cancelContinue();
   S.sessionId = null;
+  S.orchNext = null;
+  S.orchNoteKey = null;
+  renderRunOpts();
   restoreDraft();
   resetSessionUi();
   resetProgress();
@@ -519,6 +578,8 @@ async function openSession(id) {
   saveDraft();
   cancelContinue();
   S.sessionId = id;
+  S.orchNoteKey = null;
+  renderRunOpts();
   restoreDraft();
   resetSessionUi();
   $('#foot-context').hidden = false;
@@ -591,17 +652,22 @@ const fmtNum = (n) => Number(n || 0).toLocaleString(LOC);
 const fmtTok = (n) => (n >= 1e6 ? `${(n / 1e6).toLocaleString(LOC, { maximumFractionDigits: 1 })} M`
   : n >= 1000 ? `${(n / 1000).toLocaleString(LOC, { maximumFractionDigits: 1 })} k` : fmtNum(n));
 const tokTotal = (u) => (u ? u.input + u.output + u.cacheRead + u.cacheWrite : 0);
-const emptyStats = () => ({ runs: 0, turns: 0, ms: 0, cost: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+const emptyStats = () => ({ runs: 0, turns: 0, ms: 0, cost: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, allTokens: 0, partial: false });
 
 function addRunStats(ev, run) {
   const u = ev.usage || { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   const last = { runs: 1, turns: ev.numTurns || 0, ms: ev.durationMs || 0, cost: typeof ev.costUsd === 'number' ? ev.costUsd : 0, ...u,
     model: run.model, effort: run.effort };
+  // Tokeny vč. pracovníků jen z result.modelUsage (nic se nesčítá dvakrát); bez údajů s pracovníky = neúplné.
+  const all = Agents.allTokens(ev);
+  Object.assign(last, { allTokens: all.tokens, partial: all.partial, byModel: Agents.turnUsage(ev.modelUsage),
+    workers: (run.workers || []).slice(), spawned: (ev.subagents && ev.subagents.spawned) || 0 });
   S.stats.last = last;
   const sid = ev.sessionId || run.sessionId || S.sessionId;
   if (!S.stats.session || S.stats.session.id !== sid) S.stats.session = { id: sid, ...emptyStats() };
   const s = S.stats.session;
-  for (const k of ['runs', 'turns', 'ms', 'cost', 'input', 'output', 'cacheRead', 'cacheWrite']) s[k] += last[k];
+  for (const k of ['runs', 'turns', 'ms', 'cost', 'input', 'output', 'cacheRead', 'cacheWrite', 'allTokens']) s[k] += last[k];
+  s.partial = s.partial || last.partial;
   renderFootStats();
   if ($('#statsdlg').open) renderStats();
 }
@@ -611,7 +677,7 @@ function renderFootStats() {
   const l = S.stats.last;
   b.hidden = false;
   if (!l) { b.textContent = _t('Statistiky'); return; }
-  b.textContent = _t('poslední běh {0} tokenů • odhad API ${1} • {2} {3} • {4} s', fmtTok(tokTotal(l)), l.cost.toFixed(3), l.turns, plural(l.turns, 'tah', 'tahy', 'tahů'), (l.ms / 1000).toFixed(1));
+  b.textContent = _t('poslední běh {0} tokenů • odhad API ${1} • {2} {3} • {4} s', (l.partial ? '≥ ' : '') + fmtTok(l.allTokens), l.cost.toFixed(3), l.turns, plural(l.turns, 'tah', 'tahy', 'tahů'), (l.ms / 1000).toFixed(1));
 }
 
 function renderStats() {
@@ -629,7 +695,9 @@ function renderStats() {
     const rows = [
       [_t('Vstup'), (s) => fmtNum(s.input)], [_t('Výstup'), (s) => fmtNum(s.output)],
       [_t('Cache – čtení'), (s) => fmtNum(s.cacheRead)], [_t('Cache – zápis'), (s) => fmtNum(s.cacheWrite)],
-      [_t('Tokeny celkem'), (s) => fmtNum(tokTotal(s))], [_t('Běhy / tahy'), (s) => `${s.runs} / ${s.turns}`],
+      [_t('Tokeny hlavní konverzace'), (s) => fmtNum(tokTotal(s))],
+      [_t('Tokeny vč. pracovníků'), (s) => (s.partial ? _t('{0} (neúplné – u pracovníků chybí údaje)', fmtNum(s.allTokens)) : fmtNum(s.allTokens))],
+      [_t('Běhy / tahy'), (s) => `${s.runs} / ${s.turns}`],
       [_t('Doba'), (s) => `${(s.ms / 1000).toLocaleString(LOC, { maximumFractionDigits: 1 })} s`],
       [_t('Odhad ceny API'), (s) => `$${s.cost.toFixed(3)}`],
     ];
@@ -640,6 +708,7 @@ function renderStats() {
     }
     t.appendChild(body);
     box.appendChild(t);
+    renderWorkerStats(box, S.stats.last);
   }
   const acc = accountById(S.account);
   box.appendChild(el('h3', 'eyebrow', _t('Limit účtu {0}', acc ? acc.label : '')));
@@ -664,6 +733,36 @@ function renderStats() {
     box.appendChild(m);
   }
   box.appendChild(el('p', 'stats-empty', _t('Stav z {0}.', new Date(lim.at).toLocaleTimeString(LOC, { hour: '2-digit', minute: '2-digit' }))));
+}
+
+/** Poslední běh s pracovníky: tokeny po modelech (hlavní + pracovníci) a jednotliví pracovníci (údaje Claude Code). */
+function renderWorkerStats(box, l) {
+  if (!l || (!l.spawned && !(l.workers || []).length)) return;
+  if (l.byModel && l.byModel.rows.length) {
+    const t = el('table', 'stats-table');
+    t.appendChild(el('caption', null, _t('Poslední běh po modelech (hlavní konverzace + pracovníci)')));
+    const hr = el('tr');
+    for (const h of ['', _t('Tokeny'), _t('Odhad ceny API')]) { const th = el('th', null, h); th.scope = 'col'; hr.appendChild(th); }
+    const head = el('thead'); head.appendChild(hr); t.appendChild(head);
+    const body = el('tbody');
+    for (const r of [...l.byModel.rows, { model: _t('Celkem'), tokens: l.byModel.total, cost: l.byModel.cost }]) {
+      const tr = el('tr'); const th = el('th', null, r.model); th.scope = 'row'; tr.appendChild(th);
+      tr.append(el('td', null, fmtNum(r.tokens)), el('td', null, r.cost != null ? `$${r.cost.toFixed(4)}` : '–'));
+      body.appendChild(tr);
+    }
+    t.appendChild(body);
+    box.appendChild(t);
+  } else box.appendChild(el('p', 'stats-empty', _t('Tokeny pracovníků po modelech: nedostupné (Claude Code je pro tento běh neposlal).')));
+  if ((l.workers || []).length) {
+    box.appendChild(el('h3', 'eyebrow', _t('Pracovníci posledního běhu')));
+    const ul = el('ul', 'stats-workers');
+    for (const w of l.workers)
+      ul.appendChild(el('li', null, [w.nested ? '↳ ' + w.type : w.type, w.model ? modelLabel(w.model) : '',
+        w.tokens ? _t('{0} tokenů', fmtTok(w.tokens)) : _t('tokeny neuvedeny'), w.ms ? fmtDur(w.ms) : '',
+        w.status === 'completed' ? _t('hotovo') : _t('chyba')].filter(Boolean).join(' · ')));
+    box.appendChild(ul);
+  }
+  box.appendChild(el('p', 'stats-empty', _t('Tokeny u pracovníků hlásí Claude Code po svém (nesčítají se do tabulky). Pracovníci čerpají stejné limity účtu jako hlavní konverzace.')));
 }
 
 function openStats() {
@@ -1557,6 +1656,7 @@ async function openSettings() {
   renderNotifyToggle();
   $('#set-autocontinue').checked = autoOn();
   $('#set-drafts').checked = draftsOn();
+  $('#set-orch').value = S.orchDefault;
   if (!d.open) d.showModal();
   try { const v = await apiJson('/api/settings'); renderSettingsProjects(v); renderSettingsAccountsFull(v); } catch (e) { setMsg(e.message, 'err'); }
 }
@@ -1711,6 +1811,17 @@ function setupSettings() {
   $('#set-drafts').addEventListener('change', (e) => {
     store(DRAFTS_ON_KEY, e.target.checked ? '1' : '0');
     if (!e.target.checked) { try { localStorage.removeItem(DRAFTS_KEY); } catch { } loadSessions(); }
+  });
+  $('#set-orch').addEventListener('change', async (e) => {
+    const sel = e.target;
+    sel.disabled = true;
+    try {
+      const r = await apiJson('/api/settings/orchestration', { method: 'PUT', body: { defaultMode: sel.value } });
+      S.orchDefault = r.defaultMode === 'auto' ? 'auto' : 'off';
+      renderRunOpts();
+      announce(_t('Výchozí orchestrace pro nová sezení: {0}.', S.orchDefault === 'auto' ? 'Auto' : _t('Vypnuto')));
+    } catch (err) { sel.value = S.orchDefault; showError(_t('Nastavení nejde uložit'), err.message); }
+    finally { sel.disabled = false; }
   });
   $('#set-notify-kinds').addEventListener('change', () => {
     const o = {};
@@ -2123,7 +2234,7 @@ function userBubble(text, files) {
   return box;
 }
 
-async function startRun(prompt, mode, files = [], opts = { model: S.model, effort: S.effort }, { auto = false } = {}) {
+async function startRun(prompt, mode, files = [], opts = { model: S.model, effort: S.effort, orchestration: currentOrch() }, { auto = false } = {}) {
   if (S.run) return;
   if (!auto) cancelContinue();
   hideBanner();
@@ -2134,7 +2245,8 @@ async function startRun(prompt, mode, files = [], opts = { model: S.model, effor
   const run = { runId: null, controller, mode, account: S.account, prompt, sawPlan: false, resultText: null,
     resultError: false, hadError: false, cwd: null, limitShown: false, outcome: null, sessionId: S.sessionId,
     replays: 0, injectedBubbles: [], model: opts.model || '', effort: opts.effort || '', auto, bubble,
-    fork: !!(S.forkNext && S.sessionId), chrome: chromeOn() };
+    fork: !!(S.forkNext && S.sessionId), chrome: chromeOn(),
+    orchestration: Agents.ORCH_MODES.includes(opts.orchestration) ? opts.orchestration : currentOrch(), orchWorkers: null, workers: [] };
   if (S.forkNext) { S.forkNext = false; renderForkNote(); }
   S.run = run;
   PR.stopped = null;
@@ -2147,7 +2259,7 @@ async function startRun(prompt, mode, files = [], opts = { model: S.model, effor
     const res = await api('/api/runs', {
       method: 'POST',
       signal: controller.signal,
-      body: { account: S.account, project: S.project, mode, prompt, resume: S.sessionId, attachments: files.map((f) => f.id), model: run.model, effort: run.effort, ...runFlags(run) },
+      body: { account: S.account, project: S.project, mode, prompt, resume: S.sessionId, attachments: files.map((f) => f.id), model: run.model, effort: run.effort, orchestration: run.orchestration, ...runFlags(run) },
     });
     if (!res.ok) {
       let msg = `HTTP ${res.status}`;
@@ -2190,7 +2302,7 @@ function enqueue(prompt, files = []) {
   let ok = false;
   try {
     S.queue.add({ prompt, mode: S.mode, account: S.account, project: S.project, sessionId: S.sessionId, run: S.run, attachments: files,
-      opts: { model: S.model, effort: S.effort } });
+      opts: { model: S.model, effort: S.effort, orchestration: currentOrch() } });
     $('#prompt').value = '';
     S.queueNotice = null;
     ok = true;
@@ -2225,7 +2337,7 @@ function dispatchNext() {
   if (S.queueEdit !== null) { S.queueWaitingEdit = true; renderQueue(); return; }
   const item = S.queue.takeNext({ account: S.account, project: S.project, sessionId: S.sessionId });
   renderQueue();
-  if (item) startRun(item.prompt, item.mode, item.attachments, { model: S.model, effort: S.effort, ...item.opts });
+  if (item) startRun(item.prompt, item.mode, item.attachments, { model: S.model, effort: S.effort, orchestration: currentOrch(), ...item.opts });
 }
 
 function finishQueueEdit() {
@@ -2647,6 +2759,8 @@ function handleEvent(ev, run, state) {
     case 'init':
       S.sessionId = ev.sessionId;
       run.sessionId = ev.sessionId;
+      run.initModel = ev.model || '';
+      if (!run.side && run.orchestration) { Agents.saveSessionOrch(localStorage, ev.sessionId, run.orchestration); S.orchNext = null; }
       S.queue.bindSession(run, ev.sessionId);
       run.cwd = ev.cwd;
       rememberCommands(ev);
@@ -2667,6 +2781,10 @@ function handleEvent(ev, run, state) {
     }
     case 'commands':
       rememberCommandInfo(ev);
+      break;
+    case 'orchestration':
+      run.orchWorkers = Agents.workerMap(ev);
+      orchestrationNote(ev);
       break;
     case 'task':
       taskEvent(ev, run);
@@ -2705,6 +2823,7 @@ function handleEvent(ev, run, state) {
       break;
     }
     case 'tool_start': {
+      if (ev.parent && AGENT_TOOLS.has(ev.name) && AG.has(ev.parent)) { nestedAgent(ev, run); break; }
       if (ev.parent && agentEvent(ev)) break;
       if (TASK_TOOLS.has(ev.name)) break;
       if (!ev.parent && AGENT_TOOLS.has(ev.name)) { agentCard(ev.id); setStatus(_t('Claude spouští agenta…'), true); break; }
@@ -2714,12 +2833,12 @@ function handleEvent(ev, run, state) {
       break;
     }
     case 'tool_use': {
+      if (ev.parent && AGENT_TOOLS.has(ev.name) && AG.has(ev.parent)) { nestedAgent(ev, run); break; }
       if (ev.parent && agentEvent(ev)) break;
       if (!ev.parent && TASK_TOOLS.has(ev.name)) { progressToolUse(ev.name, ev.id, ev.input); break; }
       if (!ev.parent && AGENT_TOOLS.has(ev.name)) {
         const a = agentCard(ev.id, ev.input);
-        const desc = (ev.input && ev.input.description) || '';
-        a.t.nm.textContent = desc ? _t('Agent · {0}', desc) : 'Agent';
+        a.t.nm.textContent = agentTitle(a, ev.input, run);
         a.t.sm.textContent = '';
         break;
       }
@@ -2728,6 +2847,7 @@ function handleEvent(ev, run, state) {
       break;
     }
     case 'tool_result': {
+      if (ev.parent && AG.has(ev.id) && tools.has(ev.id)) { fillToolResult(tools.get(ev.id), ev); tools.delete(ev.id); break; } // vnořený agent
       if (ev.parent && agentEvent(ev)) break;
       if (progressToolResult(ev.id, ev.content, ev.isError)) break;
       const t = tools.get(ev.id);
@@ -3122,6 +3242,9 @@ function taskEvent(ev, run) {
     if (ev.ms) a.info.ms = ev.ms;
     if (ev.background) a.info.background = true;
     if (ev.lastTool && ev.phase === 'progress' && !a.lines.size) a.t.sm.textContent = ev.description || ev.lastTool;
+    if (ev.phase === 'notification' && run && Array.isArray(run.workers))
+      run.workers.push({ type: a.info.type || 'Agent', model: a.model || '', tokens: ev.tokens || a.info.tokens || 0, ms: ev.ms || a.info.ms || 0,
+        status: ev.status || 'completed', nested: !!a.parentId });
     if (ev.phase === 'notification' || (ev.phase === 'updated' && ev.status && ev.status !== 'running')) {
       a.t.d.dataset.state = ev.status === 'completed' ? 'ok' : 'error';
       a.t.badge.textContent = ev.status === 'completed' ? _t('hotovo') : ev.status === 'stopped' || ev.status === 'killed' ? _t('zastaveno') : _t('chyba');

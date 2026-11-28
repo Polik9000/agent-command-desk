@@ -87,6 +87,24 @@ Runs on Windows and macOS (experimental). The UI is in **Czech and English** –
 - **Fast follow-ups** – after a reply Claude Code keeps running for a while, so the next message in the session starts
   without start-up (about 0.8 s instead of 3 s for a short reply), also after a mode or model change.
 
+### Agent orchestration (opt-in)
+- **Off / Auto** per session in the model menu (default for new sessions in Settings → *Zprávy a práce*, saved to
+  `local/config.json`). **Off** (the default) is plain single-agent Claude Code: no extra instructions, no worker
+  definitions. In **Auto** the model you picked stays the orchestrator and decides by itself whether to delegate, to
+  which worker, and what to run in parallel; small tasks stay in the main conversation.
+- **Workers** are native Claude Code subagents passed with `--agents <file>` (no own agent runtime, no Agent Teams):
+  `acd-explore` (Haiku, read-only exploration), `acd-plan` (Haiku, read-only research for plans), `acd-implementer`
+  (Sonnet, scoped implementation with the session's tools) and `acd-reviewer` (Sonnet, read-only review). Models,
+  disabling and own read-only workers can be set in `orchestration.workers` (see `config.example.json`); invalid entries
+  are skipped with a warning in the chat. A user or project agent with the same name is never shadowed.
+- **Cards** show the worker's model when it is known (`Agent · Haiku · …`), agents started by agents get their own card
+  inside the parent's card, and *Statistiky* shows the last run by model (main conversation + workers) and each worker.
+- **Usage:** workers count toward the **same Claude usage limits** as the main conversation. Auto tries to avoid
+  needless delegation, but it does not promise fewer tokens.
+- **Boundaries:** needs Claude Code **2.1.281** or newer (older versions run without orchestration and say so).
+  A switch applies from the next message and starts a new Claude Code process for the session (like a change of effort).
+  Copies and side questions always run without orchestration.
+
 ### Window and safety
 - **Accounts with an allowlist** – each account is its own Claude Code config directory with an expected e-mail,
   verified via `claude auth status`; any other login (e.g. a personal account) cannot be used, not even by mistake.
@@ -234,7 +252,7 @@ Everything personal lives in `local/` (git-ignored):
 
 | File | What |
 |---|---|
-| `local/config.json` | `app.id` (launcher and state folder name), `app.name` (window title and logo), accounts, projects |
+| `local/config.json` | `app.id` (launcher and state folder name), `app.name` (window title and logo), accounts, projects, optional `orchestration` (default mode, worker models) |
 | `local/theme.css` | your look: copy `src/server/wwwroot/theme.css` and change colours, fonts (`@font-face`), brand suffix, motif, spinner, scrollbars; light colours go in a `:root[data-theme="light"]` block (`--accent-ink` = accent used for text and lines) |
 | `local/favicon.svg` | your icon |
 

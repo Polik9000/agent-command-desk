@@ -107,3 +107,25 @@ test('statistiky: tokeny z result.usage a okna limitu', () => {
   const [r2] = new StreamParser(path.join(os.tmpdir(), 'x')).parse(JSON.stringify({ type: 'result', usage: { input_tokens: -5, output_tokens: 'x' } }));
   assert.equal(r2.usage, undefined);
 });
+
+test('result: modelUsage za tah (hlavní + pracovníci), subagents; task s rodičem', () => {
+  const p = new StreamParser(path.join(os.tmpdir(), 'x', 'plans'));
+  const [r] = p.parse(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, total_cost_usd: 0.12,
+    usage: { input_tokens: 4, output_tokens: 296, cache_read_input_tokens: 59888, cache_creation_input_tokens: 28048 },
+    modelUsage: { 'claude-sonnet-5-5': { inputTokens: 99 } }, // součet za proces – nepoužívá se
+    model_usage_since_last_result: {
+      'claude-sonnet-5-5': { inputTokens: 4, outputTokens: 296, cacheReadInputTokens: 59888, cacheCreationInputTokens: 28048, costUSD: 0.1211488 },
+      'claude-haiku-5-5': { inputTokens: 4, outputTokens: 322, cacheReadInputTokens: 4306, cacheCreationInputTokens: 9105, costUSD: 0.001342585 } },
+    subagent_stats: { spawned: 1, completed: 1, failed: 0, max_depth: 1, by_type: { 'acd-explore': 1 } } }));
+  assert.deepEqual(r.usage, { input: 4, output: 296, cacheRead: 59888, cacheWrite: 28048 }, 'usage = jen hlavní konverzace');
+  assert.deepEqual(r.modelUsage, [
+    { model: 'claude-sonnet-5-5', input: 4, output: 296, cacheRead: 59888, cacheWrite: 28048, costUsd: 0.1211488 },
+    { model: 'claude-haiku-5-5', input: 4, output: 322, cacheRead: 4306, cacheWrite: 9105, costUsd: 0.001342585 }]);
+  assert.deepEqual(r.subagents, { spawned: 1, completed: 1, failed: 0 }, 'součet za proces – na tah přepočítá runner');
+  const [r2] = p.parse(JSON.stringify({ type: 'result', subtype: 'success', subagent_stats: { spawned: 0 }, model_usage_since_last_result: 'x' }));
+  assert.equal(r2.subagents, undefined);
+  assert.equal(r2.modelUsage, undefined);
+  const [t] = p.parse(JSON.stringify({ type: 'system', subtype: 'task_started', task_id: 't1', tool_use_id: 'tu2', subagent_type: 'acd-explore', parent_tool_use_id: 'tu1' }));
+  assert.equal(t.parent, 'tu1');
+  assert.equal(t.subagentType, 'acd-explore');
+});

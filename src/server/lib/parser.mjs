@@ -28,6 +28,23 @@ function usage(u) {
     cacheRead: num(u.cache_read_input_tokens) ?? 0, cacheWrite: num(u.cache_creation_input_tokens) ?? 0 };
   return r.input + r.output + r.cacheRead + r.cacheWrite > 0 ? r : undefined;
 }
+/**
+ * Tokeny a odhad ceny tohoto tahu po modelech (`model_usage_since_last_result`, ověřeno na 2.1.332): obsahuje hlavní
+ * konverzaci i pracovníky (subagenty). `result.usage` je jen hlavní konverzace – součet se proto počítá jen odsud.
+ */
+function modelUsage(m) {
+  if (!m || typeof m !== 'object' || Array.isArray(m)) return undefined;
+  const out = Object.entries(m).slice(0, 20).filter(([k, v]) => typeof k === 'string' && k.length <= 100 && v && typeof v === 'object')
+    .map(([model, v]) => ({ model, input: num(v.inputTokens) ?? 0, output: num(v.outputTokens) ?? 0,
+      cacheRead: num(v.cacheReadInputTokens) ?? 0, cacheWrite: num(v.cacheCreationInputTokens) ?? 0, costUsd: num(v.costUSD) }));
+  return out.length ? out : undefined;
+}
+/** Počty subagentů tahu (`subagent_stats`). */
+function subagentStats(st) {
+  if (!st || typeof st !== 'object') return undefined;
+  const spawned = num(st.spawned);
+  return spawned ? { spawned, completed: num(st.completed) ?? 0, failed: num(st.failed) ?? 0 } : undefined;
+}
 /** Okna limitu předplatného (five_hour, seven_day…) s využitím 0–1. */
 function windows(w) {
   if (!w || typeof w !== 'object') return [];
@@ -106,7 +123,7 @@ export class StreamParser {
             description: short(e.description, 300), taskType: short(e.task_type, 40), subagentType: short(e.subagent_type, 80),
             background: e.is_backgrounded === true ? true : undefined, status: status && TASK_STATUS.has(status) ? status : undefined,
             lastTool: short(e.last_tool_name, 80), tokens: num(u.total_tokens), toolUses: num(u.tool_uses), ms: num(u.duration_ms),
-            summary: short(e.summary, 500) }));
+            summary: short(e.summary, 500), parent }));
         } else if (e.subtype === 'background_tasks_changed') {
           out.push(ev('bg_tasks', { tasks: (Array.isArray(e.tasks) ? e.tasks : []).slice(0, 30)
             .map((t) => ({ taskId: short(t?.task_id, 80), taskType: short(t?.task_type, 40), description: short(t?.description, 300) })) }));
@@ -200,6 +217,7 @@ export class StreamParser {
           subtype: str(e.subtype), isError: e.is_error === true, result: str(e.result), costUsd: e.total_cost_usd,
           numTurns: e.num_turns, durationMs: e.duration_ms, sessionId: str(e.session_id),
           terminalReason: str(e.terminal_reason), apiErrorStatus: e.api_error_status, denials, usage: usage(e.usage),
+          modelUsage: modelUsage(e.model_usage_since_last_result), subagents: subagentStats(e.subagent_stats),
         }));
         break;
       }

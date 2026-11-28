@@ -9,6 +9,10 @@ import path from 'node:path';
 import { isUnder, samePath, norm } from './config.mjs';
 import { checkClaudeExe, childSpawnOptions, killTree } from './platform.mjs';
 import { StreamParser, ev } from './parser.mjs';
+import {
+  ORCH_MODES, MIN_AGENTS_FILE_VERSION, buildAgents, guidance, composePrompt, userAgentNames, versionAtLeast, parseVersion,
+  writeAgentsFile, removeAgentsFile, clearAgentsDir,
+} from './orchestration.mjs';
 import { alwaysUpdates, ruleLabel, inputPreview, editPreview, questionsPreview, controlResponse, controlError, PERMISSION_TIMEOUT_MS } from './permissions.mjs';
 
 export { killTree };
@@ -207,6 +211,53 @@ export class ClaudeRunner {
     this.idle = new Map();
     /** @type {Map<string, {at:number, c:any}>} příkazy a agenti podle účtu a projektu (z initialize) */
     this.commandsCache = new Map();
+    /** @type {Promise<number[]|null>|null} verze Claude Code (kvůli --agents) */
+    this.versionP = null;
+    /** @type {Set<string>} soubory definic pracovníků živých procesů */
+    this.agentFiles = new Set();
+    if (cfg.stateDirFull) try { clearAgentsDir(cfg.stateDirFull); } catch { /* složka stavu ještě není */ }
+  }
+
+  /** Smaže soubory definic pracovníků (při ukončení aplikace; synchronně). */
+  cleanupFiles() { for (const f of this.agentFiles) removeAgentsFile(f); this.agentFiles.clear(); }
+
+  /** `claude --version` jednou za běh aplikace (neúspěch se zkusí příště znovu). */
+  cliVersion() {
+    if (this.versionP) return this.versionP;
+    const p = new Promise((resolve) => {
+      let out = '';
+      let child;
+      try {
+        child = this.spawnFn(claudeExePath(this.cfg), ['--version'], { shell: false, stdio: ['ignore', 'pipe', 'ignore'], ...childSpawnOptions() });
+      } catch { resolve(null); return; }
+      const t = setTimeout(() => { killTree(child.pid); resolve(null); }, 15_000);
+      t.unref?.();
+      child.on('error', () => { clearTimeout(t); resolve(null); });
+      child.stdout.setEncoding('utf8');
+      child.stdout.on('data', (d) => { out = (out + d).slice(0, 500); });
+      child.on('close', () => { clearTimeout(t); resolve(parseVersion(out)); });
+    });
+    this.versionP = p.then((v) => { if (!v) this.versionP = null; return v; });
+    return this.versionP;
+  }
+
+  /**
+   * Orchestrace pro nový proces: co se předá a proč případně ne. Vypnuto = null (beze změny argumentů i událostí).
+   * @returns {Promise<null | {mode:string, active:boolean, defs?:any, workers:any[], skipped:any[], warnings:string[], reason?:string}>}
+   */
+  async orchestrationFor(account, project, requested, { copy = false } = {}) {
+    if (requested !== 'auto') return null;
+    const o = this.cfg.orchestration ?? { workers: [], warnings: [] };
+    const base = { mode: 'auto', workers: [], skipped: [], warnings: [...(o.warnings ?? [])] };
+    if (copy) return { ...base, active: false, reason: 'Kopie sezení a otázka bokem běží bez orchestrace.' };
+    const v = await this.cliVersion();
+    if (!v) return { ...base, active: false, reason: 'Verzi Claude Code nejde zjistit – orchestrace vypnuta.' };
+    if (!versionAtLeast(v, MIN_AGENTS_FILE_VERSION))
+      return { ...base, active: false, reason: `Orchestrace vyžaduje Claude Code ${MIN_AGENTS_FILE_VERSION} nebo novější (nainstalováno ${v.join('.')}).` };
+    const taken = userAgentNames([path.join(project.pathFull, '.claude', 'agents'), path.join(account.configDirFull, 'agents')]);
+    const b = buildAgents(o.workers ?? [], { disallowedTools: this.cfg.disallowedTools ?? [], taken });
+    if (!b.workers.length) return { ...base, skipped: b.skipped, active: false, reason: 'Žádný pracovník není k dispozici (konfigurace orchestration.workers).' };
+    return { ...base, active: true, defs: b.defs, workers: b.workers, skipped: b.skipped };
   }
 
   get idleMs() { return this.idleMsOverride ?? (this.cfg.sessionProcessMinutes ?? 10) * 60_000; }
@@ -241,20 +292,26 @@ export class ClaudeRunner {
    * Spustí tah; události emituje jako 'event', na konci 'end'.
    * @param {import('./config.mjs').Account} account @param {import('./config.mjs').Project} project
    * @param {string} mode @param {string} prompt @param {string|null} resume
-   * @param {{addDirs?: string[], model?: string, effort?: string, fork?: boolean, side?: boolean, chrome?: boolean}} [opts]
+   * @param {{addDirs?: string[], model?: string, effort?: string, fork?: boolean, side?: boolean, chrome?: boolean, orchestration?: string}} [opts]
    *   addDirs = další složky (přílohy); model/effort už ověřené proti allowlistu (server.mjs);
    *   fork = pokračovat v kopii sezení (--fork-session); side = otázka bokem (kopie bez uložení, jen čtení);
-   *   chrome = Claude in Chrome (každá akce prohlížeče se schvaluje)
+   *   chrome = Claude in Chrome (každá akce prohlížeče se schvaluje);
+   *   orchestration = 'off' | 'auto' (pracovníci přes --agents; změna = nový proces, jako effort)
    */
-  async start(account, project, mode, prompt, resume, { addDirs = [], model = '', effort = '', fork = false, side = false, chrome = false } = {}) {
+  async start(account, project, mode, prompt, resume, { addDirs = [], model = '', effort = '', fork = false, side = false, chrome = false, orchestration = 'off' } = {}) {
     if (!allowedModes(this.cfg).includes(mode)) throw new Error('Neplatný režim.');
+    if (!ORCH_MODES.includes(orchestration)) throw new Error('Neplatný režim orchestrace.');
     const copy = !!resume && (fork || side); // kopie původní sezení neblokuje ani nemění
     if (resume && !copy && this.busySessions.has(resume)) throw new Error('Toto sezení už běží.');
     if (resume && !copy) this.busySessions.add(resume); // hned, ať nikdo jiný sezení nepřevezme během čekání níže
     // Režim a model jde převzatému procesu změnit řídicím příkazem (jako Shift+Tab a /model); ostatní = nový proces.
-    const sig = JSON.stringify([account.id, project.id, effort, addDirs, chrome === true]);
+    let sig = JSON.stringify([account.id, project.id, effort, addDirs, chrome === true]);
     let proc = resume && !copy ? this.idle.get(resume) : undefined;
+    /** @type {any} */
+    let orch = null;
     try {
+      orch = await this.orchestrationFor(account, project, orchestration, { copy: copy || side });
+      if (orch?.active) sig = JSON.stringify([account.id, project.id, effort, addDirs, chrome === true, 'auto']);
       if (proc && (proc.sig !== sig || proc.exited || (proc.model && !model))) { await this.#retire(proc); proc = undefined; }
       if (proc) {
         this.#unpark(proc);
@@ -267,13 +324,18 @@ export class ClaudeRunner {
           proc = undefined;
         }
       }
-      if (!proc) proc = this.#spawn(account, project, mode, resume, { addDirs, model, effort, fork: copy, side, chrome: chrome === true }, sig);
+      if (!proc) proc = this.#spawn(account, project, mode, resume, { addDirs, model, effort, fork: copy, side, chrome: chrome === true, orch }, sig);
     } catch (e) {
       if (resume && !copy) this.busySessions.delete(resume);
       throw e;
     }
     const warm = proc.turns > 0;
     const run = this.#newRun(proc, account, project, copy ? null : resume, warm);
+    if (orch) {
+      // Pro UI: je orchestrace aktivní, kdo jsou pracovníci (a jaký model), proč případně ne. Definice ne.
+      run.emit('event', ev('orchestration', { mode: 'auto', active: orch.active, workers: orch.workers, skipped: orch.skipped,
+        reason: orch.reason, warnings: orch.warnings.length ? orch.warnings : undefined }));
+    }
     this.log(`Běh ${run.id} spuštěn: účet ${account.id}, projekt ${project.id}, režim ${mode}, resume ${!!resume}`
       + `, model ${model || 'výchozí'}, effort ${effort || 'výchozí'}${warm ? `, proces ${proc.id} převzat` : ''}`);
     proc.turns++;
@@ -281,7 +343,8 @@ export class ClaudeRunner {
     return run;
   }
 
-  #spawn(account, project, mode, resume, { addDirs, model, effort, fork, side, chrome }, sig) {
+  #spawn(account, project, mode, resume, { addDirs, model, effort, fork, side, chrome, orch }, sig) {
+    const id = randomUUID().slice(0, 8);
     // Vstup jako stream-json: stdin zůstává otevřený, takže lze poslat další zprávu do běžícího tahu
     // (Claude ji převezme na nejbližším předělu; --replay-user-messages to potvrdí) i další tah do stejného procesu.
     const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
@@ -292,7 +355,15 @@ export class ClaudeRunner {
     if (resume) args.push('--resume', resume);
     if (resume && fork) args.push('--fork-session');
     if (side) args.push('--no-session-persistence');
-    if (this.cfg.appendSystemPrompt) args.push('--append-system-prompt', this.cfg.appendSystemPrompt);
+    // Orchestrace: definice pracovníků v souboru aplikace (žije s procesem) a pokyny za appendSystemPrompt.
+    let agentsFile = null;
+    if (orch?.active) {
+      agentsFile = writeAgentsFile(this.cfg.stateDirFull, id, orch.defs);
+      this.agentFiles.add(agentsFile);
+      args.push('--agents', agentsFile);
+    }
+    const append = orch?.active ? composePrompt(this.cfg.appendSystemPrompt, guidance(orch.workers)) : this.cfg.appendSystemPrompt;
+    if (append) args.push('--append-system-prompt', append);
     args.push('--forward-subagent-text'); // co píší agenti → karta agenta
     if (chrome) args.push('--chrome', '--settings', CHROME_SETTINGS);
     if (this.cfg.disallowedTools.length) args.push('--disallowedTools', ...this.cfg.disallowedTools);
@@ -300,12 +371,16 @@ export class ClaudeRunner {
     if (model) args.push('--model', model);
     if (effort) args.push('--effort', effort);
 
-    const child = this.spawnFn(claudeExePath(this.cfg), args, {
-      cwd: project.pathFull, env: runEnv(account), shell: false, stdio: ['pipe', 'pipe', 'pipe'], ...childSpawnOptions(),
-    });
+    const dropFile = () => { if (agentsFile) { removeAgentsFile(agentsFile); this.agentFiles.delete(agentsFile); } };
+    let child;
+    try {
+      child = this.spawnFn(claudeExePath(this.cfg), args, {
+        cwd: project.pathFull, env: runEnv(account), shell: false, stdio: ['pipe', 'pipe', 'pipe'], ...childSpawnOptions(),
+      });
+    } catch (e) { dropFile(); throw e; }
     let closedResolve;
     const proc = {
-      id: randomUUID().slice(0, 8), child, sig, mode, model, accountId: account.id, projectId: project.id, side: !!side,
+      id, child, sig, orchestration: orch?.active ? 'auto' : 'off', agentsFile, mode, model, accountId: account.id, projectId: project.id, side: !!side,
       sessionId: fork || side ? null : resume ?? null, run: /** @type {any} */ (null), turns: 0, exited: false, stdinOpen: true,
       /** @type {Map<string, {resolve:Function, reject:Function, t:any}>} řídicí požadavky čekající na odpověď */
       pending: new Map(),
@@ -319,6 +394,7 @@ export class ClaudeRunner {
       },
     };
     this.#pump(proc, /** @type {any} */ (closedResolve));
+    proc.closed.then(dropFile); // konec procesu (retire, chyba, kill, limit čekání) → soubor definic pryč
     // Seznam příkazů a skillů s popisy, agenti (jako nabídka / v terminálu) → událost pro paletu.
     // Odpověď se zpracuje hned při čtení řádku (onData), ne až v .then(): readline vydá celý blok stdout
     // synchronně, takže by jinak `result` téhož bloku tah ukončil dřív a commands by dostal až další tah (issue #2).
@@ -593,6 +669,15 @@ export class ClaudeRunner {
           e.totalCostUsd = e.costUsd;
           e.costUsd = Math.max(0, e.costUsd - (proc.costSoFar ?? 0));
           proc.costSoFar = e.totalCostUsd;
+        }
+        if (e.type === 'result') {
+          // subagent_stats je také součet za proces (ověřeno na 2.1.332) – ven jen pracovníci tohoto tahu.
+          const prev = proc.subagentsSoFar ?? { spawned: 0, completed: 0, failed: 0 };
+          const cur = e.subagents ?? prev;
+          proc.subagentsSoFar = { spawned: cur.spawned, completed: cur.completed, failed: cur.failed };
+          const d = { spawned: Math.max(0, cur.spawned - prev.spawned), completed: Math.max(0, cur.completed - prev.completed),
+            failed: Math.max(0, cur.failed - prev.failed) };
+          e.subagents = d.spawned ? d : undefined;
         }
         run.emit('event', e);
         if (e.type === 'result') {

@@ -587,6 +587,10 @@ textarea::placeholder { color: var(--gray-3); }
 .agent-step[data-state="error"]::before, .agent-step[data-state="denied"]::before { content: '✕ '; color: var(--err); }
 .agent-tool { color: var(--fg); font-weight: 700; }
 .agent-text { font-size: .86rem; padding: .3em 0; }
+.agent-sub > .tool { margin: 2px 0; } /* agent spuštěný agentem: vlastní karta v záznamu rodiče */
+.orch-note { max-width: 46rem; }
+.orch-warn { margin-top: .25em; font-weight: 400; letter-spacing: 0; }
+.stats-workers { margin: var(--space-1) 0; padding-left: 1.2em; font-size: var(--fs-small); }
 .bg-section { display: grid; gap: var(--space-1); border-top: 1px solid var(--line); padding-top: var(--space-2); margin-top: var(--space-2); }
 .bg-section[hidden] { display: none; }
 .bg-section .eyebrow { margin: 0; }
