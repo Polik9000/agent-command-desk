@@ -1,6 +1,7 @@
 // @ts-check
 // Statistiky v čase – jen čísla, žádné texty zpráv. Soubor <stateDir>/usage.jsonl, jeden řádek na záznam:
-//   běh:   {kind:'run', t, account, project, model, effort, input, output, cacheRead, cacheWrite, cost, ms, turns, error}
+//   běh:   {kind:'run', t, account, project, model, effort, input, output, cacheRead, cacheWrite, cost, ms, turns, error,
+//           byModel?, workers?}  input… = hlavní konverzace (result.usage); byModel = hlavní + pracovníci po modelech
 //   limit: {kind:'limit', t, account, window, utilization, resetsAt}  (nejvýš jednou za 10 min na okno, nebo při změně ≥ 2 body)
 // Starší záznamy než KEEP_DAYS se mažou při startu a při překročení velikosti.
 import { appendFileSync, readFileSync, writeFileSync, renameSync, existsSync, statSync } from 'node:fs';
@@ -13,6 +14,16 @@ const LIMIT_EVERY_MS = 10 * 60_000;
 const DAY = 86_400_000;
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0);
 const short = (v) => (typeof v === 'string' ? v.slice(0, 100) : '');
+
+/** Jen když tah použil víc modelů (pracovníci): {byModel: {model: {input, output, cacheRead, cacheWrite, cost}}}. */
+function byModel(list) {
+  if (!Array.isArray(list) || list.length < 2) return {};
+  /** @type {Record<string, any>} */
+  const o = {};
+  for (const m of list.slice(0, 20))
+    o[short(m.model)] = { input: num(m.input), output: num(m.output), cacheRead: num(m.cacheRead), cacheWrite: num(m.cacheWrite), cost: num(m.costUsd) };
+  return { byModel: o };
+}
 
 export class UsageLog {
   /** @param {string} stateDir @param {{now?: () => number, log?: (m:string) => void}} [o] */
@@ -50,7 +61,8 @@ export class UsageLog {
     const u = r.usage || {};
     this.#append({ kind: 'run', t: this.now(), account: short(r.account), project: short(r.project), model: short(r.model),
       effort: short(r.effort), input: num(u.input), output: num(u.output), cacheRead: num(u.cacheRead), cacheWrite: num(u.cacheWrite),
-      cost: num(r.costUsd), ms: num(r.durationMs), turns: num(r.numTurns), error: r.isError === true ? 1 : 0 });
+      cost: num(r.costUsd), ms: num(r.durationMs), turns: num(r.numTurns), error: r.isError === true ? 1 : 0,
+      ...byModel(r.modelUsage), ...(num(r.subagents?.spawned) ? { workers: num(r.subagents.spawned) } : {}) });
   }
 
   /** @param {string} account @param {any} windows [{type, utilization, resetsAt}] */

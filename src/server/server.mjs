@@ -15,6 +15,7 @@ import { AttachmentStore, attachmentsPrompt, MAX_PER_RUN as MAX_ATTACHMENTS } fr
 import { openWindow, createHeartbeat } from './lib/window.mjs';
 import { changeProjects, settingsView } from './lib/settings.mjs';
 import { streamRun } from './lib/runstream.mjs';
+import { ORCH_MODES, MIN_AGENTS_FILE_VERSION } from './lib/orchestration.mjs';
 import { DECISIONS } from './lib/permissions.mjs';
 import { listFiles, readProjectFile, clearFilesCache } from './lib/files.mjs';
 
@@ -179,6 +180,9 @@ async function handleApi(req, res, url) {
       models: cfg.models.map((x) => ({ id: x.id, label: x.label })),
       interactivePermissions: cfg.interactivePermissions === true,
       efforts: EFFORTS,
+      // Orchestrace: výchozí režim pro nová sezení a pracovníci (jen jména a modely, pro karty agentů).
+      orchestration: { defaultMode: cfg.orchestration.defaultMode, minVersion: MIN_AGENTS_FILE_VERSION,
+        workers: cfg.orchestration.workers.map((w) => ({ name: w.name, model: w.model, readOnly: w.readOnly })) },
     });
   }
 
@@ -333,6 +337,19 @@ async function handleApi(req, res, url) {
       return problem(res, e.status ?? 500, e.status ? e.message : 'Uložení konfigurace selhalo.');
     }
   }
+  // Výchozí režim orchestrace pro nová sezení (zápis do local/config.json).
+  if (req.method === 'PUT' && p === '/api/settings/orchestration') {
+    let body;
+    try { body = await readJson(req); } catch (e) { return problem(res, e.status ?? 400, e.message); }
+    try {
+      changeProjects(CONFIG_FILE, cfg, { op: 'orchestrationDefault', mode: body?.defaultMode });
+      log(`Nastavení: výchozí orchestrace ${cfg.orchestration.defaultMode}`);
+      return sendJson(res, 200, { defaultMode: cfg.orchestration.defaultMode });
+    } catch (e) {
+      if (!e.status) log(`Nastavení: zápis selhal: ${e.message}`);
+      return problem(res, e.status ?? 500, e.status ? e.message : 'Uložení konfigurace selhalo.');
+    }
+  }
   if (req.method === 'PUT' && (m = /^\/api\/settings\/default-project\/([^/]+)$/.exec(p))) {
     req.resume();
     try {
@@ -475,6 +492,8 @@ async function startRun(req, res) {
   const effort = body.effort ?? '';
   if (typeof model !== 'string' || !cfg.models.some((x) => x.id === model)) return problem(res, 400, 'Neznámý model.');
   if (!EFFORTS.includes(effort)) return problem(res, 400, 'Neplatný effort.');
+  const orchestration = body.orchestration ?? 'off';
+  if (!ORCH_MODES.includes(orchestration)) return problem(res, 400, 'Neplatný režim orchestrace.');
   for (const k of ['fork', 'side', 'chrome'])
     if (body[k] != null && typeof body[k] !== 'boolean') return problem(res, 400, 'Neplatná volba běhu.');
   const fork = body.fork === true, side = body.side === true;
@@ -515,11 +534,11 @@ async function startRun(req, res) {
   }
 
   let run;
-  try { run = await runner.start(account, project, body.mode, prompt, resume, { addDirs, model, effort, fork, side, chrome }); }
+  try { run = await runner.start(account, project, body.mode, prompt, resume, { addDirs, model, effort, fork, side, chrome, orchestration }); }
   catch (e) { return problem(res, 409, e.message); }
 
   streamRun(res, run, { runId: run.id, account: account.id, project: project.id, mode: body.mode, model, effort,
-    warm: run.warm || undefined, fork: fork || undefined, side: side || undefined, chrome: chrome || undefined },
+    warm: run.warm || undefined, fork: fork || undefined, side: side || undefined, chrome: chrome || undefined, orchestration },
   [usage.observer(account.id, project.id, { model, effort })]);
 }
 
@@ -563,7 +582,7 @@ function shutdown(reason) {
 }
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('exit', () => { try { unlinkSync(pidFile); } catch { } });
+process.on('exit', () => { try { unlinkSync(pidFile); } catch { } runner.cleanupFiles(); });
 
 server.listen(cfg.port, '127.0.0.1', () => {
   const addr = server.address();

@@ -93,6 +93,24 @@ Běží na Windows a macOS (experimentálně). Rozhraní je **česky i anglicky*
 - **Rychlé navázání** – po odpovědi Claude Code chvíli běží dál, takže další zpráva v sezení začne bez spouštění
   (asi 0,8 s místo 3 s u krátké odpovědi), i po změně režimu nebo modelu.
 
+### Orchestrace agentů (volitelná)
+- **Vypnuto / Auto** pro každé sezení v nabídce modelu (výchozí pro nová sezení v Nastavení → *Zprávy a práce*, uloží
+  se do `local/config.json`). **Vypnuto** (výchozí) je obyčejný Claude Code s jedním agentem: žádné pokyny navíc, žádní
+  pracovníci. V režimu **Auto** zůstává zvolený model orchestrátorem a sám rozhoduje, zda práci svěří pracovníkovi,
+  kterému a co pustí souběžně; malé úkoly řeší sám.
+- **Pracovníci** jsou nativní subagenti Claude Code předaní přes `--agents <soubor>` (žádný vlastní běh agentů, žádné
+  Agent Teams): `acd-explore` (Haiku, průzkum jen pro čtení), `acd-plan` (Haiku, podklady pro plán jen pro čtení),
+  `acd-implementer` (Sonnet, ohraničená implementace s nástroji sezení) a `acd-reviewer` (Sonnet, kontrola jen pro čtení).
+  Modely, vypnutí i vlastní pracovníky jen pro čtení jde nastavit v `orchestration.workers` (viz `config.example.json`);
+  neplatné položky se vynechají s varováním v chatu. Agenta uživatele nebo projektu se stejným jménem aplikace nezastíní.
+- **Karty** ukazují model pracovníka, když je známý (`Agent · Haiku · …`), agent spuštěný agentem má vlastní kartu
+  uvnitř karty rodiče a *Statistiky* ukazují poslední běh po modelech (hlavní konverzace + pracovníci) i jednotlivé pracovníky.
+- **Spotřeba:** pracovníci čerpají **stejné limity Claude** jako hlavní konverzace. Auto se snaží zbytečně nedelegovat,
+  ale neslibuje méně tokenů.
+- **Hranice:** potřebuje Claude Code **2.1.281** nebo novější (starší verze běží bez orchestrace a řeknou to).
+  Přepnutí platí od další zprávy a spustí pro sezení nový proces Claude Code (jako změna effortu). Kopie a otázky
+  bokem běží vždy bez orchestrace.
+
 ### Okno a bezpečnost
 - **Účty s allowlistem** – každý účet je vlastní konfigurační složka Claude Code s očekávaným e-mailem, ověřeným přes
   `claude auth status`; jiné přihlášení (třeba osobní účet) nejde použít, ani omylem.
@@ -241,7 +259,7 @@ Všechno osobní je v `local/` (git ho ignoruje):
 
 | Soubor | Co |
 |---|---|
-| `local/config.json` | `app.id` (název spouštěče a složky stavu), `app.name` (titulek okna a logo), účty, projekty |
+| `local/config.json` | `app.id` (název spouštěče a složky stavu), `app.name` (titulek okna a logo), účty, projekty, volitelně `orchestration` (výchozí režim, modely pracovníků) |
 | `local/theme.css` | váš vzhled: zkopírujte `src/server/wwwroot/theme.css` a změňte barvy, písma (`@font-face`), příponu značky, motiv, spinner, posuvníky; světlé barvy patří do bloku `:root[data-theme="light"]` (`--accent-ink` = akcent použitý pro text a čáry) |
 | `local/favicon.svg` | vaše ikona |
 

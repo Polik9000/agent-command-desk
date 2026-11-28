@@ -8,6 +8,7 @@ import {
 } from './platform.mjs';
 
 export { expand, norm, samePath, isUnder } from './platform.mjs';
+import { normalizeOrchestration } from './orchestration.mjs';
 
 /** @typedef {{id:string,label:string,configDir:string,expectedEmail:string,accent:string,configDirFull:string}} Account */
 /** @typedef {{id:string,label:string,path:string,pathFull:string}} Project */
@@ -15,7 +16,8 @@ export { expand, norm, samePath, isUnder } from './platform.mjs';
  * @typedef {{app:{id:string,name:string}, port:number, openBrowser:boolean, startFullscreen?:boolean, interactivePermissions?:boolean, sessionProcessMinutes?:number,
  *   claudeExeFull:string, gitExeFull:string, browserExeFull:string, stateDirFull:string,
  *   disallowedTools:string[], appendSystemPrompt:string, defaultAccount:string, accounts:Account[],
- *   defaultProject:string, projects:Project[]}} Config
+ *   defaultProject:string, projects:Project[], models:Array<{id:string,label:string}>,
+ *   orchestration: ReturnType<typeof normalizeOrchestration>}} Config
  */
 
 const APP_ID_RX = /^[a-z0-9][a-z0-9-]{0,62}$/;
@@ -115,6 +117,8 @@ export function parseConfig(raw, name, { checkExe = true } = {}) {
   if (!Number.isInteger(cfg.sessionProcessMinutes) || cfg.sessionProcessMinutes < 0 || cfg.sessionProcessMinutes > 120)
     fail('sessionProcessMinutes musí být celé číslo 0–120');
   cfg.disallowedTools ??= [];
+  // Orchestrace subagentů (volitelné): neplatné položky jen varování, nikdy pád startu.
+  cfg.orchestration = normalizeOrchestration(cfg.orchestration, cfg.models);
   cfg.appendSystemPrompt = String(cfg.appendSystemPrompt ?? '').replaceAll('{appName}', cfg.app.name);
   return cfg;
 }

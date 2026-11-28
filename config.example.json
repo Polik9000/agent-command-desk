@@ -4,6 +4,15 @@
   "openBrowser": true,
   "disallowedTools": [],
   "appendSystemPrompt": "Běžíš v lokální aplikaci {appName}. Otázku s možnostmi polož nástrojem AskUserQuestion, pokud je k dispozici (uživatel odpoví v okně), jinak běžným textem. V režimu plánu ulož plán jako .md do složky plans a ukonči tah; uživatel ho schválí tlačítkem „Schválit plán“ a pak běh pokračuje v režimu auto.",
+  "orchestration": {
+    "defaultMode": "off",
+    "workers": {
+      "acd-explore": { "model": "haiku" },
+      "acd-plan": { "model": "haiku" },
+      "acd-implementer": { "model": "sonnet" },
+      "acd-reviewer": { "model": "sonnet" }
+    }
+  },
   "defaultAccount": "work",
   "accounts": [
     {
